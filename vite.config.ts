@@ -11,10 +11,12 @@ export default defineConfig({
   clearScreen: false,
 
   server: {
-    port: 1420,
+    // 不用 Tauri 模板默认的 1420：在部分 Windows 机器上该端口被
+    // Hyper-V / WSL 的动态端口保留段排除，Node 会报 EACCES。
+    port: 5173,
     strictPort: true,
     host: host || false,
-    hmr: host ? { protocol: 'ws', host, port: 1421 } : undefined,
+    hmr: host ? { protocol: 'ws', host, port: 5174 } : undefined,
     watch: { ignored: ['**/src-tauri/**'] },
   },
 
