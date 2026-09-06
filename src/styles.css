@@ -1195,3 +1195,56 @@ html.glass-on .board-canvas {
 }
 .settings-section:nth-of-type(2) { animation-delay: 40ms; }
 .settings-section:nth-of-type(3) { animation-delay: 80ms; }
+
+/* ==========================================================================
+   原生窗口材质模式（native-glass）
+   —— 窗口本身透明(tauri transparent:true)，OS 在窗口背后合成真实玻璃材质：
+      macOS 26+ = Liquid Glass，旧 macOS = Vibrancy，Windows 11 = Mica/Acrylic。
+   前端只需让背景/外壳"半透明或全透明"，材质就会透上来。
+   ========================================================================== */
+
+html.native-glass,
+html.native-glass body,
+html.native-glass #root {
+  background: transparent !important;
+}
+
+/* 外壳：标题栏 + 侧栏 —— 全透明，直接露出 OS 材质 */
+html.native-glass .titlebar {
+  background: transparent;
+  border-bottom-color: var(--glass-edge);
+}
+
+html.native-glass .sidebar.glass-surface {
+  background: transparent;
+  border-right: 1px solid var(--glass-edge);
+}
+
+html.native-glass .pane {
+  background: transparent;
+}
+
+/* 画布：给一层很淡的主题色，让节点可读，同时仍透出材质 */
+html.native-glass .board-canvas {
+  background-color: color-mix(in srgb, var(--bg-canvas) 55%, transparent);
+}
+
+/* 浮层（菜单/卡片/气泡/设置/工具栏）：叠一层极薄染色 + 描边，
+   让内容清晰但仍带玻璃通透感（真正的模糊由 OS 材质提供） */
+html.native-glass .glass-surface,
+html.native-glass .ctx-menu,
+html.native-glass .node-card,
+html.native-glass .node-bubble,
+html.native-glass .settings-card,
+html.native-glass .canvas-toolbar {
+  background: rgba(var(--glass-rgb), calc(var(--glass-alpha) * 0.5));
+  -webkit-backdrop-filter: blur(calc(var(--glass-blur) * 0.5)) saturate(160%);
+  backdrop-filter: blur(calc(var(--glass-blur) * 0.5)) saturate(160%);
+  border: 1px solid var(--glass-edge);
+  box-shadow: inset 0 1px 0 var(--glass-hi), var(--shadow-node-hover);
+}
+
+/* 节点在原生模式下仍要清晰可读，染色略重一点 */
+html.native-glass .node-card {
+  background: rgba(var(--glass-rgb), calc(var(--glass-alpha) * 0.72));
+}

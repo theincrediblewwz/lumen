@@ -1,11 +1,17 @@
 import { useEffect } from 'react';
 import { createPortal } from 'react-dom';
-import type { Settings, ThemeName } from '../settings';
+import type { Settings, ThemeName, GlassMode } from '../settings';
 
 const THEMES: { id: ThemeName; label: string }[] = [
   { id: 'light', label: '浅色' },
   { id: 'paper', label: '纸感' },
   { id: 'dark', label: '深色' },
+];
+
+const GLASS_MODES: { id: GlassMode; label: string }[] = [
+  { id: 'native', label: '原生' },
+  { id: 'css', label: '网页' },
+  { id: 'off', label: '关闭' },
 ];
 
 /**
@@ -61,20 +67,28 @@ export function SettingsPanel({
         </section>
 
         <section className="settings-section">
-          <div className="settings-row">
-            <label className="settings-label">液态玻璃</label>
-            <button
-              type="button"
-              className={`switch${settings.glass ? ' is-on' : ''}`}
-              role="switch"
-              aria-checked={settings.glass}
-              onClick={() => onChange({ glass: !settings.glass })}
-            >
-              <span className="switch-knob" />
-            </button>
+          <label className="settings-label">液态玻璃</label>
+          <div className="seg" style={{ marginTop: 10 }}>
+            {GLASS_MODES.map((m) => (
+              <button
+                key={m.id}
+                type="button"
+                className={`seg-btn${settings.glass && settings.glassMode === m.id ? ' is-active' : ''}${
+                  !settings.glass && m.id === 'off' ? ' is-active' : ''
+                }`}
+                onClick={() =>
+                  m.id === 'off'
+                    ? onChange({ glass: false })
+                    : onChange({ glass: true, glassMode: m.id })
+                }
+              >
+                {m.label}
+              </button>
+            ))}
           </div>
           <p className="settings-hint">
-            为侧栏、菜单、卡片启用毛玻璃质感（模糊 + 提饱和 + 亮边高光）。
+            <b>原生</b>：调用系统材质——macOS 26+ 为 Apple 液态玻璃、旧版 macOS 为毛玻璃、
+            Windows 11 为 Mica/Acrylic（最佳观感）。<b>网页</b>：跨平台一致的 CSS 毛玻璃。
           </p>
 
           <div className={`settings-sliders${settings.glass ? '' : ' is-disabled'}`}>

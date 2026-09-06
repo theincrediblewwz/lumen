@@ -9,9 +9,13 @@
 
 export type ThemeName = 'light' | 'paper' | 'dark';
 
+export type GlassMode = 'native' | 'css' | 'off';
+
 export interface Settings {
   theme: ThemeName;
   glass: boolean;
+  /** 玻璃实现方式：native=原生 OS 材质(Mac 液态玻璃/Win Mica)，css=网页毛玻璃，off=关闭 */
+  glassMode: GlassMode;
   /** 玻璃"通透度" 0–100：越大越透明（染色越淡、看穿越多） */
   glassClarity: number;
   /** 玻璃模糊强度 0–100 */
@@ -23,6 +27,7 @@ export interface Settings {
 export const DEFAULT_SETTINGS: Settings = {
   theme: 'light',
   glass: true,
+  glassMode: 'native',
   glassClarity: 55,
   glassBlur: 60,
   motion: true,
@@ -53,7 +58,11 @@ export function saveSettings(s: Settings): void {
 export function applySettings(s: Settings): void {
   const root = document.documentElement;
   root.dataset.theme = s.theme;
-  root.classList.toggle('glass-on', s.glass);
+  const mode: GlassMode = s.glass ? s.glassMode : 'off';
+  // native：窗口透明 + OS 合成材质（body 透明让材质透上来）
+  root.classList.toggle('native-glass', mode === 'native');
+  // css：网页 backdrop-filter 毛玻璃
+  root.classList.toggle('glass-on', mode === 'css');
   root.classList.toggle('motion-off', !s.motion);
 
   // clarity 0..100 → 表面染色 alpha 0.9(不透明)..0.30(很通透)
