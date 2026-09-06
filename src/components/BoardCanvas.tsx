@@ -1,5 +1,16 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { CanvasEngine, type Viewport } from '../canvas/CanvasEngine';
+import {
+  createHistory,
+  pushState,
+  replacePresent,
+  commitFromBaseline,
+  undo as histUndo,
+  redo as histRedo,
+  canUndo,
+  canRedo,
+  type History,
+} from '../canvas/history';
 import type { BoardFile, BoardNode } from '../api';
 import { NodeCard } from './NodeCard';
 import { ContextMenu, type ContextMenuState } from './ContextMenu';
@@ -12,9 +23,10 @@ function newNodeId(): string {
 const DEFAULT_NODE_W = 240;
 
 /**
- * BoardCanvas（M2-2 / M2-3）：白板画布 v1
+ * BoardCanvas（M2-2 / M2-3 / M2-8）：白板画布 v1
  * - 视口：滚轮缩放（光标锚点不动）、空白拖拽平移
  * - 节点：拖拽移动、右键空白新建、双击编辑标题、右键节点删除
+ * - 命令栈：新建/删除/改标题/拖拽移动均可撤销/重做（Ctrl+Z / Ctrl+Shift+Z / Ctrl+Y）
  * - 变更通过 onChange 抛给上层做防抖持久化
  */
 export function BoardCanvas({
@@ -31,15 +43,18 @@ export function BoardCanvas({
   const [, force] = useState(0);
   const rerender = useCallback(() => force((n) => n + 1), []);
 
-  const [nodes, setNodes] = useState<BoardNode[]>(board.nodes);
+  // 节点状态由历史栈驱动（present 即当前节点数组）
+  const [history, setHistory] = useState<History<BoardNode[]>>(() => createHistory(board.nodes));
+  const nodes = history.present;
+
   const [selected, setSelected] = useState<string | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [menu, setMenu] = useState<ContextMenuState | null>(null);
 
-  // 切换白板时重置引擎与本地节点
+  // 切换白板时重置引擎与历史栈
   useEffect(() => {
     engineRef.current = new CanvasEngine(board.viewport, { minZoom: 0.2, maxZoom: 3 });
-    setNodes(board.nodes);
+    setHistory(createHistory(board.nodes));
     setSelected(null);
     setEditingId(null);
     rerender();
@@ -47,19 +62,57 @@ export function BoardCanvas({
 
   const engine = engineRef.current;
 
-  const commit = useCallback(
+  /** 一次原子变更：记历史 + 落盘 */
+  const apply = useCallback(
     (next: BoardNode[]) => {
-      setNodes(next);
+      setHistory((h) => pushState(h, next));
       onChange(next, engine.viewport);
     },
     [engine, onChange],
   );
 
+  const doUndo = useCallback(() => {
+    setHistory((h) => {
+      if (!canUndo(h)) return h;
+      const nh = histUndo(h);
+      onChange(nh.present, engine.viewport);
+      return nh;
+    });
+    setEditingId(null);
+  }, [engine, onChange]);
+
+  const doRedo = useCallback(() => {
+    setHistory((h) => {
+      if (!canRedo(h)) return h;
+      const nh = histRedo(h);
+      onChange(nh.present, engine.viewport);
+      return nh;
+    });
+    setEditingId(null);
+  }, [engine, onChange]);
+
+  /* 撤销/重做快捷键 */
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (!(e.ctrlKey || e.metaKey)) return;
+      const k = e.key.toLowerCase();
+      if (k === 'z' && !e.shiftKey) {
+        e.preventDefault();
+        doUndo();
+      } else if ((k === 'z' && e.shiftKey) || k === 'y') {
+        e.preventDefault();
+        doRedo();
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [doUndo, doRedo]);
+
   /* ── 拖拽状态（用 ref 避免频繁 setState） ── */
   const drag = useRef<
     | null
     | { kind: 'pan'; startX: number; startY: number; vx: number; vy: number }
-    | { kind: 'node'; id: string; lastX: number; lastY: number; moved: boolean }
+    | { kind: 'node'; id: string; lastX: number; lastY: number; moved: boolean; baseline: BoardNode[] }
   >(null);
 
   const rect = () => wrapRef.current?.getBoundingClientRect() ?? { left: 0, top: 0, width: 1, height: 1 };
@@ -84,12 +137,19 @@ export function BoardCanvas({
     (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
   };
 
-  /* ── 节点按下：选中 + 准备拖拽 ── */
+  /* ── 节点按下：选中 + 准备拖拽（记下拖拽前快照做 baseline） ── */
   const onNodePointerDown = (e: React.PointerEvent, id: string) => {
     if (e.button !== 0) return;
     e.stopPropagation();
     setSelected(id);
-    drag.current = { kind: 'node', id, lastX: e.clientX, lastY: e.clientY, moved: false };
+    drag.current = {
+      kind: 'node',
+      id,
+      lastX: e.clientX,
+      lastY: e.clientY,
+      moved: false,
+      baseline: nodes,
+    };
     (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
   };
 
@@ -107,8 +167,12 @@ export function BoardCanvas({
       if (dx !== 0 || dy !== 0) d.moved = true;
       d.lastX = e.clientX;
       d.lastY = e.clientY;
-      setNodes((prev) =>
-        prev.map((n) => (n.id === d.id ? { ...n, x: n.x + dx, y: n.y + dy } : n)),
+      // 拖拽过程中只 replacePresent，不记历史（松手时一次性提交）
+      setHistory((h) =>
+        replacePresent(
+          h,
+          h.present.map((n) => (n.id === d.id ? { ...n, x: n.x + dx, y: n.y + dy } : n)),
+        ),
       );
     }
   };
@@ -121,10 +185,10 @@ export function BoardCanvas({
     if (d.kind === 'pan') {
       onChange(nodes, engine.viewport);
     } else if (d.moved) {
-      // 拖动结束落盘（用最新 nodes）
-      setNodes((prev) => {
-        onChange(prev, engine.viewport);
-        return prev;
+      // 拖动结束：把拖拽前快照补进 past，present 已是最终位置
+      setHistory((h) => {
+        onChange(h.present, engine.viewport);
+        return commitFromBaseline(h, d.baseline);
       });
     }
   };
@@ -138,7 +202,12 @@ export function BoardCanvas({
     setMenu({
       x: e.clientX,
       y: e.clientY,
-      items: [{ type: 'item', label: '在此新建节点', onClick: () => addNode(world.x, world.y) }],
+      items: [
+        { type: 'item', label: '在此新建节点', onClick: () => addNode(world.x, world.y) },
+        { type: 'separator' },
+        { type: 'item', label: '撤销  Ctrl+Z', disabled: !canUndo(history), onClick: doUndo },
+        { type: 'item', label: '重做  Ctrl+Shift+Z', disabled: !canRedo(history), onClick: doRedo },
+      ],
     });
   };
 
@@ -171,14 +240,13 @@ export function BoardCanvas({
       created_at: now,
       updated_at: now,
     };
-    const next = [...nodes, node];
-    commit(next);
+    apply([...nodes, node]);
     setSelected(node.id);
     setEditingId(node.id);
   };
 
   const removeNode = (id: string) => {
-    commit(nodes.filter((n) => n.id !== id));
+    apply(nodes.filter((n) => n.id !== id));
     if (selected === id) setSelected(null);
     if (editingId === id) setEditingId(null);
   };
@@ -186,7 +254,14 @@ export function BoardCanvas({
   const commitTitle = (id: string, title: string) => {
     setEditingId(null);
     const t = title.trim();
-    commit(nodes.map((n) => (n.id === id ? { ...n, title: t || '未命名问题', updated_at: new Date().toISOString() } : n)));
+    const target = nodes.find((n) => n.id === id);
+    // 标题没变则不记历史，避免污染撤销栈
+    if (!target || (t || '未命名问题') === target.title) return;
+    apply(
+      nodes.map((n) =>
+        n.id === id ? { ...n, title: t || '未命名问题', updated_at: new Date().toISOString() } : n,
+      ),
+    );
   };
 
   return (
@@ -220,7 +295,7 @@ export function BoardCanvas({
       {nodes.length === 0 && (
         <div className="canvas-empty">
           <p>空白处右键 · 新建第一个问题节点</p>
-          <p className="canvas-empty-sub">滚轮缩放 · 拖拽空白平移画布</p>
+          <p className="canvas-empty-sub">滚轮缩放 · 拖拽空白平移画布 · Ctrl+Z 撤销</p>
         </div>
       )}
 
