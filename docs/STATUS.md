@@ -3,7 +3,7 @@
 > **开工前先读本文件；每完成一件事就更新本文件。**
 > 本文件只记录「进度」。计划与任务清单见 [PLAN.md](./PLAN.md)，设计与决策见 [DESIGN.md](./DESIGN.md)。
 
-**最后更新**：2026-09-06 21:10（Asia/Shanghai）
+**最后更新**：2026-09-06 21:12（Asia/Shanghai）
 
 ---
 
@@ -19,6 +19,8 @@
 | 密钥管理 | 私密文件放 `.local/`（已 gitignore）+ `scripts/check_secrets.js` 扫描兜底 |
 | 文件读写 | 全部走 Rust 侧 `std::fs`，**不暴露 fs 插件给前端**（权限面最小） |
 | 节点结构 | **图存树显**：允许一个节点有多个父节点（交叉引用）；数据结构用图，默认呈现为树 |
+| 单元测试 | **Vitest**（DESIGN §8 已定）；纯函数内核跑在 Node 环境，测试文件与源码同目录 `*.test.ts` |
+| 坐标系约定 | 容器 transform = `translate3d(x,y,0) scale(zoom)`；`screen = world*zoom + (x,y)`。screen 指相对**画布容器左上角**，client 坐标须先减去容器 rect |
 
 ## 二、已完成
 
@@ -35,30 +37,33 @@
 | **M1-5** 项目 / 白板 CRUD 与最小界面 | 代码完成，待 GUI 验收 |
 | 首次推送至 GitHub | CI `#1` 状态 `completed / success` |
 | **应用首次成功启动** | Vite 监听 5173 正常；Rust 编译通过；`lumen.exe` 已运行，无报错 |
+| **测试基建：Vitest 接入** | `npm test` 跑通；`vitest.config.ts`（node 环境，`src/**/*.test.ts`）+ `test`/`test:watch` 脚本 |
+| **M2-1** `CanvasEngine`：视口平移/缩放 + 屏幕↔世界坐标换算（纯函数内核 + 薄类封装） | **30 项 Vitest 单测全部通过**；`npm run typecheck` 通过；`check:secrets` 通过 |
 
 ## 三、进行中
 
-- **应用正以后台会话 `sess-1` 运行**（`npm run tauri:dev`），窗口已在用户桌面。
-- 等待用户实机走一遍：选择存储目录 → 建项目 → 建白板 → 检查磁盘上是否生成对应文件夹
+- 无进行中任务。M2-1 已收口，等待挑选 M2 下一子任务（M2-2 节点 DOM 层）。
+- 注：上一轮的后台会话 `sess-1`（`npm run tauri:dev`）是否仍存活未知；本轮工作为纯前端内核 + 单测，未依赖 GUI。
 
 ## 四、等待用户执行
 
 | 事项 | 命令 | 说明 |
 | --- | --- | --- |
-| 看一眼界面 | 应用已由我在后台启动，窗口应在你桌面上 | 直接操作即可：选目录 → 建项目 → 建白板。有问题告诉我，我来改 |
+| （可选）实机验收 M1 | 应用若仍在运行，直接操作：选目录 → 建项目 → 建白板 | 有问题告诉我，我来改 |
+| （可选）本地跑单测 | `npm test` | 验证 CanvasEngine 换算内核（30 用例） |
 
 > 注：推送等我已能自行完成（凭据已缓存，且走 ghproxy 镜像），不再需要用户代劳。
 
 ## 五、下一步（接下来我做的）
 
-1. **M2-1 CanvasEngine**：视口变换、屏幕↔世界坐标换算（含单测）
-2. **M2-2** 节点 DOM 层：圆角方框、自适应宽度、样式 token 落地
-3. **M2-3** 右键新建节点 + 双击编辑标题（需验证中文输入法）
-4. **M2-8** 命令栈：撤销 / 重做
+1. **M2-2** 节点 DOM 层：圆角方框、自适应宽度、样式 token 落地（消费 `CanvasEngine.transform` 与可见性剔除）
+2. **M2-3** 右键新建节点 + 双击编辑标题（需验证中文输入法）
+3. **M2-8** 命令栈：撤销 / 重做（同样纯函数、可单测）
+4. 把 `CanvasEngine` 接入 `App.tsx` 的画布占位区（`canvas-placeholder`），验证滚轮缩放锚点手感
 
 ## 六、阻塞项
 
-- 无。**但 M2 涉及视觉与交互，我在无 GUI 的沙箱里无法看效果**，需要你跑 `npm run tauri:dev` 后反馈（截图或描述）。
+- 无。**但 M2-2 起涉及视觉与交互，我在无 GUI 的沙箱里无法看效果**，需要你跑 `npm run tauri:dev` 后反馈（截图或描述）。M2-1 为纯逻辑，已用单测证明。
 
 ## 七、待定问题
 
@@ -78,5 +83,6 @@
 | Tauri 构建脚本需要图标 | 即使只是 `cargo check`，build script 也要求 `src-tauri/icons/icon.ico` 存在。须先 `npm run tauri -- icon <源图>` 生成；源图可用 `node scripts/make_icon.js` 生成 |
 | `"type": "module"` | 仓库内 `.js` 脚本必须写 ESM；用 `require` 会静默失败——曾因此把临时文件误提交 |
 | TS6310 | `composite` 项目不可设 `noEmit`；已改为单一 tsconfig + `@types/node` |
-| MCP 无法直接 spawn npm | 本机 npm 是 `npm.ps1`，须经 `powershell -File` 包装 |
+| MCP 无法直接 spawn npm | 本机 npm 是 `npm.ps1`，须经 `powershell -File` 包装；MCP 里用 `powershell -NoProfile -Command npm ...` 可跑通 |
 | MCP 配置改动不生效 | 只换隧道不重启 `server.mjs` 时，`config.json` 改动不会重新读取 |
+| MCP `apply_patch` 对 JSON 上下文不稳 | 给 `package.json` 打小补丁时报「patched」却未生效（同尺寸）；改用 `write_file` 全量覆盖更可靠 |

@@ -695,3 +695,5 @@ lumen/
 | ADR-008 | 一期不做代码签名与公证，出 ad-hoc 构建 | 自用与极小范围分享够用；待公开发布时补 secrets 即可，改造成本低 |
 | ADR-009 | **选 Tauri 2.x 而非 Electron** | 主平台是随身笔记本：体积 8MB vs 120MB+、内存 40–80MB vs 150–400MB、秒开 vs 2–5s；本机 Rust 工具链已就绪。代价是 AI 流式与文件 IO 需用 Rust 实现（一次性成本，由开发侧承担） |
 | ADR-010 | 私密文件集中在仓库内 `.local/` 目录并 gitignore，提交前跑密钥扫描 | 兼顾"方便取用"与"绝不入库"；`.gitignore` 只能防未跟踪文件，故需扫描脚本兜底（防误 `git add -f`、防已跟踪文件泄密） |
+| ADR-011 | `CanvasEngine` 拆为「纯函数内核 + 薄类封装」，坐标换算不碰 DOM | 纯函数可在 Node 侧直测（DESIGN §8），把容器 `getBoundingClientRect()` 作为参数传入即可；类只持有视口状态并委托纯函数，便于未来接入 Store/命令栈 |
+| ADR-012 | 缩放以「屏幕锚点世界点不动」为不变量（zoomAtPoint），视口用 `translate3d+scale` 整体变换 | 滚轮/捏合缩放手感的正确性可用单测钉死（往返一致、锚点不动）；容器整体 transform 避免逐节点重排，配合包围盒剔除做虚拟化（DESIGN §5.4 性能策略） |
