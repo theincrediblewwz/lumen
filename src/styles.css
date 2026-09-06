@@ -749,6 +749,14 @@ html.motion-off * {
   padding-top: 6px;
 }
 
+.node-edit-hint {
+  font-size: 10.5px;
+  color: var(--text-secondary);
+  opacity: 0.72;
+  margin-top: 1px;
+  user-select: none;
+}
+
 .node-badge {
   display: inline-flex;
   align-items: center;

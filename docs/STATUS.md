@@ -3,7 +3,7 @@
 > **开工前先读本文件；每完成一件事就更新本文件。**
 > 本文件只记录「进度」。计划与任务清单见 [PLAN.md](./PLAN.md)，设计与决策见 [DESIGN.md](./DESIGN.md)。
 
-**最后更新**：2026-09-07 08:20 (Asia/Shanghai)
+**最后更新**：2026-09-07 08:42 (Asia/Shanghai)
 
 ---
 
@@ -55,6 +55,7 @@
 | **平台策略：Windows/Linux 纯实色、原生玻璃仅 Mac**（ADR-019，`solid_win`） | Cargo window-vibrancy 依赖只留 macOS target 并给 tauri 加 macos-private-api feature；`apply_native_material` 仅 `#[cfg(target_os="macos")]`；前端 `applySettings(s,platform)` 非 mac 时 native 退化 off、设置面板"原生"按钮禁用标"·仅Mac"。`cargo check`/`npm run build`/`check:secrets` 全过；Windows 实机 tauri:dev 启动无 panic（sess-5） |
 | **M3 连线层 EdgeLayer**：贝塞尔连线+箭头+锚点吸附+有向无向+标签+级联删除+持久化+撤销 | 新增 `src/canvas/geometry.ts` 纯函数(borderPoint/edgeGeometry/boxContains) + **12 单测**(合计 **51 passed**)；BoardCanvas 历史栈改 Graph{nodes,edges}、锚点拖拽建连线、SVG 边层随世界层 transform、端点吸附边框、Delete 删选中连线/节点、右键切有向/无向+标签内联编辑、删节点级联清边；App onCanvasChange 落盘 edges。`typecheck`/`npm test`(51)/`npm run build`(47模块)/`check:secrets` 全过；dev sess-5 HMR 生效 |
 | **外壳配色刷新**（ADR-021）：侧栏/顶栏更清新明亮 | `--bg-chrome` 冷灰 #f6f7f9→近白微青绿 #fbfdfc、`--bg-hover` 改强调色淡染、边框带绿浅色；三主题补 `--edge-color`/`--edge-label-bg` 连线配色。待用户看观感 |
+| **修复 M3 编辑模式卡死三连 bug** | 编辑态无退出路径导致：锚点全灭/Delete 被拦/拖不出连线。改 showAnchors 为 `editingId!==n.id`、编辑区 onBlur 自动退出+保存、Esc 取消、加操作提示。typecheck/test(51)/build/check:secrets 全过 |
 
 ## 三、进行中
 

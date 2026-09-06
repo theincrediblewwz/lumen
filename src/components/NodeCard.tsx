@@ -18,6 +18,7 @@ function AutoTextarea({
   onCancel: () => void;
 }) {
   const ref = useRef<HTMLTextAreaElement>(null);
+  const skipCommit = useRef(false); // Escape 取消时跳过随之而来的 blur 提交
   const grow = () => {
     const el = ref.current;
     if (!el) return;
@@ -52,10 +53,17 @@ function AutoTextarea({
           onCommit((e.target as HTMLTextAreaElement).value);
         } else if (e.key === 'Escape') {
           e.preventDefault();
+          skipCommit.current = true;
           onCancel();
         }
       }}
-      onBlur={(e) => onCommit(e.target.value)}
+      onBlur={(e) => {
+        if (skipCommit.current) {
+          skipCommit.current = false;
+          return;
+        }
+        onCommit(e.target.value);
+      }}
     />
   );
 }
@@ -81,6 +89,7 @@ export const NodeCard = memo(function NodeCard({
   onContextMenu,
   onCommit,
   onEditCancel,
+  onExitEdit,
   onMeasure,
   onHoverChange,
 }: {
@@ -96,6 +105,7 @@ export const NodeCard = memo(function NodeCard({
   onContextMenu: (e: React.MouseEvent, id: string) => void;
   onCommit: (id: string, patch: { title?: string; summary?: string }) => void;
   onEditCancel: () => void;
+  onExitEdit: () => void;
   onMeasure: (id: string, w: number, h: number) => void;
   onHoverChange: (hovering: boolean) => void;
 }) {
@@ -139,7 +149,17 @@ export const NodeCard = memo(function NodeCard({
       tabIndex={0}
     >
       {editing ? (
-        <div className="node-edit">
+        <div
+          className="node-edit"
+          /* 焦点移出整个编辑区（点空白 / 点别的节点 / 点别处）→ 退出编辑模式。
+             各字段各自的 onBlur 已提交内容，这里只负责关闭编辑态。
+             relatedTarget 仍在编辑区内（如从标题切到问题框）则不退出。 */
+          onBlur={(e) => {
+            if (!e.currentTarget.contains(e.relatedTarget as Node | null)) {
+              onExitEdit();
+            }
+          }}
+        >
           <AutoTextarea
             className="node-title-input"
             value={node.title}
@@ -155,6 +175,7 @@ export const NodeCard = memo(function NodeCard({
             onCommit={(v) => onCommit(node.id, { summary: v })}
             onCancel={onEditCancel}
           />
+          <div className="node-edit-hint">Enter 完成标题 · Esc 退出 · 点击别处保存并退出</div>
         </div>
       ) : (
         <>

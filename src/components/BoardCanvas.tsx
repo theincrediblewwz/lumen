@@ -612,7 +612,7 @@ export function BoardCanvas({
             node={n}
             selected={selected === n.id}
             editing={editingId === n.id}
-            showAnchors={(selected === n.id || hoverNode === n.id) && !editingId}
+            showAnchors={(selected === n.id || hoverNode === n.id) && editingId !== n.id}
             connectTarget={connect?.hoverId === n.id}
             onPointerDown={onNodePointerDown}
             onAnchorPointerDown={onAnchorPointerDown}
@@ -621,6 +621,7 @@ export function BoardCanvas({
             onContextMenu={onNodeContextMenu}
             onCommit={commitNode}
             onEditCancel={() => setEditingId(null)}
+            onExitEdit={() => setEditingId(null)}
             onMeasure={onMeasure}
             onHoverChange={(hovering) => setHoverNode((cur) => (hovering ? n.id : cur === n.id ? null : cur))}
           />
