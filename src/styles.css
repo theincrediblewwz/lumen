@@ -1209,14 +1209,27 @@ html.native-glass #root {
   background: transparent !important;
 }
 
-/* 外壳：标题栏 + 侧栏 —— 全透明，直接露出 OS 材质 */
+/* 主画布 = 内容区：实色主题背景，绝不透出壁纸/材质。
+   这样"选浅色就是浅色"，且不会随窗口焦点变色（Mica 只在聚焦时渲染、
+   且会拾取桌面壁纸色，若让主区透出就会一片米黄并在失焦时突变）。 */
+html.native-glass .board-canvas {
+  background-color: var(--bg-canvas);
+}
+
+/* 外壳：标题栏 + 侧栏 —— 以"主题色半透明"为主体，只透一点点 OS 材质。
+   染色不透明度绑定设置里的"通透度"(--glass-alpha)：默认偏实、贴合主题，
+   想更通透可自行调高。这样既保留玻璃质感，又几乎消除焦点变色。 */
 html.native-glass .titlebar {
-  background: transparent;
+  background: rgba(var(--glass-rgb), calc(var(--glass-alpha) + 0.22));
+  -webkit-backdrop-filter: blur(calc(var(--glass-blur) * 0.6)) saturate(150%);
+  backdrop-filter: blur(calc(var(--glass-blur) * 0.6)) saturate(150%);
   border-bottom-color: var(--glass-edge);
 }
 
 html.native-glass .sidebar.glass-surface {
-  background: transparent;
+  background: rgba(var(--glass-rgb), calc(var(--glass-alpha) + 0.18));
+  -webkit-backdrop-filter: blur(calc(var(--glass-blur) * 0.6)) saturate(150%);
+  backdrop-filter: blur(calc(var(--glass-blur) * 0.6)) saturate(150%);
   border-right: 1px solid var(--glass-edge);
 }
 
@@ -1224,27 +1237,22 @@ html.native-glass .pane {
   background: transparent;
 }
 
-/* 画布：给一层很淡的主题色，让节点可读，同时仍透出材质 */
-html.native-glass .board-canvas {
-  background-color: color-mix(in srgb, var(--bg-canvas) 55%, transparent);
-}
-
-/* 浮层（菜单/卡片/气泡/设置/工具栏）：叠一层极薄染色 + 描边，
-   让内容清晰但仍带玻璃通透感（真正的模糊由 OS 材质提供） */
+/* 浮层（菜单/卡片/气泡/设置/工具栏）：浮在实色画布之上，不接触 OS 材质，
+   因此不会焦点变色；用主题色半透明 + 轻模糊，保证可读又有玻璃感。 */
 html.native-glass .glass-surface,
 html.native-glass .ctx-menu,
 html.native-glass .node-card,
 html.native-glass .node-bubble,
 html.native-glass .settings-card,
 html.native-glass .canvas-toolbar {
-  background: rgba(var(--glass-rgb), calc(var(--glass-alpha) * 0.5));
-  -webkit-backdrop-filter: blur(calc(var(--glass-blur) * 0.5)) saturate(160%);
-  backdrop-filter: blur(calc(var(--glass-blur) * 0.5)) saturate(160%);
+  background: rgba(var(--glass-rgb), calc(var(--glass-alpha) + 0.28));
+  -webkit-backdrop-filter: blur(calc(var(--glass-blur) * 0.7)) saturate(160%);
+  backdrop-filter: blur(calc(var(--glass-blur) * 0.7)) saturate(160%);
   border: 1px solid var(--glass-edge);
   box-shadow: inset 0 1px 0 var(--glass-hi), var(--shadow-node-hover);
 }
 
-/* 节点在原生模式下仍要清晰可读，染色略重一点 */
+/* 节点卡：最需清晰可读，染色最重 */
 html.native-glass .node-card {
-  background: rgba(var(--glass-rgb), calc(var(--glass-alpha) * 0.72));
+  background: rgba(var(--glass-rgb), calc(var(--glass-alpha) + 0.34));
 }
