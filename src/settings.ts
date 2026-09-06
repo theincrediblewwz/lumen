@@ -55,10 +55,14 @@ export function saveSettings(s: Settings): void {
 }
 
 /** 把设置映射到 <html> 上的 data-theme / class / CSS 变量。 */
-export function applySettings(s: Settings): void {
+export function applySettings(s: Settings, platform = ''): void {
   const root = document.documentElement;
   root.dataset.theme = s.theme;
-  const mode: GlassMode = s.glass ? s.glassMode : 'off';
+  const isMac = platform === 'macos';
+  let mode: GlassMode = s.glass ? s.glassMode : 'off';
+  // 原生材质仅 macOS 支持；其它平台上"原生"退化为纯实色主题（Win11 Mica 会
+  // 取壁纸色且焦点变色，观感不佳，故不在 Windows/Linux 启用，见 ADR-019）。
+  if (mode === 'native' && !isMac) mode = 'off';
   // native：窗口透明 + OS 合成材质（body 透明让材质透上来）
   root.classList.toggle('native-glass', mode === 'native');
   // css：网页 backdrop-filter 毛玻璃

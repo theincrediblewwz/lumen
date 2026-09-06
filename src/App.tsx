@@ -40,11 +40,12 @@ export default function App() {
   const [draft, setDraft] = useState('');
   const editRef = useRef<HTMLInputElement>(null);
 
-  /* 应用外观设置（主题 / 玻璃 / 动画）到 <html> */
+  /* 应用外观设置（主题 / 玻璃 / 动画）到 <html>；platform 变化后重跑
+     （原生材质仅 macOS 启用，需知道平台才能正确决定 native/实色）。 */
   useEffect(() => {
-    applySettings(settings);
+    applySettings(settings, platform);
     saveSettings(settings);
-  }, [settings]);
+  }, [settings, platform]);
 
   const patchSettings = useCallback(
     (patch: Partial<Settings>) => setSettings((s) => ({ ...s, ...patch })),
@@ -330,7 +331,7 @@ export default function App() {
         </div>
         {menu && <ContextMenu state={menu} onClose={() => setMenu(null)} />}
         {settingsOpen && (
-          <SettingsPanel settings={settings} onChange={patchSettings} onClose={() => setSettingsOpen(false)} />
+          <SettingsPanel settings={settings} platform={platform} onChange={patchSettings} onClose={() => setSettingsOpen(false)} />
         )}
       </div>
     );
@@ -458,7 +459,7 @@ export default function App() {
 
       {menu && <ContextMenu state={menu} onClose={() => setMenu(null)} />}
       {settingsOpen && (
-        <SettingsPanel settings={settings} onChange={patchSettings} onClose={() => setSettingsOpen(false)} />
+        <SettingsPanel settings={settings} platform={platform} onChange={patchSettings} onClose={() => setSettingsOpen(false)} />
       )}
     </div>
   );

@@ -3,7 +3,7 @@
 > **开工前先读本文件；每完成一件事就更新本文件。**
 > 本文件只记录「进度」。计划与任务清单见 [PLAN.md](./PLAN.md)，设计与决策见 [DESIGN.md](./DESIGN.md)。
 
-**最后更新**：2026-09-06 23:03 (Asia/Shanghai)
+**最后更新**：2026-09-06 23:40 (Asia/Shanghai)
 
 ---
 
@@ -50,12 +50,16 @@
 | **UI 视觉大改版**：液态玻璃主题 + 节点重设计 + Markdown 气泡卡 + 全局动画 | 新增 settings.ts(主题/玻璃通透度/模糊/动画，持久化)+SettingsPanel(菜单「设置…」进入)； 全应用 .glass-surface 毛玻璃(跨引擎一致，ADR-015)；节点改为「概括标题+完整问题」自适应高度(修复长标题截尾)； 点击节点弹 NodeBubble 玻璃气泡卡看完整问题+Markdown 文档列表；侧栏收起/节点创建/气泡/面板均加动画。build+test(39) 通过 |
 | 玻璃可见化 + 动画补全精修 | 修复玻璃看不出效果：开玻璃时给整窗铺主题化环境光晕背景(--ambient-*)+画布对浮层微透，让 backdrop-filter 有内容可折射；侧栏改为常挂载 width/opacity 过渡(收起也有动画、更丝滑)；补全动画：白板栏滑入、列表项 hover 位移、按钮按压、三横线旋转、全屏/占位淡入、设置分区错落入场；结论：callstack/liquid-glass 是 React Native(原生 iOS Swift)库，本 Tauri/DOM 项目无法使用。build+test(39) 通过 |
 | **项目/白板重命名**（rename_project / rename_board 命令 + 存储层） | **Rust 单测 8 项全过**（新增 rename 2 项）；同步改 index/project/board.json |
+| **原生液态玻璃**（window-vibrancy，ADR-017/018） | Mac=Liquid Glass(macOS26+)/vibrancy fallback、Win=Mica/Acrylic、CSS native-glass、设置 原生/网页/关闭 三档；Windows 实机编译+启动无 panic（`700e5f2`）；Mac 观感待 Mac 上验 |
+| **玻璃观感修正**：内容区实色化、外壳主题色半透明（`835382a`） | 修"整片米黄+焦点变色"：board-canvas 改回实色不透材质，titlebar/sidebar 主题色半透明+轻 backdrop-filter，浮层/node-card 提高不透明度 |
+| **平台策略：Windows/Linux 纯实色、原生玻璃仅 Mac**（ADR-019，`solid_win`） | Cargo window-vibrancy 依赖只留 macOS target 并给 tauri 加 macos-private-api feature；`apply_native_material` 仅 `#[cfg(target_os="macos")]`；前端 `applySettings(s,platform)` 非 mac 时 native 退化 off、设置面板"原生"按钮禁用标"·仅Mac"。`cargo check`/`npm run build`/`check:secrets` 全过；Windows 实机 tauri:dev 启动无 panic（sess-5） |
 
 ## 三、进行中
 
 - 白板画布 v1（M2-2 节点 DOM 层 + M2-3 新建/编辑/移动）已接入主界面，代码级验证全过。
 - **等用户实机验收**：新建/拖拽/双击编辑/缩放平移的手感，以及自动落盘后重开白板节点是否还在。
-- 应用以后台会话 `sess-3`（`npm run tauri:dev`）运行中，窗口在用户桌面。
+- 应用以后台会话 `sess-5`（`npm run tauri:dev`）运行中，窗口在用户桌面（sess-3 因整页重载/Cargo 变更退出，已重启）。
+- **等用户验收 Windows 纯实色主题观感**（solid_win）：原生档在 Win 上应为纯实色、设置里"原生"按钮禁用标注"·仅Mac"。
 
 
 ## 四、等待用户执行

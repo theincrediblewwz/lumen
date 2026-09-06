@@ -20,13 +20,16 @@ const GLASS_MODES: { id: GlassMode; label: string }[] = [
  */
 export function SettingsPanel({
   settings,
+  platform,
   onChange,
   onClose,
 }: {
   settings: Settings;
+  platform: string;
   onChange: (patch: Partial<Settings>) => void;
   onClose: () => void;
 }) {
+  const isMac = platform === 'macos';
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => e.key === 'Escape' && onClose();
     window.addEventListener('keydown', onKey);
@@ -69,26 +72,32 @@ export function SettingsPanel({
         <section className="settings-section">
           <label className="settings-label">液态玻璃</label>
           <div className="seg" style={{ marginTop: 10 }}>
-            {GLASS_MODES.map((m) => (
-              <button
-                key={m.id}
-                type="button"
-                className={`seg-btn${settings.glass && settings.glassMode === m.id ? ' is-active' : ''}${
-                  !settings.glass && m.id === 'off' ? ' is-active' : ''
-                }`}
-                onClick={() =>
-                  m.id === 'off'
-                    ? onChange({ glass: false })
-                    : onChange({ glass: true, glassMode: m.id })
-                }
-              >
-                {m.label}
-              </button>
-            ))}
+            {GLASS_MODES.map((m) => {
+              const disabled = m.id === 'native' && !isMac;
+              return (
+                <button
+                  key={m.id}
+                  type="button"
+                  disabled={disabled}
+                  title={disabled ? '原生材质仅 macOS 支持' : undefined}
+                  className={`seg-btn${settings.glass && settings.glassMode === m.id ? ' is-active' : ''}${
+                    !settings.glass && m.id === 'off' ? ' is-active' : ''
+                  }`}
+                  onClick={() =>
+                    m.id === 'off'
+                      ? onChange({ glass: false })
+                      : onChange({ glass: true, glassMode: m.id })
+                  }
+                >
+                  {m.label}
+                  {disabled ? ' ·仅Mac' : ''}
+                </button>
+              );
+            })}
           </div>
           <p className="settings-hint">
-            <b>原生</b>：调用系统材质——macOS 26+ 为 Apple 液态玻璃、旧版 macOS 为毛玻璃、
-            Windows 11 为 Mica/Acrylic（最佳观感）。<b>网页</b>：跨平台一致的 CSS 毛玻璃。
+            <b>原生</b>：仅 macOS——26+ 为 Apple 液态玻璃、旧版为毛玻璃（透出桌面，最佳观感）。
+            <b>网页</b>：跨平台一致的 CSS 毛玻璃（浮层可见）。Windows 建议用「网页」或「关闭」。
           </p>
 
           <div className={`settings-sliders${settings.glass ? '' : ' is-disabled'}`}>
