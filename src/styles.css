@@ -303,3 +303,114 @@ body {
     transition-duration: 0.01ms !important;
   }
 }
+
+/* ==========================================================================
+   白板画布 v1（M2-2 / M2-3）：视口世界层 + 节点卡片
+   ========================================================================== */
+
+.board-canvas-live {
+  overflow: hidden;
+  cursor: default;
+  touch-action: none;
+  user-select: none;
+}
+
+/* 世界层：平移/缩放只改这一层的 transform（不逐个重排节点） */
+.canvas-world {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 0;
+  height: 0;
+  will-change: transform;
+}
+
+.node-card {
+  position: absolute;
+  min-width: 140px;
+  max-width: 420px;
+  padding: 12px 14px;
+  background: var(--bg-node);
+  border: var(--border-node) solid var(--border-color);
+  border-left: 3px solid var(--border-strong);
+  border-radius: var(--radius-node);
+  box-shadow: var(--shadow-node);
+  cursor: grab;
+  transition: box-shadow var(--dur-fast) var(--ease-standard),
+    border-color var(--dur-fast) var(--ease-standard);
+}
+
+.node-card:hover {
+  box-shadow: var(--shadow-node-hover);
+}
+
+.node-card.is-selected {
+  border-color: var(--accent);
+  border-left-color: var(--accent);
+  box-shadow: var(--shadow-node-hover), 0 0 0 2px var(--accent-soft);
+}
+
+.node-card.is-editing {
+  cursor: default;
+}
+
+.node-title {
+  font-size: 14.5px;
+  font-weight: 600;
+  line-height: 1.5;
+  color: var(--text-primary);
+  word-break: break-word;
+}
+
+.node-title-input {
+  width: 100%;
+  font-family: inherit;
+  font-size: 14.5px;
+  font-weight: 600;
+  line-height: 1.5;
+  color: var(--text-primary);
+  background: transparent;
+  border: none;
+  outline: none;
+  resize: none;
+  overflow: hidden;
+}
+
+.node-summary {
+  margin-top: 6px;
+  font-size: 12.5px;
+  line-height: 1.55;
+  color: var(--text-secondary);
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.node-badge {
+  display: inline-block;
+  margin-top: 8px;
+  padding: 1px 8px;
+  font-size: 11px;
+  color: var(--accent);
+  background: var(--accent-soft);
+  border-radius: 20px;
+}
+
+.canvas-empty {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  pointer-events: none;
+  color: var(--text-secondary);
+  font-size: 14px;
+}
+
+.canvas-empty-sub {
+  font-size: 12.5px;
+  opacity: 0.75;
+}

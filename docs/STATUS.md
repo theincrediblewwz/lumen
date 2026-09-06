@@ -3,7 +3,7 @@
 > **开工前先读本文件；每完成一件事就更新本文件。**
 > 本文件只记录「进度」。计划与任务清单见 [PLAN.md](./PLAN.md)，设计与决策见 [DESIGN.md](./DESIGN.md)。
 
-**最后更新**：2026-09-06 21:42（Asia/Shanghai）
+**最后更新**：2026-09-06 21:47（Asia/Shanghai）
 
 ---
 
@@ -42,12 +42,15 @@
 | **M2-1** `CanvasEngine`：视口平移/缩放 + 屏幕↔世界坐标换算（纯函数内核 + 薄类封装） | **30 项 Vitest 单测全部通过**；`npm run typecheck` 通过；`check:secrets` 通过 |
 | **UI 改版**：右键菜单替代底部固定表单 + 自定义现代化标题栏（native_mac） | `typecheck`/`npm test`(30)/`npm run build`/`cargo check` 全通过 |
 | **UI 优化**：字体栈/字号/间距升级、屏蔽 WebView 原生右键菜单、白板主区改纯白 + 外壳灰层次 | `typecheck` 通过；用户实机确认（HMR 已热更） |
+| **M2-2/M2-3** 白板画布 v1：节点卡片渲染 + 滚轮缩放/空白平移 + 右键新建/拖拽移动/双击编辑 + 防抖落盘 | `typecheck`/`npm test`(30)/`check:secrets` 通过；后台 sess-3 运行无报错，待用户实机验收手感 |
 | **项目/白板重命名**（rename_project / rename_board 命令 + 存储层） | **Rust 单测 8 项全过**（新增 rename 2 项）；同步改 index/project/board.json |
 
 ## 三、进行中
 
-- 无进行中任务。UI 改版（右键菜单 + 自定义标题栏）已收口，代码级验证（typecheck/单测/build/cargo check）全过，**等待用户实机验收 GUI 手感**。
-- 注：标题栏交互（拖拽区、红绿灯安全区、Windows 窗口按钮）我在无 GUI 沙箱里无法目视，需要你跑 `npm run tauri:dev` 反馈。
+- 白板画布 v1（M2-2 节点 DOM 层 + M2-3 新建/编辑/移动）已接入主界面，代码级验证全过。
+- **等用户实机验收**：新建/拖拽/双击编辑/缩放平移的手感，以及自动落盘后重开白板节点是否还在。
+- 应用以后台会话 `sess-3`（`npm run tauri:dev`）运行中，窗口在用户桌面。
+
 
 ## 四、等待用户执行
 
@@ -60,11 +63,11 @@
 
 ## 五、下一步（接下来我做的）
 
-1. **等用户验收本轮 UI**：右键菜单（空白处/条目上）、内联新建/重命名、macOS 红绿灯安全区、Windows 自绘窗口按钮
-2. **M2-2** 节点 DOM 层：圆角方框、自适应宽度、样式 token 落地（消费 `CanvasEngine.transform` 与可见性剔除）
-3. **M2-3** 右键新建节点 + 双击编辑标题（需验证中文输入法；可复用本轮的 ContextMenu 组件）
-4. 把 `CanvasEngine` 接入 `App.tsx` 的画布占位区（`canvas-placeholder`），验证滚轮缩放锚点手感
-5. **M2-8** 命令栈：撤销 / 重做（同样纯函数、可单测）
+1. **等用户验收画布 v1** 手感与持久化
+2. **M2-8** 命令栈：撤销 / 重做（把新建/移动/删除/改标题收敛为 Command，纯函数可单测）
+3. **M3** 连线层（EdgeLayer）：SVG 贝塞尔连线 + 箭头 + 锚点吸附
+4. 节点悬停简介 Tooltip / 节点内容面板（NodePanel）
+
 
 ## 六、阻塞项
 

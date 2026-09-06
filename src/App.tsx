@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { api, pickStorageDir, type AppInfo, type BoardMeta, type ProjectMeta } from './api';
+import { api, pickStorageDir, type AppInfo, type BoardFile, type BoardMeta, type BoardNode, type ProjectMeta } from './api';
 import { ContextMenu, type ContextMenuState } from './components/ContextMenu';
 import { TitleBar } from './components/TitleBar';
+import { BoardCanvas } from './components/BoardCanvas';
+import type { Viewport } from './canvas/CanvasEngine';
 
 type Phase = 'loading' | 'setup' | 'ready';
 
@@ -20,6 +22,8 @@ export default function App() {
   const [projects, setProjects] = useState<ProjectMeta[]>([]);
   const [boards, setBoards] = useState<BoardMeta[]>([]);
   const [activeProject, setActiveProject] = useState<ProjectMeta | null>(null);
+  const [activeBoard, setActiveBoard] = useState<BoardFile | null>(null);
+  const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -72,6 +76,32 @@ export default function App() {
   const refreshBoards = useCallback(async (projectId: string) => {
     setBoards(await api.boardsList(projectId));
   }, []);
+
+  /* ── 打开白板：加载 board.json 到画布 ── */
+  const openBoard = useCallback(
+    (projectId: string, boardId: string) =>
+      withBusy(async () => {
+        const bf = await api.boardLoad(projectId, boardId);
+        setActiveBoard(bf);
+      }),
+    [], // withBusy 稳定
+  );
+
+  /* ── 画布变更：本地即时更新 + 防抖落盘（DESIGN §6.5） ── */
+  const onCanvasChange = useCallback(
+    (nodes: BoardNode[], viewport: Viewport) => {
+      setActiveBoard((prev) => {
+        if (!prev) return prev;
+        const next: BoardFile = { ...prev, nodes, viewport };
+        if (saveTimer.current) clearTimeout(saveTimer.current);
+        saveTimer.current = setTimeout(() => {
+          api.boardSave(next).catch((e) => setError(String(e)));
+        }, 600);
+        return next;
+      });
+    },
+    [],
+  );
 
   const withBusy = async (fn: () => Promise<void>) => {
     setBusy(true);
@@ -129,6 +159,7 @@ export default function App() {
   const selectProject = (p: ProjectMeta) =>
     withBusy(async () => {
       setActiveProject(p);
+      setActiveBoard(null);
       await refreshBoards(p.id);
     });
 
@@ -148,6 +179,7 @@ export default function App() {
       if (!activeProject) return;
       if (!confirm(`删除白板「${b.name}」？其中的 Markdown 文件会一并移除。`)) return;
       await api.boardDelete(activeProject.id, b.id);
+      if (activeBoard?.id === b.id) setActiveBoard(null);
       await refreshBoards(activeProject.id);
     });
 
@@ -192,6 +224,7 @@ export default function App() {
 
   const boardItemMenu = (e: React.MouseEvent, b: BoardMeta) =>
     openAt(e, [
+      { type: 'item', label: '打开', onClick: () => activeProject && openBoard(activeProject.id, b.id) },
       {
         type: 'item',
         label: '重命名',
@@ -290,7 +323,12 @@ export default function App() {
           </div>
           <ul className="list" onContextMenu={activeProject ? boardsPaneMenu : undefined}>
             {boards.map((b) => (
-              <li key={b.id} className="list-item" onContextMenu={(e) => boardItemMenu(e, b)}>
+              <li
+                key={b.id}
+                className={`list-item ${activeBoard?.id === b.id ? 'is-active' : ''}`}
+                onClick={() => activeProject && openBoard(activeProject.id, b.id)}
+                onContextMenu={(e) => boardItemMenu(e, b)}
+              >
                 <span className="list-title">{b.name}</span>
                 <span className="list-meta">{b.updated_at.slice(0, 10)}</span>
               </li>
@@ -303,12 +341,20 @@ export default function App() {
           </ul>
         </aside>
 
-        {/* 画布占位：M2 会在这里挂 CanvasEngine */}
-        <main className="board-canvas canvas-placeholder">
-          <p className="placeholder-hint">
-            {activeProject ? '选择或新建一块白板' : '从左侧选择一个项目'}
-          </p>
-        </main>
+        {/* 画布区：挂 CanvasEngine（M2-2 / M2-3） */}
+        {activeBoard ? (
+          <BoardCanvas key={activeBoard.id} board={activeBoard} onChange={onCanvasChange} />
+        ) : (
+          <main className="board-canvas canvas-placeholder">
+            <p className="placeholder-hint">
+              {!activeProject
+                ? '从左侧选择一个项目'
+                : boards.length === 0
+                  ? '右键白板栏空白处 · 新建一块白板'
+                  : '选择一块白板打开画布'}
+            </p>
+          </main>
+        )}
       </div>
 
       {menu && <ContextMenu state={menu} onClose={() => setMenu(null)} />}
