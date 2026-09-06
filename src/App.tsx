@@ -5,6 +5,8 @@ import { TitleBar } from './components/TitleBar';
 import { BoardCanvas } from './components/BoardCanvas';
 import type { Viewport } from './canvas/CanvasEngine';
 import { getCurrentWindow } from '@tauri-apps/api/window';
+import { SettingsPanel } from './components/SettingsPanel';
+import { loadSettings, saveSettings, applySettings, type Settings } from './settings';
 
 type Phase = 'loading' | 'setup' | 'ready';
 
@@ -30,11 +32,24 @@ export default function App() {
 
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [fullscreen, setFullscreen] = useState(false);
+  const [settings, setSettings] = useState<Settings>(() => loadSettings());
+  const [settingsOpen, setSettingsOpen] = useState(false);
 
   const [menu, setMenu] = useState<ContextMenuState | null>(null);
   const [editing, setEditing] = useState<Editing>(null);
   const [draft, setDraft] = useState('');
   const editRef = useRef<HTMLInputElement>(null);
+
+  /* 应用外观设置（主题 / 玻璃 / 动画）到 <html> */
+  useEffect(() => {
+    applySettings(settings);
+    saveSettings(settings);
+  }, [settings]);
+
+  const patchSettings = useCallback(
+    (patch: Partial<Settings>) => setSettings((s) => ({ ...s, ...patch })),
+    [],
+  );
 
   /* 启动：读平台信息 + 配置 */
   useEffect(() => {
@@ -232,7 +247,9 @@ export default function App() {
     openAt(e, [
       { type: 'info', text: '脉络 Lumen', sub: root ?? '未设置存储目录' },
       { type: 'separator' },
+      { type: 'item', label: '设置…', onClick: () => setSettingsOpen(true) },
       { type: 'item', label: '进入全屏  F11', onClick: () => applyFullscreen(true) },
+      { type: 'separator' },
       { type: 'item', label: '更改存储目录…', onClick: chooseDir },
     ]);
 
@@ -312,6 +329,9 @@ export default function App() {
           </div>
         </div>
         {menu && <ContextMenu state={menu} onClose={() => setMenu(null)} />}
+        {settingsOpen && (
+          <SettingsPanel settings={settings} onChange={patchSettings} onClose={() => setSettingsOpen(false)} />
+        )}
       </div>
     );
   }
@@ -355,7 +375,7 @@ export default function App() {
       <div className="workspace">
         {/* 侧栏（项目 + 白板）：由标题栏三横线开关统一收起/展开 */}
         {!sidebarCollapsed && (
-          <div className="sidebar">
+          <div className="sidebar glass-surface">
             {/* 项目栏：空白处右键 = 新建项目 */}
             <aside className="pane pane-projects">
               <div className="pane-head">
@@ -432,6 +452,9 @@ export default function App() {
       </div>
 
       {menu && <ContextMenu state={menu} onClose={() => setMenu(null)} />}
+      {settingsOpen && (
+        <SettingsPanel settings={settings} onChange={patchSettings} onClose={() => setSettingsOpen(false)} />
+      )}
     </div>
   );
 }

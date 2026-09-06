@@ -13,6 +13,7 @@ import {
 } from '../canvas/history';
 import type { BoardFile, BoardNode } from '../api';
 import { NodeCard } from './NodeCard';
+import { NodeBubble } from './NodeBubble';
 import { ContextMenu, type ContextMenuState } from './ContextMenu';
 
 /** 生成一个前端本地节点 id（后端保存时沿用；与 Rust 侧 new_id 命名风格一致） */
@@ -50,6 +51,7 @@ export function BoardCanvas({
   const [selected, setSelected] = useState<string | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [menu, setMenu] = useState<ContextMenuState | null>(null);
+  const [bubble, setBubble] = useState<{ id: string; x: number; y: number } | null>(null);
 
   // 切换白板时重置引擎与历史栈
   useEffect(() => {
@@ -57,6 +59,7 @@ export function BoardCanvas({
     setHistory(createHistory(board.nodes));
     setSelected(null);
     setEditingId(null);
+    setBubble(null);
     rerender();
   }, [board.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -117,6 +120,9 @@ export function BoardCanvas({
 
   const rect = () => wrapRef.current?.getBoundingClientRect() ?? { left: 0, top: 0, width: 1, height: 1 };
 
+  // 拖动过节点后，随之而来的 click 不应弹气泡
+  const suppressClick = useRef(false);
+
   /* ── 滚轮缩放：以光标为锚点 ── */
   const onWheel = (e: React.WheelEvent) => {
     e.preventDefault();
@@ -132,6 +138,7 @@ export function BoardCanvas({
   const onCanvasPointerDown = (e: React.PointerEvent) => {
     if (e.button !== 0) return;
     setSelected(null);
+    setBubble(null);
     const vp = engine.viewport;
     drag.current = { kind: 'pan', startX: e.clientX, startY: e.clientY, vx: vp.x, vy: vp.y };
     (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
@@ -186,6 +193,7 @@ export function BoardCanvas({
       onChange(nodes, engine.viewport);
     } else if (d.moved) {
       // 拖动结束：把拖拽前快照补进 past，present 已是最终位置
+      suppressClick.current = true;
       setHistory((h) => {
         onChange(h.present, engine.viewport);
         return commitFromBaseline(h, d.baseline);
@@ -219,11 +227,30 @@ export function BoardCanvas({
       x: e.clientX,
       y: e.clientY,
       items: [
-        { type: 'item', label: '编辑标题', onClick: () => setEditingId(id) },
+        { type: 'item', label: '编辑', onClick: () => startEdit(id) },
         { type: 'separator' },
         { type: 'item', label: '删除节点', danger: true, onClick: () => removeNode(id) },
       ],
     });
+  };
+
+  /** 点击节点：在鼠标附近弹出气泡卡（显示完整问题 + Markdown 文档） */
+  const openBubble = (id: string) => {
+    if (suppressClick.current) {
+      suppressClick.current = false;
+      return;
+    }
+    // 用节点当前屏幕位置做锚点
+    const n = nodes.find((x) => x.id === id);
+    const r = rect();
+    if (!n) return;
+    const scr = engine.toScreen({ x: n.x, y: n.y });
+    setBubble({ id, x: r.left + scr.x, y: r.top + scr.y });
+  };
+
+  const startEdit = (id: string) => {
+    setBubble(null);
+    setEditingId(id);
   };
 
   /** 屏幕坐标 → 世界坐标后新建（右键/双击空白用） */
@@ -256,17 +283,23 @@ export function BoardCanvas({
     apply(nodes.filter((n) => n.id !== id));
     if (selected === id) setSelected(null);
     if (editingId === id) setEditingId(null);
+    if (bubble?.id === id) setBubble(null);
   };
 
-  const commitTitle = (id: string, title: string) => {
-    setEditingId(null);
-    const t = title.trim();
+  /** 提交节点标题/完整问题的编辑（title 与 summary 可分别提交） */
+  const commitNode = (id: string, patch: { title?: string; summary?: string }) => {
     const target = nodes.find((n) => n.id === id);
-    // 标题没变则不记历史，避免污染撤销栈
-    if (!target || (t || '未命名问题') === target.title) return;
+    if (!target) return;
+    const nextTitle = patch.title !== undefined ? (patch.title.trim() || '未命名问题') : target.title;
+    const nextSummary =
+      patch.summary !== undefined ? (patch.summary.trim() || null) : (target.summary ?? null);
+    // 无实际变化则不记历史，避免污染撤销栈
+    if (nextTitle === target.title && nextSummary === (target.summary ?? null)) return;
     apply(
       nodes.map((n) =>
-        n.id === id ? { ...n, title: t || '未命名问题', updated_at: new Date().toISOString() } : n,
+        n.id === id
+          ? { ...n, title: nextTitle, summary: nextSummary, updated_at: new Date().toISOString() }
+          : n,
       ),
     );
   };
@@ -339,9 +372,10 @@ export function BoardCanvas({
             selected={selected === n.id}
             editing={editingId === n.id}
             onPointerDown={onNodePointerDown}
-            onDoubleClick={setEditingId}
+            onOpen={openBubble}
+            onStartEdit={startEdit}
             onContextMenu={onNodeContextMenu}
-            onTitleCommit={commitTitle}
+            onCommit={commitNode}
             onEditCancel={() => setEditingId(null)}
           />
         ))}
@@ -353,6 +387,18 @@ export function BoardCanvas({
           <p className="canvas-empty-sub">滚轮缩放 · 拖拽空白平移画布 · Ctrl+Z 撤销</p>
         </div>
       )}
+
+      {bubble && (() => {
+        const bn = nodes.find((n) => n.id === bubble.id);
+        return bn ? (
+          <NodeBubble
+            node={bn}
+            anchor={{ x: bubble.x, y: bubble.y }}
+            onClose={() => setBubble(null)}
+            onEdit={startEdit}
+          />
+        ) : null;
+      })()}
 
       {menu && <ContextMenu state={menu} onClose={() => setMenu(null)} />}
     </div>

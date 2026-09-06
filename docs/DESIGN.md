@@ -699,3 +699,5 @@ lumen/
 | ADR-012 | 缩放以「屏幕锚点世界点不动」为不变量（zoomAtPoint），视口用 `translate3d+scale` 整体变换 | 滚轮/捏合缩放手感的正确性可用单测钉死（往返一致、锚点不动）；容器整体 transform 避免逐节点重排，配合包围盒剔除做虚拟化（DESIGN §5.4 性能策略） |
 | ADR-013 | 自定义标题栏采用 native_mac 策略（mac 保留系统红绿灯 + Overlay，Win/Linux 自绘） | 主目标是 macOS：遵循各系统窗口惯例（mac 红绿灯在左、Win 按钮在右）比强行统一更符合用户肌肉记忆；实现上 mac 用 titleBarStyle=Overlay + hiddenTitle，其它平台 decorations=false 前端自绘 |
 | ADR-014 | 列表操作从「底部常驻表单」改为右键菜单 + 内联编辑 | 底部固定表单占用垂直空间且与白板极简气质不符；右键菜单（空白=新建、条目=打开/重命名/删除）+ 就地内联输入更贴近桌面应用直觉，ContextMenu 组件后续可复用于画布节点（M2-3） |
+| ADR-015 | 液态玻璃采用「跨引擎一致的毛玻璃核心」而非 SVG 位移真折射 | 主目标 macOS 用 WKWebView(Safari)，SVG feDisplacementMap 在其 `backdrop-filter` 内不生效，业界"真折射"库(rdev/liquid-glass、glass-refraction 等)在 Safari 上都会退化为普通毛玻璃。故抽取各库共有、双引擎一致的核心：分层 `backdrop-filter: blur()+saturate()` + 半透明染色 + 亮边高光 + 每主题染色变量；透明度/模糊在设置里可调、持久化到 localStorage。零 npm 依赖、可控可回退(关玻璃即实色) |
+| ADR-016 | 节点承载「概括标题 + 完整问题」两属性，Markdown 文档移入点击气泡卡 | 卡面只放十几字标题(大字)+完整问题(自适应高度、`white-space:pre-wrap` 防长文本被截尾)，保持画布清爽；关联的 GPT 导出 .md 在点击节点后于鼠标附近的玻璃气泡卡(NodeBubble)里列出，符合"按需查看"。数据模型早已含 title/summary/docs，无需改后端 |
