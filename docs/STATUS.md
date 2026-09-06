@@ -3,7 +3,7 @@
 > **开工前先读本文件；每完成一件事就更新本文件。**
 > 本文件只记录「进度」。计划与任务清单见 [PLAN.md](./PLAN.md)，设计与决策见 [DESIGN.md](./DESIGN.md)。
 
-**最后更新**：2026-09-06 23:40 (Asia/Shanghai)
+**最后更新**：2026-09-07 08:20 (Asia/Shanghai)
 
 ---
 
@@ -53,13 +53,16 @@
 | **原生液态玻璃**（window-vibrancy，ADR-017/018） | Mac=Liquid Glass(macOS26+)/vibrancy fallback、Win=Mica/Acrylic、CSS native-glass、设置 原生/网页/关闭 三档；Windows 实机编译+启动无 panic（`700e5f2`）；Mac 观感待 Mac 上验 |
 | **玻璃观感修正**：内容区实色化、外壳主题色半透明（`835382a`） | 修"整片米黄+焦点变色"：board-canvas 改回实色不透材质，titlebar/sidebar 主题色半透明+轻 backdrop-filter，浮层/node-card 提高不透明度 |
 | **平台策略：Windows/Linux 纯实色、原生玻璃仅 Mac**（ADR-019，`solid_win`） | Cargo window-vibrancy 依赖只留 macOS target 并给 tauri 加 macos-private-api feature；`apply_native_material` 仅 `#[cfg(target_os="macos")]`；前端 `applySettings(s,platform)` 非 mac 时 native 退化 off、设置面板"原生"按钮禁用标"·仅Mac"。`cargo check`/`npm run build`/`check:secrets` 全过；Windows 实机 tauri:dev 启动无 panic（sess-5） |
+| **M3 连线层 EdgeLayer**：贝塞尔连线+箭头+锚点吸附+有向无向+标签+级联删除+持久化+撤销 | 新增 `src/canvas/geometry.ts` 纯函数(borderPoint/edgeGeometry/boxContains) + **12 单测**(合计 **51 passed**)；BoardCanvas 历史栈改 Graph{nodes,edges}、锚点拖拽建连线、SVG 边层随世界层 transform、端点吸附边框、Delete 删选中连线/节点、右键切有向/无向+标签内联编辑、删节点级联清边；App onCanvasChange 落盘 edges。`typecheck`/`npm test`(51)/`npm run build`(47模块)/`check:secrets` 全过；dev sess-5 HMR 生效 |
+| **外壳配色刷新**（ADR-021）：侧栏/顶栏更清新明亮 | `--bg-chrome` 冷灰 #f6f7f9→近白微青绿 #fbfdfc、`--bg-hover` 改强调色淡染、边框带绿浅色；三主题补 `--edge-color`/`--edge-label-bg` 连线配色。待用户看观感 |
 
 ## 三、进行中
 
 - 白板画布 v1（M2-2 节点 DOM 层 + M2-3 新建/编辑/移动）已接入主界面，代码级验证全过。
 - **等用户实机验收**：新建/拖拽/双击编辑/缩放平移的手感，以及自动落盘后重开白板节点是否还在。
 - 应用以后台会话 `sess-5`（`npm run tauri:dev`）运行中，窗口在用户桌面（sess-3 因整页重载/Cargo 变更退出，已重启）。
-- **等用户验收 Windows 纯实色主题观感**（solid_win）：原生档在 Win 上应为纯实色、设置里"原生"按钮禁用标注"·仅Mac"。
+- **等用户验收 M3 连线**：拖节点四周锚点到另一节点建连线、右键连线切有向/无向/加标签/删除、删节点连线是否级联清除、重开白板连线是否恢复。
+- **等用户验收外壳新配色**：侧栏/顶栏是否够清新明亮。
 
 
 ## 四、等待用户执行
@@ -74,8 +77,8 @@
 ## 五、下一步（接下来我做的）
 
 1. **等用户验收画布 v1** 手感与持久化
-3. **M3** 连线层（EdgeLayer）：SVG 贝塞尔连线 + 箭头 + 锚点吸附
-4. 节点悬停简介 Tooltip / 节点内容面板（NodePanel）
+3. 节点悬停简介 Tooltip / 节点内容面板（NodePanel）
+4. M4 阅读窗口（移植 mdread 内核）
 
 
 ## 六、阻塞项

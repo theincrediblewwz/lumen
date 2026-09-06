@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { CanvasEngine, type Viewport } from '../canvas/CanvasEngine';
 import {
   createHistory,
@@ -11,31 +11,40 @@ import {
   canRedo,
   type History,
 } from '../canvas/history';
-import type { BoardFile, BoardNode } from '../api';
+import { edgeGeometry, straightPath, boxContains, type Box } from '../canvas/geometry';
+import type { BoardFile, BoardNode, BoardEdge } from '../api';
 import { NodeCard } from './NodeCard';
 import { NodeBubble } from './NodeBubble';
 import { ContextMenu, type ContextMenuState } from './ContextMenu';
 
-/** 生成一个前端本地节点 id（后端保存时沿用；与 Rust 侧 new_id 命名风格一致） */
+/** 白板图状态：节点 + 连线由同一个历史栈驱动，撤销/重做覆盖两者 */
+type Graph = { nodes: BoardNode[]; edges: BoardEdge[] };
+
 function newNodeId(): string {
   return `n_${Date.now().toString(36)}${Math.floor(Math.random() * 1e6).toString(36)}`;
 }
+function newEdgeId(): string {
+  return `e_${Date.now().toString(36)}${Math.floor(Math.random() * 1e6).toString(36)}`;
+}
 
 const DEFAULT_NODE_W = 240;
+/** 未测得真实高度前的兜底高度（首帧连线用） */
+const FALLBACK_NODE_H = 64;
 
 /**
- * BoardCanvas（M2-2 / M2-3 / M2-8）：白板画布 v1
+ * BoardCanvas（M2 + M3）：白板画布
  * - 视口：滚轮缩放（光标锚点不动）、空白拖拽平移
- * - 节点：工具栏「＋新建节点」/ 双击空白 / 右键空白新建；拖拽移动、双击节点改标题、右键节点删除
- * - 命令栈：新建/删除/改标题/拖拽移动均可撤销/重做（Ctrl+Z / Ctrl+Shift+Z / Ctrl+Y）
- * - 变更通过 onChange 抛给上层做防抖持久化
+ * - 节点：右键/双击空白新建；拖拽移动、双击改标题、右键删除
+ * - 连线（M3）：节点四周锚点拖出 → 落到目标节点建立；贝塞尔曲线 + 箭头 + 端点吸附边框；
+ *   选中/删除、有向⇄无向、标签；删除节点级联清理其连线
+ * - 命令栈：以上结构变更均可撤销/重做（Ctrl+Z / Ctrl+Shift+Z / Ctrl+Y）
  */
 export function BoardCanvas({
   board,
   onChange,
 }: {
   board: BoardFile;
-  onChange: (nodes: BoardNode[], viewport: Viewport) => void;
+  onChange: (nodes: BoardNode[], edges: BoardEdge[], viewport: Viewport) => void;
 }) {
   const wrapRef = useRef<HTMLDivElement>(null);
   const engineRef = useRef<CanvasEngine>(
@@ -44,21 +53,40 @@ export function BoardCanvas({
   const [, force] = useState(0);
   const rerender = useCallback(() => force((n) => n + 1), []);
 
-  // 节点状态由历史栈驱动（present 即当前节点数组）
-  const [history, setHistory] = useState<History<BoardNode[]>>(() => createHistory(board.nodes));
-  const nodes = history.present;
+  const [history, setHistory] = useState<History<Graph>>(() =>
+    createHistory({ nodes: board.nodes, edges: board.edges ?? [] }),
+  );
+  const nodes = history.present.nodes;
+  const edges = history.present.edges;
 
   const [selected, setSelected] = useState<string | null>(null);
+  const [selectedEdge, setSelectedEdge] = useState<string | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
+  const [editingEdge, setEditingEdge] = useState<string | null>(null);
   const [menu, setMenu] = useState<ContextMenuState | null>(null);
   const [bubble, setBubble] = useState<{ id: string; x: number; y: number } | null>(null);
+  const [hoverNode, setHoverNode] = useState<string | null>(null);
 
-  // 切换白板时重置引擎与历史栈
+  /** 每个节点测得的真实布局尺寸（世界单位；不随 transform 缩放变化） */
+  const sizesRef = useRef<Record<string, { w: number; h: number }>>({});
+  const [sizesVer, setSizesVer] = useState(0);
+  const onMeasure = useCallback((id: string, w: number, h: number) => {
+    const prev = sizesRef.current[id];
+    if (!prev || Math.abs(prev.w - w) > 0.5 || Math.abs(prev.h - h) > 0.5) {
+      sizesRef.current[id] = { w, h };
+      setSizesVer((v) => v + 1);
+    }
+  }, []);
+
+  // 切换白板时重置引擎、历史栈、测量缓存
   useEffect(() => {
     engineRef.current = new CanvasEngine(board.viewport, { minZoom: 0.2, maxZoom: 3 });
-    setHistory(createHistory(board.nodes));
+    setHistory(createHistory({ nodes: board.nodes, edges: board.edges ?? [] }));
+    sizesRef.current = {};
     setSelected(null);
+    setSelectedEdge(null);
     setEditingId(null);
+    setEditingEdge(null);
     setBubble(null);
     rerender();
   }, [board.id]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -67,9 +95,9 @@ export function BoardCanvas({
 
   /** 一次原子变更：记历史 + 落盘 */
   const apply = useCallback(
-    (next: BoardNode[]) => {
+    (next: Graph) => {
       setHistory((h) => pushState(h, next));
-      onChange(next, engine.viewport);
+      onChange(next.nodes, next.edges, engine.viewport);
     },
     [engine, onChange],
   );
@@ -78,86 +106,139 @@ export function BoardCanvas({
     setHistory((h) => {
       if (!canUndo(h)) return h;
       const nh = histUndo(h);
-      onChange(nh.present, engine.viewport);
+      onChange(nh.present.nodes, nh.present.edges, engine.viewport);
       return nh;
     });
     setEditingId(null);
+    setEditingEdge(null);
   }, [engine, onChange]);
 
   const doRedo = useCallback(() => {
     setHistory((h) => {
       if (!canRedo(h)) return h;
       const nh = histRedo(h);
-      onChange(nh.present, engine.viewport);
+      onChange(nh.present.nodes, nh.present.edges, engine.viewport);
       return nh;
     });
     setEditingId(null);
+    setEditingEdge(null);
   }, [engine, onChange]);
 
-  /* 撤销/重做快捷键 */
+  const removeEdge = useCallback(
+    (id: string) => {
+      apply({ nodes, edges: edges.filter((e) => e.id !== id) });
+      if (selectedEdge === id) setSelectedEdge(null);
+      if (editingEdge === id) setEditingEdge(null);
+    },
+    [apply, nodes, edges, selectedEdge, editingEdge],
+  );
+
+  const removeNodeRef = useRef<(id: string) => void>(() => {});
+
+  /* 快捷键：撤销/重做 + Delete 删除选中连线/节点 */
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (!(e.ctrlKey || e.metaKey)) return;
-      const k = e.key.toLowerCase();
-      if (k === 'z' && !e.shiftKey) {
-        e.preventDefault();
-        doUndo();
-      } else if ((k === 'z' && e.shiftKey) || k === 'y') {
-        e.preventDefault();
-        doRedo();
+      if (e.ctrlKey || e.metaKey) {
+        const k = e.key.toLowerCase();
+        if (k === 'z' && !e.shiftKey) {
+          e.preventDefault();
+          doUndo();
+        } else if ((k === 'z' && e.shiftKey) || k === 'y') {
+          e.preventDefault();
+          doRedo();
+        }
+        return;
+      }
+      if ((e.key === 'Delete' || e.key === 'Backspace') && editingId === null && editingEdge === null) {
+        if (selectedEdge) {
+          e.preventDefault();
+          removeEdge(selectedEdge);
+        } else if (selected) {
+          e.preventDefault();
+          removeNodeRef.current(selected);
+        }
       }
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [doUndo, doRedo]);
+  }, [doUndo, doRedo, selectedEdge, selected, editingId, editingEdge, removeEdge]);
 
-  /* ── 拖拽状态（用 ref 避免频繁 setState） ── */
+  /* ── 拖拽状态 ── */
   const drag = useRef<
     | null
     | { kind: 'pan'; startX: number; startY: number; vx: number; vy: number }
-    | { kind: 'node'; id: string; lastX: number; lastY: number; moved: boolean; baseline: BoardNode[] }
+    | { kind: 'node'; id: string; lastX: number; lastY: number; moved: boolean; baseline: Graph }
+    | { kind: 'connect'; fromId: string }
   >(null);
+
+  /** 连线拖拽的实时状态（世界坐标）；单独 state 以驱动预览重绘 */
+  const [connect, setConnect] = useState<{ fromId: string; to: { x: number; y: number }; hoverId: string | null } | null>(
+    null,
+  );
 
   const rect = () => wrapRef.current?.getBoundingClientRect() ?? { left: 0, top: 0, width: 1, height: 1 };
 
-  // 拖动过节点后，随之而来的 click 不应弹气泡
   const suppressClick = useRef(false);
 
-  /* ── 滚轮缩放：以光标为锚点 ── */
+  /** 取节点世界矩形（用测得尺寸，未测得则兜底） */
+  const boxOf = useCallback(
+    (n: BoardNode): Box => {
+      const s = sizesRef.current[n.id];
+      return { x: n.x, y: n.y, w: s?.w ?? n.w ?? DEFAULT_NODE_W, h: s?.h ?? FALLBACK_NODE_H };
+    },
+    [],
+  );
+
+  /* ── 滚轮缩放 ── */
   const onWheel = (e: React.WheelEvent) => {
     e.preventDefault();
     const r = rect();
     const anchor = { x: e.clientX - r.left, y: e.clientY - r.top };
-    const factor = Math.exp(-e.deltaY * 0.0015);
-    engine.zoomByFactor(anchor, factor);
+    engine.zoomByFactor(anchor, Math.exp(-e.deltaY * 0.0015));
     rerender();
-    onChange(nodes, engine.viewport);
+    onChange(nodes, edges, engine.viewport);
   };
 
-  /* ── 空白按下：平移画布 ── */
+  /* ── 空白按下：平移 ── */
   const onCanvasPointerDown = (e: React.PointerEvent) => {
     if (e.button !== 0) return;
     setSelected(null);
+    setSelectedEdge(null);
     setBubble(null);
     const vp = engine.viewport;
     drag.current = { kind: 'pan', startX: e.clientX, startY: e.clientY, vx: vp.x, vy: vp.y };
     (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
   };
 
-  /* ── 节点按下：选中 + 准备拖拽（记下拖拽前快照做 baseline） ── */
+  /* ── 节点按下：选中 + 准备拖拽 ── */
   const onNodePointerDown = (e: React.PointerEvent, id: string) => {
     if (e.button !== 0) return;
     e.stopPropagation();
     setSelected(id);
+    setSelectedEdge(null);
     drag.current = {
       kind: 'node',
       id,
       lastX: e.clientX,
       lastY: e.clientY,
       moved: false,
-      baseline: nodes,
+      baseline: history.present,
     };
     (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+  };
+
+  /* ── 锚点按下：开始拉连线 ── */
+  const onAnchorPointerDown = (e: React.PointerEvent, id: string) => {
+    if (e.button !== 0) return;
+    e.stopPropagation();
+    e.preventDefault();
+    const n = nodes.find((x) => x.id === id);
+    if (!n) return;
+    const b = boxOf(n);
+    drag.current = { kind: 'connect', fromId: id };
+    setConnect({ fromId: id, to: { x: b.x + b.w / 2, y: b.y + b.h / 2 }, hoverId: null });
+    // 在画布容器上捕获指针，保证移出源节点也持续收到 move
+    wrapRef.current?.setPointerCapture(e.pointerId);
   };
 
   const onPointerMove = (e: React.PointerEvent) => {
@@ -167,20 +248,32 @@ export function BoardCanvas({
       const vp = engine.viewport;
       engine.setViewport({ ...vp, x: d.vx + (e.clientX - d.startX), y: d.vy + (e.clientY - d.startY) });
       rerender();
-    } else {
+    } else if (d.kind === 'node') {
       const zoom = engine.viewport.zoom;
       const dx = (e.clientX - d.lastX) / zoom;
       const dy = (e.clientY - d.lastY) / zoom;
       if (dx !== 0 || dy !== 0) d.moved = true;
       d.lastX = e.clientX;
       d.lastY = e.clientY;
-      // 拖拽过程中只 replacePresent，不记历史（松手时一次性提交）
       setHistory((h) =>
-        replacePresent(
-          h,
-          h.present.map((n) => (n.id === d.id ? { ...n, x: n.x + dx, y: n.y + dy } : n)),
-        ),
+        replacePresent(h, {
+          ...h.present,
+          nodes: h.present.nodes.map((n) => (n.id === d.id ? { ...n, x: n.x + dx, y: n.y + dy } : n)),
+        }),
       );
+    } else {
+      // connect：更新终点世界坐标 + 命中目标节点
+      const r = rect();
+      const world = engine.toWorld({ x: e.clientX - r.left, y: e.clientY - r.top });
+      let hoverId: string | null = null;
+      for (const n of nodes) {
+        if (n.id === d.fromId) continue;
+        if (boxContains(boxOf(n), world)) {
+          hoverId = n.id;
+          break;
+        }
+      }
+      setConnect({ fromId: d.fromId, to: world, hoverId });
     }
   };
 
@@ -189,19 +282,45 @@ export function BoardCanvas({
     drag.current = null;
     if (!d) return;
     (e.currentTarget as HTMLElement).releasePointerCapture?.(e.pointerId);
+    wrapRef.current?.releasePointerCapture?.(e.pointerId);
     if (d.kind === 'pan') {
-      onChange(nodes, engine.viewport);
-    } else if (d.moved) {
-      // 拖动结束：把拖拽前快照补进 past，present 已是最终位置
-      suppressClick.current = true;
-      setHistory((h) => {
-        onChange(h.present, engine.viewport);
-        return commitFromBaseline(h, d.baseline);
-      });
+      onChange(nodes, edges, engine.viewport);
+    } else if (d.kind === 'node') {
+      if (d.moved) {
+        suppressClick.current = true;
+        setHistory((h) => {
+          onChange(h.present.nodes, h.present.edges, engine.viewport);
+          return commitFromBaseline(h, d.baseline);
+        });
+      }
+    } else {
+      // connect：落到某节点则建立连线
+      const target = connect?.hoverId ?? null;
+      setConnect(null);
+      if (target && target !== d.fromId) {
+        const dup = edges.some(
+          (ed) =>
+            (ed.from === d.fromId && ed.to === target) ||
+            (!ed.directed && ed.from === target && ed.to === d.fromId),
+        );
+        if (!dup) {
+          const edge: BoardEdge = {
+            id: newEdgeId(),
+            from: d.fromId,
+            to: target,
+            directed: true,
+            label: null,
+            created_at: new Date().toISOString(),
+          };
+          apply({ nodes, edges: [...edges, edge] });
+          setSelectedEdge(edge.id);
+          setSelected(null);
+        }
+      }
     }
   };
 
-  /* ── 右键 ── */
+  /* ── 右键：空白 ── */
   const onCanvasContextMenu = (e: React.MouseEvent) => {
     e.preventDefault();
     e.stopPropagation();
@@ -223,6 +342,7 @@ export function BoardCanvas({
     e.preventDefault();
     e.stopPropagation();
     setSelected(id);
+    setSelectedEdge(null);
     setMenu({
       x: e.clientX,
       y: e.clientY,
@@ -234,13 +354,63 @@ export function BoardCanvas({
     });
   };
 
-  /** 点击节点：在鼠标附近弹出气泡卡（显示完整问题 + Markdown 文档） */
+  const onEdgeContextMenu = (e: React.MouseEvent, id: string) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const edge = edges.find((x) => x.id === id);
+    if (!edge) return;
+    setSelectedEdge(id);
+    setSelected(null);
+    setMenu({
+      x: e.clientX,
+      y: e.clientY,
+      items: [
+        {
+          type: 'item',
+          label: edge.directed ? '改为无向（相关）' : '改为有向（追问）',
+          onClick: () => toggleEdgeDir(id),
+        },
+        { type: 'item', label: edge.label ? '编辑标签' : '添加标签', onClick: () => startEdgeLabel(id) },
+        { type: 'separator' },
+        { type: 'item', label: '删除连线', danger: true, onClick: () => removeEdge(id) },
+      ],
+    });
+  };
+
+  const toggleEdgeDir = (id: string) => {
+    apply({
+      nodes,
+      edges: edges.map((e) => (e.id === id ? { ...e, directed: !e.directed } : e)),
+    });
+  };
+
+  const startEdgeLabel = (id: string) => {
+    setSelectedEdge(id);
+    setEditingEdge(id);
+  };
+
+  const commitEdgeLabel = (id: string, raw: string) => {
+    setEditingEdge(null);
+    const edge = edges.find((e) => e.id === id);
+    if (!edge) return;
+    const label = raw.trim() || null;
+    if (label === (edge.label ?? null)) return;
+    apply({ nodes, edges: edges.map((e) => (e.id === id ? { ...e, label } : e)) });
+  };
+
+  const onEdgeClick = (e: React.MouseEvent, id: string) => {
+    e.stopPropagation();
+    setSelectedEdge(id);
+    setSelected(null);
+    setBubble(null);
+  };
+
+  /* ── 节点气泡 / 编辑 ── */
   const openBubble = (id: string) => {
     if (suppressClick.current) {
       suppressClick.current = false;
       return;
     }
-    // 用节点当前屏幕位置做锚点
     const n = nodes.find((x) => x.id === id);
     const r = rect();
     if (!n) return;
@@ -253,7 +423,6 @@ export function BoardCanvas({
     setEditingId(id);
   };
 
-  /** 屏幕坐标 → 世界坐标后新建（右键/双击空白用） */
   const addNodeAtScreen = (clientX: number, clientY: number) => {
     const r = rect();
     const world = engine.toWorld({ x: clientX - r.left, y: clientY - r.top });
@@ -274,58 +443,90 @@ export function BoardCanvas({
       created_at: now,
       updated_at: now,
     };
-    apply([...nodes, node]);
+    apply({ nodes: [...nodes, node], edges });
     setSelected(node.id);
     setEditingId(node.id);
   };
 
   const removeNode = (id: string) => {
-    apply(nodes.filter((n) => n.id !== id));
+    // 级联清理该节点的连线（FR-4.5）
+    apply({
+      nodes: nodes.filter((n) => n.id !== id),
+      edges: edges.filter((e) => e.from !== id && e.to !== id),
+    });
     if (selected === id) setSelected(null);
     if (editingId === id) setEditingId(null);
     if (bubble?.id === id) setBubble(null);
   };
+  removeNodeRef.current = removeNode;
 
-  /** 提交节点标题/完整问题的编辑（title 与 summary 可分别提交） */
   const commitNode = (id: string, patch: { title?: string; summary?: string }) => {
     const target = nodes.find((n) => n.id === id);
     if (!target) return;
     const nextTitle = patch.title !== undefined ? (patch.title.trim() || '未命名问题') : target.title;
     const nextSummary =
       patch.summary !== undefined ? (patch.summary.trim() || null) : (target.summary ?? null);
-    // 无实际变化则不记历史，避免污染撤销栈
     if (nextTitle === target.title && nextSummary === (target.summary ?? null)) return;
-    apply(
-      nodes.map((n) =>
+    apply({
+      nodes: nodes.map((n) =>
         n.id === id
           ? { ...n, title: nextTitle, summary: nextSummary, updated_at: new Date().toISOString() }
           : n,
       ),
-    );
+      edges,
+    });
   };
 
-  /* ── 双击空白：新建节点（点在节点上时事件已被节点吞掉，不会触发） ── */
   const onCanvasDoubleClick = (e: React.MouseEvent) => {
     const t = e.target as HTMLElement;
-    if (t.closest('.node-card')) return; // 双击节点是改标题，交给 NodeCard
+    if (t.closest('.node-card')) return;
+    if (t.closest('.edge-hit')) return;
     addNodeAtScreen(e.clientX, e.clientY);
   };
 
-  /* ── 缩放越小、节点热力光越明显（提示此处有节点） ──
-     世界层被 scale(zoom) 整体缩放，故光晕的 blur/spread 要除以 zoom 反向补偿，
-     让屏幕上看到的光斑随缩小而增强、随放大而消隐。 */
+  /* ── 缩放越小、节点热力光越明显 ── */
   const zoom = engine.viewport.zoom;
-  const intensity = Math.max(0, Math.min(1, (0.85 - zoom) / 0.6)); // zoom 0.85→0，0.25→1
+  const intensity = Math.max(0, Math.min(1, (0.85 - zoom) / 0.6));
   const glowVars = {
     ['--glow-blur' as string]: `${(20 * intensity) / zoom}px`,
     ['--glow-spread' as string]: `${(3.5 * intensity) / zoom}px`,
     ['--glow-alpha' as string]: `${0.12 + 0.6 * intensity}`,
   } as React.CSSProperties;
 
+  /* ── 连线几何（世界坐标；随 canvas-world 一起 transform） ── */
+  const nodeById = useMemo(() => {
+    const m: Record<string, BoardNode> = {};
+    for (const n of nodes) m[n.id] = n;
+    return m;
+  }, [nodes]);
+
+  const laidEdges = useMemo(() => {
+    void sizesVer; // 尺寸变化时重算
+    return edges
+      .map((e) => {
+        const a = nodeById[e.from];
+        const b = nodeById[e.to];
+        if (!a || !b) return null;
+        const g = edgeGeometry(boxOf(a), boxOf(b));
+        return { edge: e, geo: g };
+      })
+      .filter((x): x is { edge: BoardEdge; geo: ReturnType<typeof edgeGeometry> } => x !== null);
+  }, [edges, nodeById, boxOf, sizesVer]);
+
+  // 连线拖拽预览路径
+  const connectPreview = useMemo(() => {
+    if (!connect) return null;
+    const a = nodeById[connect.fromId];
+    if (!a) return null;
+    const from = boxOf(a);
+    const fromCenter = { x: from.x + from.w / 2, y: from.y + from.h / 2 };
+    return straightPath(fromCenter, connect.to);
+  }, [connect, nodeById, boxOf]);
+
   return (
     <div
       ref={wrapRef}
-      className="board-canvas board-canvas-live"
+      className={`board-canvas board-canvas-live${connect ? ' is-connecting' : ''}`}
       onWheel={onWheel}
       onPointerDown={onCanvasPointerDown}
       onPointerMove={onPointerMove}
@@ -334,69 +535,132 @@ export function BoardCanvas({
       onContextMenu={onCanvasContextMenu}
       onDoubleClick={onCanvasDoubleClick}
     >
-      {/* 悬浮工具栏：撤销 / 重做（始终可见，可点） */}
+      {/* 悬浮工具栏：撤销 / 重做 */}
       <div className="canvas-toolbar" onPointerDown={(e) => e.stopPropagation()}>
-        <button
-          type="button"
-          className="tb-btn"
-          title="撤销 (Ctrl+Z)"
-          disabled={!canUndo(history)}
-          onClick={doUndo}
-        >
+        <button type="button" className="tb-btn" title="撤销 (Ctrl+Z)" disabled={!canUndo(history)} onClick={doUndo}>
           <svg width="15" height="15" viewBox="0 0 16 16" aria-hidden="true">
             <path d="M6 4L2.5 7.2 6 10.4M3 7.2h6.2A4 4 0 0 1 13 11.2v.3" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" />
           </svg>
         </button>
-        <button
-          type="button"
-          className="tb-btn"
-          title="重做 (Ctrl+Shift+Z)"
-          disabled={!canRedo(history)}
-          onClick={doRedo}
-        >
+        <button type="button" className="tb-btn" title="重做 (Ctrl+Shift+Z)" disabled={!canRedo(history)} onClick={doRedo}>
           <svg width="15" height="15" viewBox="0 0 16 16" aria-hidden="true">
             <path d="M10 4l3.5 3.2L10 10.4M13 7.2H6.8A4 4 0 0 0 3 11.2v.3" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" />
           </svg>
         </button>
       </div>
 
-      {/* 世界层：只改 transform，不逐个重排节点（DESIGN §5.4） */}
-      <div
-        className="canvas-world"
-        style={{ transform: engine.transform, transformOrigin: '0 0', ...glowVars }}
-      >
+      {/* 世界层：只改 transform（DESIGN §5.4） */}
+      <div className="canvas-world" style={{ transform: engine.transform, transformOrigin: '0 0', ...glowVars }}>
+        {/* 连线层（SVG，世界坐标，位于节点下方） */}
+        <svg className="edge-layer" style={{ overflow: 'visible' }} width="0" height="0">
+          <defs>
+            <marker id="lm-arrow" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+              <path d="M0 0L10 5L0 10z" fill="var(--edge-color)" />
+            </marker>
+            <marker id="lm-arrow-sel" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+              <path d="M0 0L10 5L0 10z" fill="var(--accent)" />
+            </marker>
+          </defs>
+
+          {laidEdges.map(({ edge, geo }) => {
+            const isSel = selectedEdge === edge.id;
+            return (
+              <g key={edge.id} className={`edge${isSel ? ' is-selected' : ''}`}>
+                {/* 加宽透明命中区 */}
+                <path
+                  className="edge-hit"
+                  d={geo.d}
+                  fill="none"
+                  stroke="transparent"
+                  strokeWidth={18}
+                  onClick={(e) => onEdgeClick(e, edge.id)}
+                  onDoubleClick={(e) => {
+                    e.stopPropagation();
+                    startEdgeLabel(edge.id);
+                  }}
+                  onContextMenu={(e) => onEdgeContextMenu(e, edge.id)}
+                  onPointerDown={(e) => e.stopPropagation()}
+                />
+                {/* 可见曲线 */}
+                <path
+                  className="edge-line"
+                  d={geo.d}
+                  fill="none"
+                  vectorEffect="non-scaling-stroke"
+                  markerEnd={edge.directed ? (isSel ? 'url(#lm-arrow-sel)' : 'url(#lm-arrow)') : undefined}
+                />
+                {edge.label && !editingEdge && (
+                  <g transform={`translate(${geo.mid.x} ${geo.mid.y})`}>
+                    <text className="edge-label" textAnchor="middle" dominantBaseline="central" onDoubleClick={(e) => { e.stopPropagation(); startEdgeLabel(edge.id); }} onPointerDown={(e) => e.stopPropagation()}>
+                      {edge.label}
+                    </text>
+                  </g>
+                )}
+              </g>
+            );
+          })}
+
+          {/* 拖拽预览 */}
+          {connectPreview && (
+            <path className="edge-preview" d={connectPreview} fill="none" vectorEffect="non-scaling-stroke" />
+          )}
+        </svg>
+
         {nodes.map((n) => (
           <NodeCard
             key={n.id}
             node={n}
             selected={selected === n.id}
             editing={editingId === n.id}
+            showAnchors={(selected === n.id || hoverNode === n.id) && !editingId}
+            connectTarget={connect?.hoverId === n.id}
             onPointerDown={onNodePointerDown}
+            onAnchorPointerDown={onAnchorPointerDown}
             onOpen={openBubble}
             onStartEdit={startEdit}
             onContextMenu={onNodeContextMenu}
             onCommit={commitNode}
             onEditCancel={() => setEditingId(null)}
+            onMeasure={onMeasure}
+            onHoverChange={(hovering) => setHoverNode((cur) => (hovering ? n.id : cur === n.id ? null : cur))}
           />
         ))}
       </div>
 
+      {/* 连线标签内联编辑（屏幕坐标浮层） */}
+      {editingEdge && (() => {
+        const le = laidEdges.find((x) => x.edge.id === editingEdge);
+        if (!le) return null;
+        const r = rect();
+        const scr = engine.toScreen(le.geo.mid);
+        return (
+          <input
+            className="edge-label-input"
+            autoFocus
+            defaultValue={le.edge.label ?? ''}
+            placeholder="连线标签（如 追问 / 反例 / 应用于）"
+            style={{ left: r.left + scr.x, top: r.top + scr.y }}
+            onPointerDown={(e) => e.stopPropagation()}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') { e.preventDefault(); commitEdgeLabel(editingEdge, (e.target as HTMLInputElement).value); }
+              else if (e.key === 'Escape') { e.preventDefault(); setEditingEdge(null); }
+            }}
+            onBlur={(e) => commitEdgeLabel(editingEdge, e.target.value)}
+          />
+        );
+      })()}
+
       {nodes.length === 0 && (
         <div className="canvas-empty">
           <p>右键空白处 · 或双击空白处 · 新建第一个问题节点</p>
-          <p className="canvas-empty-sub">滚轮缩放 · 拖拽空白平移画布 · Ctrl+Z 撤销</p>
+          <p className="canvas-empty-sub">拖节点四周的锚点到另一个节点即可连线 · 滚轮缩放 · Ctrl+Z 撤销</p>
         </div>
       )}
 
       {bubble && (() => {
         const bn = nodes.find((n) => n.id === bubble.id);
         return bn ? (
-          <NodeBubble
-            node={bn}
-            anchor={{ x: bubble.x, y: bubble.y }}
-            onClose={() => setBubble(null)}
-            onEdit={startEdit}
-          />
+          <NodeBubble node={bn} anchor={{ x: bubble.x, y: bubble.y }} onClose={() => setBubble(null)} onEdit={startEdit} />
         ) : null;
       })()}
 

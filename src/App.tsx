@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { api, pickStorageDir, type AppInfo, type BoardFile, type BoardMeta, type BoardNode, type ProjectMeta } from './api';
+import { api, pickStorageDir, type AppInfo, type BoardEdge, type BoardFile, type BoardMeta, type BoardNode, type ProjectMeta } from './api';
 import { ContextMenu, type ContextMenuState } from './components/ContextMenu';
 import { TitleBar } from './components/TitleBar';
 import { BoardCanvas } from './components/BoardCanvas';
@@ -136,10 +136,10 @@ export default function App() {
 
   /* ── 画布变更：本地即时更新 + 防抖落盘（DESIGN §6.5） ── */
   const onCanvasChange = useCallback(
-    (nodes: BoardNode[], viewport: Viewport) => {
+    (nodes: BoardNode[], edges: BoardEdge[], viewport: Viewport) => {
       setActiveBoard((prev) => {
         if (!prev) return prev;
-        const next: BoardFile = { ...prev, nodes, viewport };
+        const next: BoardFile = { ...prev, nodes, edges, viewport };
         if (saveTimer.current) clearTimeout(saveTimer.current);
         saveTimer.current = setTimeout(() => {
           api.boardSave(next).catch((e) => setError(String(e)));
