@@ -10,11 +10,12 @@
 
   /* 阴影 */
   --shadow-node: 0 1px 2px rgba(0, 0, 0, 0.04), 0 4px 12px rgba(0, 0, 0, 0.04);
-  --shadow-node-hover: 0 2px 4px rgba(0, 0, 0, 0.06), 0 8px 24px rgba(0, 0, 0, 0.08);
+  --shadow-node-hover: 0 4px 12px rgba(17, 24, 39, 0.08), 0 12px 32px rgba(17, 24, 39, 0.1);
 
   /* 排版 */
-  --font-node: 14px;
-  --line-node: 1.45;
+  --font-ui: 15px;
+  --font-node: 15px;
+  --line-node: 1.55;
 
   /* 动效时长 */
   --dur-instant: 80ms;
@@ -30,32 +31,47 @@
 /* 浅色（默认） */
 :root,
 :root[data-theme='light'] {
-  --bg-canvas: #fbfbfa;
-  --bg-node: #ffffff;
-  --border-color: #e4e4e2;
-  --text-primary: #1f2124;
-  --text-secondary: #6b7076;
+  --bg-canvas: #ffffff; /* 白板主区：明亮纯白 */
+  --bg-node: #ffffff; /* 节点卡片 */
+  --bg-chrome: #f6f7f9; /* 外壳：侧边栏 + 标题栏，与主区拉出层次 */
+  --bg-hover: rgba(17, 24, 39, 0.05);
+  --grid-dot: #eceef1; /* 画布点阵网格：白底上更柔和 */
+  --border-color: #e8eaed;
+  --border-strong: #d9dce1;
+  --text-primary: #1c1e21;
+  --text-secondary: #656b73;
   --accent: #2e5a4e; /* 墨绿：全应用唯一的彩色 */
+  --accent-soft: rgba(46, 90, 78, 0.1);
 }
 
 /* 纸感 */
 :root[data-theme='paper'] {
-  --bg-canvas: #f5f1e8;
+  --bg-canvas: #fbf8f1;
   --bg-node: #fdfbf6;
+  --bg-chrome: #f2ede1;
+  --bg-hover: rgba(43, 39, 33, 0.05);
+  --grid-dot: #e7e0cf;
   --border-color: #e3ddcd;
+  --border-strong: #d6cdb7;
   --text-primary: #2b2721;
   --text-secondary: #7a7266;
   --accent: #8a5a2b;
+  --accent-soft: rgba(138, 90, 43, 0.12);
 }
 
 /* 深色 */
 :root[data-theme='dark'] {
-  --bg-canvas: #16171a;
+  --bg-canvas: #17181c;
   --bg-node: #1f2126;
+  --bg-chrome: #1a1b1f;
+  --bg-hover: rgba(255, 255, 255, 0.06);
+  --grid-dot: #2a2d34;
   --border-color: #2e3138;
+  --border-strong: #3a3e46;
   --text-primary: #e6e7ea;
   --text-secondary: #9aa0a8;
   --accent: #6fb3a0;
+  --accent-soft: rgba(111, 179, 160, 0.16);
 }
 
 * {
@@ -70,10 +86,18 @@ body,
 }
 
 body {
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC',
-    'Hiragino Sans GB', 'Microsoft YaHei', sans-serif;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI Variable Text',
+    'Segoe UI', 'PingFang SC', 'Microsoft YaHei UI', 'Microsoft YaHei',
+    'Hiragino Sans GB', system-ui, sans-serif;
+  font-size: var(--font-ui);
+  line-height: 1.5;
   color: var(--text-primary);
-  background: var(--bg-canvas);
+  background: var(--bg-chrome);
+  /* 更干净的字形渲染，缓解「小气感」 */
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+  font-synthesis: none;
   /* 白板是自定义绘制，禁用浏览器默认选中/滚动链干扰 */
   overflow: hidden;
 }
@@ -93,10 +117,10 @@ body {
 .titlebar {
   display: flex;
   align-items: center;
-  height: 40px;
-  padding: 0 8px 0 14px;
+  height: 44px;
+  padding: 0 8px 0 16px;
   border-bottom: var(--border-node) solid var(--border-color);
-  background: var(--bg-node);
+  background: var(--bg-chrome);
   user-select: none;
   /* 整条为拖拽区；交互控件用 data-tauri-drag-region 之外 + no-drag 类抵消 */
   -webkit-app-region: drag;
@@ -105,13 +129,13 @@ body {
 
 /* macOS：为左上角系统红绿灯预留安全区，避免和品牌名重叠 */
 .titlebar.is-mac {
-  padding-left: 78px;
+  padding-left: 80px;
 }
 
 .titlebar-brand {
-  font-size: 14px;
-  font-weight: 600;
-  letter-spacing: 0.08em;
+  font-size: 15px;
+  font-weight: 650;
+  letter-spacing: 0.14em;
   color: var(--text-primary);
 }
 
@@ -134,19 +158,19 @@ body {
   background: transparent;
   color: var(--text-secondary);
   cursor: pointer;
-  border-radius: 7px;
+  border-radius: 8px;
   transition: background var(--dur-fast) var(--ease-standard),
     color var(--dur-fast) var(--ease-standard);
 }
 
 .titlebar-menu {
-  width: 30px;
-  height: 30px;
+  width: 32px;
+  height: 32px;
   margin-right: 4px;
 }
 
 .titlebar-btn:hover {
-  background: rgba(128, 128, 128, 0.12);
+  background: var(--bg-hover);
   color: var(--text-primary);
 }
 
@@ -158,13 +182,13 @@ body {
 }
 
 .win-btn {
-  width: 40px;
-  height: 30px;
-  border-radius: 6px;
+  width: 42px;
+  height: 32px;
+  border-radius: 8px;
 }
 
 .win-btn:hover {
-  background: rgba(128, 128, 128, 0.14);
+  background: var(--bg-hover);
   color: var(--text-primary);
 }
 
@@ -173,17 +197,15 @@ body {
   color: #fff;
 }
 
-/* 通用错误条已在 ui.css；标题栏下方沿用 .error-bar */
-
 /* ── 右键 / 浮层菜单 ── */
 .ctx-menu {
   position: fixed;
   z-index: 1000;
-  min-width: 168px;
-  padding: 5px;
+  min-width: 184px;
+  padding: 6px;
   background: var(--bg-node);
   border: var(--border-node) solid var(--border-color);
-  border-radius: 10px;
+  border-radius: 12px;
   box-shadow: var(--shadow-node-hover);
   animation: ctx-in var(--dur-fast) var(--ease-decelerate);
 }
@@ -203,18 +225,19 @@ body {
   display: block;
   width: 100%;
   text-align: left;
-  padding: 7px 10px;
-  font-size: 13px;
+  padding: 8px 11px;
+  font-size: 14px;
   color: var(--text-primary);
   background: transparent;
   border: none;
-  border-radius: 7px;
+  border-radius: 8px;
   cursor: pointer;
   transition: background var(--dur-fast) var(--ease-standard);
 }
 
 .ctx-item:hover:not(:disabled) {
-  background: rgba(46, 90, 78, 0.12);
+  background: var(--accent-soft);
+  color: var(--accent);
 }
 
 .ctx-item:disabled {
@@ -229,40 +252,41 @@ body {
 
 .ctx-item.is-danger:hover:not(:disabled) {
   background: rgba(192, 83, 63, 0.12);
+  color: #c0533f;
 }
 
 .ctx-sep {
   height: 1px;
-  margin: 5px 6px;
+  margin: 6px 8px;
   background: var(--border-color);
 }
 
 .ctx-info {
   display: flex;
   flex-direction: column;
-  gap: 2px;
-  padding: 6px 10px 8px;
+  gap: 3px;
+  padding: 7px 11px 9px;
 }
 
 .ctx-info-text {
-  font-size: 13px;
+  font-size: 14px;
   font-weight: 600;
   color: var(--text-primary);
 }
 
 .ctx-info-sub {
-  font-size: 11px;
+  font-size: 12px;
   color: var(--text-secondary);
   word-break: break-all;
 }
 
-
 .board-canvas {
   flex: 1;
   position: relative;
+  background-color: var(--bg-canvas);
   /* M2：极淡点阵网格在此绘制，缩放时平滑淡入淡出 */
-  background-image: radial-gradient(var(--border-color) 1px, transparent 1px);
-  background-size: 24px 24px;
+  background-image: radial-gradient(var(--grid-dot) 1.1px, transparent 1.1px);
+  background-size: 26px 26px;
 }
 
 .board-hint {

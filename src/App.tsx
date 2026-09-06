@@ -48,6 +48,14 @@ export default function App() {
       });
   }, []);
 
+  /* 屏蔽 WebView 自带的原生右键菜单（刷新/打印/另存为…）。
+     应用内的右键交互由各元素的 onContextMenu 显式弹出，不受影响。 */
+  useEffect(() => {
+    const block = (e: MouseEvent) => e.preventDefault();
+    window.addEventListener('contextmenu', block);
+    return () => window.removeEventListener('contextmenu', block);
+  }, []);
+
   useEffect(() => {
     if (editing) {
       setDraft(
