@@ -28,8 +28,7 @@ export default function App() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const [projectsCollapsed, setProjectsCollapsed] = useState(false);
-  const [boardsCollapsed, setBoardsCollapsed] = useState(false);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [fullscreen, setFullscreen] = useState(false);
 
   const [menu, setMenu] = useState<ContextMenuState | null>(null);
@@ -313,7 +312,15 @@ export default function App() {
   /* ── 主界面 ── */
   return (
     <div className={`board-surface${fullscreen ? ' is-fullscreen' : ''}`}>
-      {!fullscreen && <TitleBar platform={platform} brand="脉络" onMenu={appMenu} />}
+      {!fullscreen && (
+        <TitleBar
+          platform={platform}
+          brand="脉络"
+          onMenu={appMenu}
+          onToggleSidebar={() => setSidebarCollapsed((v) => !v)}
+          sidebarCollapsed={sidebarCollapsed}
+        />
+      )}
 
       {fullscreen && (
         <button
@@ -339,80 +346,65 @@ export default function App() {
       {error && <div className="error-bar">{error}</div>}
 
       <div className="workspace">
-        {/* 项目栏：可收起，空白处右键 = 新建项目 */}
-        {projectsCollapsed ? (
-          <div className="pane-rail" onClick={() => setProjectsCollapsed(false)}>
-            <button className="pane-rail-btn" title="展开项目栏">▸</button>
-            <span className="pane-rail-label">项目</span>
-          </div>
-        ) : (
-        <aside className="pane pane-projects">
-          <div className="pane-head">
-            <span>项目</span>
-            <button className="pane-add" title="新建项目" onClick={() => setEditing({ kind: 'new-project' })}>
-              ＋
-            </button>
-            <button className="pane-add" title="收起项目栏" onClick={() => setProjectsCollapsed(true)}>
-              ◂
-            </button>
-          </div>
-          <ul className="list" onContextMenu={projectsPaneMenu}>
-            {projects.map((p) => (
-              <li
-                key={p.id}
-                className={`list-item ${activeProject?.id === p.id ? 'is-active' : ''}`}
-                onClick={() => selectProject(p)}
-                onContextMenu={(e) => projectItemMenu(e, p)}
-              >
-                <span className="list-title">{p.name}</span>
-              </li>
-            ))}
-            {editing?.kind === 'new-project' && inlineEditor}
-            {projects.length === 0 && editing?.kind !== 'new-project' && (
-              <li className="list-empty">右键此处新建项目</li>
-            )}
-          </ul>
-        </aside>
-        )}
+        {/* 侧栏（项目 + 白板）：由标题栏三横线开关统一收起/展开 */}
+        {!sidebarCollapsed && (
+          <div className="sidebar">
+            {/* 项目栏：空白处右键 = 新建项目 */}
+            <aside className="pane pane-projects">
+              <div className="pane-head">
+                <span>项目</span>
+                <button className="pane-add" title="新建项目" onClick={() => setEditing({ kind: 'new-project' })}>
+                  ＋
+                </button>
+              </div>
+              <ul className="list" onContextMenu={projectsPaneMenu}>
+                {projects.map((p) => (
+                  <li
+                    key={p.id}
+                    className={`list-item ${activeProject?.id === p.id ? 'is-active' : ''}`}
+                    onClick={() => selectProject(p)}
+                    onContextMenu={(e) => projectItemMenu(e, p)}
+                  >
+                    <span className="list-title">{p.name}</span>
+                  </li>
+                ))}
+                {editing?.kind === 'new-project' && inlineEditor}
+                {projects.length === 0 && editing?.kind !== 'new-project' && (
+                  <li className="list-empty">右键此处新建项目</li>
+                )}
+              </ul>
+            </aside>
 
-        {/* 白板栏：可收起，空白处右键 = 新建白板 */}
-        {boardsCollapsed ? (
-          <div className="pane-rail" onClick={() => setBoardsCollapsed(false)}>
-            <button className="pane-rail-btn" title="展开白板栏">▸</button>
-            <span className="pane-rail-label">白板</span>
+            {/* 白板栏：空白处右键 = 新建白板 */}
+            <aside className="pane pane-boards">
+              <div className="pane-head">
+                <span>{activeProject ? `白板 · ${activeProject.name}` : '白板'}</span>
+                {activeProject && (
+                  <button className="pane-add" title="新建白板" onClick={() => setEditing({ kind: 'new-board' })}>
+                    ＋
+                  </button>
+                )}
+              </div>
+              <ul className="list" onContextMenu={activeProject ? boardsPaneMenu : undefined}>
+                {boards.map((b) => (
+                  <li
+                    key={b.id}
+                    className={`list-item ${activeBoard?.id === b.id ? 'is-active' : ''}`}
+                    onClick={() => activeProject && openBoard(activeProject.id, b.id)}
+                    onContextMenu={(e) => boardItemMenu(e, b)}
+                  >
+                    <span className="list-title">{b.name}</span>
+                    <span className="list-meta">{b.updated_at.slice(0, 10)}</span>
+                  </li>
+                ))}
+                {editing?.kind === 'new-board' && inlineEditor}
+                {activeProject && boards.length === 0 && editing?.kind !== 'new-board' && (
+                  <li className="list-empty">右键此处新建白板</li>
+                )}
+                {!activeProject && <li className="list-empty">先选一个项目</li>}
+              </ul>
+            </aside>
           </div>
-        ) : (
-        <aside className="pane pane-boards">
-          <div className="pane-head">
-            <span>{activeProject ? `白板 · ${activeProject.name}` : '白板'}</span>
-            {activeProject && (
-              <button className="pane-add" title="新建白板" onClick={() => setEditing({ kind: 'new-board' })}>
-                ＋
-              </button>
-            )}
-            <button className="pane-add" title="收起白板栏" onClick={() => setBoardsCollapsed(true)}>
-              ◂
-            </button>
-          </div>
-          <ul className="list" onContextMenu={activeProject ? boardsPaneMenu : undefined}>
-            {boards.map((b) => (
-              <li
-                key={b.id}
-                className={`list-item ${activeBoard?.id === b.id ? 'is-active' : ''}`}
-                onClick={() => activeProject && openBoard(activeProject.id, b.id)}
-                onContextMenu={(e) => boardItemMenu(e, b)}
-              >
-                <span className="list-title">{b.name}</span>
-                <span className="list-meta">{b.updated_at.slice(0, 10)}</span>
-              </li>
-            ))}
-            {editing?.kind === 'new-board' && inlineEditor}
-            {activeProject && boards.length === 0 && editing?.kind !== 'new-board' && (
-              <li className="list-empty">右键此处新建白板</li>
-            )}
-            {!activeProject && <li className="list-empty">先选一个项目</li>}
-          </ul>
-        </aside>
         )}
 
         {/* 画布区：挂 CanvasEngine（M2-2 / M2-3） */}

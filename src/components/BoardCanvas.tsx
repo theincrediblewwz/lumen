@@ -25,7 +25,7 @@ const DEFAULT_NODE_W = 240;
 /**
  * BoardCanvas（M2-2 / M2-3 / M2-8）：白板画布 v1
  * - 视口：滚轮缩放（光标锚点不动）、空白拖拽平移
- * - 节点：拖拽移动、右键空白新建、双击编辑标题、右键节点删除
+ * - 节点：工具栏「＋新建节点」/ 双击空白 / 右键空白新建；拖拽移动、双击节点改标题、右键节点删除
  * - 命令栈：新建/删除/改标题/拖拽移动均可撤销/重做（Ctrl+Z / Ctrl+Shift+Z / Ctrl+Y）
  * - 变更通过 onChange 抛给上层做防抖持久化
  */
@@ -226,6 +226,20 @@ export function BoardCanvas({
     });
   };
 
+  /** 屏幕坐标 → 世界坐标后新建（右键/双击空白用） */
+  const addNodeAtScreen = (clientX: number, clientY: number) => {
+    const r = rect();
+    const world = engine.toWorld({ x: clientX - r.left, y: clientY - r.top });
+    addNode(world.x, world.y);
+  };
+
+  /** 在当前视口中心新建（工具栏按钮用，保证一定看得见） */
+  const addNodeAtCenter = () => {
+    const r = rect();
+    const world = engine.toWorld({ x: r.width / 2, y: r.height / 2 });
+    addNode(world.x, world.y);
+  };
+
   const addNode = (x: number, y: number) => {
     const now = new Date().toISOString();
     const node: BoardNode = {
@@ -264,6 +278,13 @@ export function BoardCanvas({
     );
   };
 
+  /* ── 双击空白：新建节点（点在节点上时事件已被节点吞掉，不会触发） ── */
+  const onCanvasDoubleClick = (e: React.MouseEvent) => {
+    const t = e.target as HTMLElement;
+    if (t.closest('.node-card')) return; // 双击节点是改标题，交给 NodeCard
+    addNodeAtScreen(e.clientX, e.clientY);
+  };
+
   return (
     <div
       ref={wrapRef}
@@ -274,7 +295,38 @@ export function BoardCanvas({
       onPointerUp={onPointerUp}
       onPointerCancel={onPointerUp}
       onContextMenu={onCanvasContextMenu}
+      onDoubleClick={onCanvasDoubleClick}
     >
+      {/* 悬浮工具栏：新建 / 撤销 / 重做（始终可见，可点） */}
+      <div className="canvas-toolbar" onPointerDown={(e) => e.stopPropagation()}>
+        <button type="button" className="tb-btn tb-primary" title="新建节点（双击空白亦可）" onClick={addNodeAtCenter}>
+          <span className="tb-plus">＋</span> 新建节点
+        </button>
+        <span className="tb-sep" />
+        <button
+          type="button"
+          className="tb-btn"
+          title="撤销 (Ctrl+Z)"
+          disabled={!canUndo(history)}
+          onClick={doUndo}
+        >
+          <svg width="15" height="15" viewBox="0 0 16 16" aria-hidden="true">
+            <path d="M6 4L2.5 7.2 6 10.4M3 7.2h6.2A4 4 0 0 1 13 11.2v.3" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" />
+          </svg>
+        </button>
+        <button
+          type="button"
+          className="tb-btn"
+          title="重做 (Ctrl+Shift+Z)"
+          disabled={!canRedo(history)}
+          onClick={doRedo}
+        >
+          <svg width="15" height="15" viewBox="0 0 16 16" aria-hidden="true">
+            <path d="M10 4l3.5 3.2L10 10.4M13 7.2H6.8A4 4 0 0 0 3 11.2v.3" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" />
+          </svg>
+        </button>
+      </div>
+
       {/* 世界层：只改 transform，不逐个重排节点（DESIGN §5.4） */}
       <div className="canvas-world" style={{ transform: engine.transform, transformOrigin: '0 0' }}>
         {nodes.map((n) => (
@@ -294,7 +346,7 @@ export function BoardCanvas({
 
       {nodes.length === 0 && (
         <div className="canvas-empty">
-          <p>空白处右键 · 新建第一个问题节点</p>
+          <p>点左上角「＋ 新建节点」，或双击空白处，创建第一个问题</p>
           <p className="canvas-empty-sub">滚轮缩放 · 拖拽空白平移画布 · Ctrl+Z 撤销</p>
         </div>
       )}

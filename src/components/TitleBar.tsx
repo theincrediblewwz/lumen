@@ -12,10 +12,14 @@ export function TitleBar({
   platform,
   brand,
   onMenu,
+  onToggleSidebar,
+  sidebarCollapsed,
 }: {
   platform: string; // 'macos' | 'windows' | 'linux' | ...
   brand: string;
   onMenu: (e: React.MouseEvent) => void;
+  onToggleSidebar?: () => void;
+  sidebarCollapsed?: boolean;
 }) {
   const isMac = platform === 'macos';
   const showWinControls = !isMac; // Windows / Linux 自绘按钮
@@ -39,6 +43,22 @@ export function TitleBar({
       className={`titlebar${isMac ? ' is-mac' : ''}`}
       data-tauri-drag-region
     >
+      {/* 侧栏开关：三根横线，紧挨品牌名 */}
+      {onToggleSidebar && (
+        <button
+          type="button"
+          className={`titlebar-btn titlebar-sidebar${sidebarCollapsed ? ' is-collapsed' : ''}`}
+          title={sidebarCollapsed ? '展开侧栏' : '收起侧栏'}
+          aria-label={sidebarCollapsed ? '展开侧栏' : '收起侧栏'}
+          aria-pressed={!sidebarCollapsed}
+          onClick={onToggleSidebar}
+        >
+          <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true">
+            <path d="M2 4h12M2 8h12M2 12h12" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+          </svg>
+        </button>
+      )}
+
       <span className="titlebar-brand" data-tauri-drag-region>
         {brand}
       </span>
@@ -51,9 +71,11 @@ export function TitleBar({
           aria-label="菜单"
           onClick={onMenu}
         >
-          {/* 汉堡菜单图标（内联 SVG，避免外链） */}
+          {/* 更多菜单图标（内联 SVG，避免外链） */}
           <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true">
-            <path d="M2 4h12M2 8h12M2 12h12" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
+            <circle cx="8" cy="3" r="1.4" fill="currentColor" />
+            <circle cx="8" cy="8" r="1.4" fill="currentColor" />
+            <circle cx="8" cy="13" r="1.4" fill="currentColor" />
           </svg>
         </button>
 

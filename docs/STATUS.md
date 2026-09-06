@@ -3,7 +3,7 @@
 > **开工前先读本文件；每完成一件事就更新本文件。**
 > 本文件只记录「进度」。计划与任务清单见 [PLAN.md](./PLAN.md)，设计与决策见 [DESIGN.md](./DESIGN.md)。
 
-**最后更新**：2026-09-06 21:59（Asia/Shanghai）
+**最后更新**：2026-09-06 22:11（Asia/Shanghai）
 
 ---
 
@@ -45,6 +45,7 @@
 | **M2-2/M2-3** 白板画布 v1：节点卡片渲染 + 滚轮缩放/空白平移 + 右键新建/拖拽移动/双击编辑 + 防抖落盘 | `typecheck`/`npm test`(30)/`check:secrets` 通过；后台 sess-3 运行无报错，待用户实机验收手感 |
 | **侧边栏收起 + 全屏模式** | 项目/白板栏各自可收起为竖条；F11/菜单进全屏、Esc/按钮退出（Tauri setFullscreen）。`typecheck` 通过，dev 已热更 |
 | **M2-8** 命令栈：撤销/重做（新建/删除/改标题/拖拽移动） | 纯函数 history.ts + **9 项单测**（合计 39 passed）；Ctrl+Z / Ctrl+Shift+Z / Ctrl+Y + 右键菜单；`build` 通过 |
+| **UI 修整**：侧栏统一开关 + 画布工具栏 | 标题栏「脉络」旁三横线一键收起/展开整条侧栏（移除两条竖条 rail）；画布左上角悬浮工具栏 **＋新建节点 / 撤销 / 重做**，双击空白亦可新建 |
 | **项目/白板重命名**（rename_project / rename_board 命令 + 存储层） | **Rust 单测 8 项全过**（新增 rename 2 项）；同步改 index/project/board.json |
 
 ## 三、进行中
