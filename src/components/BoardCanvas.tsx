@@ -233,13 +233,6 @@ export function BoardCanvas({
     addNode(world.x, world.y);
   };
 
-  /** 在当前视口中心新建（工具栏按钮用，保证一定看得见） */
-  const addNodeAtCenter = () => {
-    const r = rect();
-    const world = engine.toWorld({ x: r.width / 2, y: r.height / 2 });
-    addNode(world.x, world.y);
-  };
-
   const addNode = (x: number, y: number) => {
     const now = new Date().toISOString();
     const node: BoardNode = {
@@ -285,6 +278,17 @@ export function BoardCanvas({
     addNodeAtScreen(e.clientX, e.clientY);
   };
 
+  /* ── 缩放越小、节点热力光越明显（提示此处有节点） ──
+     世界层被 scale(zoom) 整体缩放，故光晕的 blur/spread 要除以 zoom 反向补偿，
+     让屏幕上看到的光斑随缩小而增强、随放大而消隐。 */
+  const zoom = engine.viewport.zoom;
+  const intensity = Math.max(0, Math.min(1, (0.85 - zoom) / 0.6)); // zoom 0.85→0，0.25→1
+  const glowVars = {
+    ['--glow-blur' as string]: `${(20 * intensity) / zoom}px`,
+    ['--glow-spread' as string]: `${(3.5 * intensity) / zoom}px`,
+    ['--glow-alpha' as string]: `${0.12 + 0.6 * intensity}`,
+  } as React.CSSProperties;
+
   return (
     <div
       ref={wrapRef}
@@ -297,12 +301,8 @@ export function BoardCanvas({
       onContextMenu={onCanvasContextMenu}
       onDoubleClick={onCanvasDoubleClick}
     >
-      {/* 悬浮工具栏：新建 / 撤销 / 重做（始终可见，可点） */}
+      {/* 悬浮工具栏：撤销 / 重做（始终可见，可点） */}
       <div className="canvas-toolbar" onPointerDown={(e) => e.stopPropagation()}>
-        <button type="button" className="tb-btn tb-primary" title="新建节点（双击空白亦可）" onClick={addNodeAtCenter}>
-          <span className="tb-plus">＋</span> 新建节点
-        </button>
-        <span className="tb-sep" />
         <button
           type="button"
           className="tb-btn"
@@ -328,7 +328,10 @@ export function BoardCanvas({
       </div>
 
       {/* 世界层：只改 transform，不逐个重排节点（DESIGN §5.4） */}
-      <div className="canvas-world" style={{ transform: engine.transform, transformOrigin: '0 0' }}>
+      <div
+        className="canvas-world"
+        style={{ transform: engine.transform, transformOrigin: '0 0', ...glowVars }}
+      >
         {nodes.map((n) => (
           <NodeCard
             key={n.id}
@@ -346,7 +349,7 @@ export function BoardCanvas({
 
       {nodes.length === 0 && (
         <div className="canvas-empty">
-          <p>点左上角「＋ 新建节点」，或双击空白处，创建第一个问题</p>
+          <p>右键空白处 · 或双击空白处 · 新建第一个问题节点</p>
           <p className="canvas-empty-sub">滚轮缩放 · 拖拽空白平移画布 · Ctrl+Z 撤销</p>
         </div>
       )}

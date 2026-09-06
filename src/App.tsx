@@ -189,6 +189,13 @@ export default function App() {
 
   const selectProject = (p: ProjectMeta) =>
     withBusy(async () => {
+      // 再次点击已选中的项目 = 取消选中（白板栏随之收起）
+      if (activeProject?.id === p.id) {
+        setActiveProject(null);
+        setActiveBoard(null);
+        setBoards([]);
+        return;
+      }
       setActiveProject(p);
       setActiveBoard(null);
       await refreshBoards(p.id);
@@ -375,7 +382,8 @@ export default function App() {
               </ul>
             </aside>
 
-            {/* 白板栏：空白处右键 = 新建白板 */}
+            {/* 白板栏：仅在选中项目时出现；空白处右键 = 新建白板 */}
+            {activeProject && (
             <aside className="pane pane-boards">
               <div className="pane-head">
                 <span>{activeProject ? `白板 · ${activeProject.name}` : '白板'}</span>
@@ -401,9 +409,9 @@ export default function App() {
                 {activeProject && boards.length === 0 && editing?.kind !== 'new-board' && (
                   <li className="list-empty">右键此处新建白板</li>
                 )}
-                {!activeProject && <li className="list-empty">先选一个项目</li>}
               </ul>
             </aside>
+            )}
           </div>
         )}
 

@@ -369,27 +369,6 @@ body {
   cursor: default;
 }
 
-.canvas-toolbar .tb-primary {
-  color: var(--accent);
-  font-weight: 600;
-}
-
-.canvas-toolbar .tb-primary:hover:not(:disabled) {
-  background: var(--accent-soft);
-  color: var(--accent);
-}
-
-.canvas-toolbar .tb-plus {
-  font-size: 15px;
-  line-height: 1;
-}
-
-.canvas-toolbar .tb-sep {
-  width: 1px;
-  height: 18px;
-  margin: 0 2px;
-  background: var(--border-color);
-}
 
 /* 世界层：平移/缩放只改这一层的 transform（不逐个重排节点） */
 .canvas-world {
@@ -418,6 +397,20 @@ body {
 
 .node-card:hover {
   box-shadow: var(--shadow-node-hover);
+}
+
+/* 节点热力光晕：缩小到一定程度时边缘发微光，提示此处有节点。
+   变量由 .canvas-world 按当前 zoom 计算并向下继承；世界层被 scale，
+   故 blur/spread 已在 JS 里除以 zoom 反向补偿，保证屏幕上光斑随缩小而增强。 */
+.node-card::before {
+  content: '';
+  position: absolute;
+  inset: -1px;
+  border-radius: inherit;
+  pointer-events: none;
+  box-shadow: 0 0 var(--glow-blur, 0px) var(--glow-spread, 0px) var(--accent);
+  opacity: var(--glow-alpha, 0);
+  transition: opacity var(--dur-normal) var(--ease-standard);
 }
 
 .node-card.is-selected {

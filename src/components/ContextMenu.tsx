@@ -1,4 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 
 /** 右键菜单项：分隔线 / 只读信息项 / 可点动作项 */
 export type MenuItem =
@@ -55,13 +56,16 @@ export function ContextMenu({
     };
   }, [onClose]);
 
-  return (
+  return createPortal(
     <div
       ref={ref}
       className="ctx-menu"
       role="menu"
       style={{ left: pos.x, top: pos.y, visibility: pos.ready ? 'visible' : 'hidden' }}
       onContextMenu={(e) => e.preventDefault()}
+      onPointerDown={(e) => e.stopPropagation()}
+      onPointerUp={(e) => e.stopPropagation()}
+      onMouseDown={(e) => e.stopPropagation()}
     >
       {state.items.map((it, i) => {
         if (it.type === 'separator') return <div key={i} className="ctx-sep" />;
@@ -89,6 +93,7 @@ export function ContextMenu({
           </button>
         );
       })}
-    </div>
+    </div>,
+    document.body,
   );
 }
