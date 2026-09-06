@@ -338,6 +338,70 @@ pub fn delete_board(root: &Path, project_id: &str, board_id: &str) -> Result<(),
     Ok(())
 }
 
+
+pub fn rename_project(root: &Path, project_id: &str, name: &str) -> Result<ProjectMeta, String> {
+    let name = name.trim();
+    if name.is_empty() {
+        return Err("项目名不能为空".into());
+    }
+    let pid = safe_id(project_id)?;
+
+    // index.json 里的元信息
+    let mut index = read_index(root)?;
+    let meta = index
+        .projects
+        .iter_mut()
+        .find(|p| p.id == pid)
+        .ok_or_else(|| format!("项目不存在：{pid}"))?;
+    meta.name = name.to_string();
+    let updated = meta.clone();
+    write_json(&index_path(root), &index)?;
+
+    // project.json 里的名字
+    let mut project = read_project(root, pid)?;
+    project.name = name.to_string();
+    project.updated_at = now_iso();
+    write_json(&project_file(root, pid), &project)?;
+
+    Ok(updated)
+}
+
+pub fn rename_board(
+    root: &Path,
+    project_id: &str,
+    board_id: &str,
+    name: &str,
+) -> Result<BoardMeta, String> {
+    let name = name.trim();
+    if name.is_empty() {
+        return Err("白板名不能为空".into());
+    }
+    let pid = safe_id(project_id)?;
+    let bid = safe_id(board_id)?;
+
+    // project.json 的 boards[] 摘要
+    let now = now_iso();
+    let mut project = read_project(root, pid)?;
+    let meta = project
+        .boards
+        .iter_mut()
+        .find(|b| b.id == bid)
+        .ok_or_else(|| format!("白板不存在：{bid}"))?;
+    meta.name = name.to_string();
+    meta.updated_at = now.clone();
+    let updated = meta.clone();
+    project.updated_at = now.clone();
+    write_json(&project_file(root, pid), &project)?;
+
+    // board.json 本体
+    let mut board = load_board(root, pid, bid)?;
+    board.name = name.to_string();
+    board.updated_at = now;
+    write_json(&board_file(root, pid, bid), &board)?;
+
+    Ok(updated)
+}
+
 // ─────────────────────────── 单元测试 ───────────────────────────
 
 #[cfg(test)]
@@ -453,6 +517,43 @@ mod tests {
         let root = tmpdir("badid");
         ensure_storage(&root).unwrap();
         assert!(load_board(&root, "../../etc", "b_1").is_err());
+        fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn rename_project_updates_index_and_file() {
+        let root = tmpdir("renproj");
+        ensure_storage(&root).unwrap();
+        let p = create_project(&root, "旧名").unwrap();
+
+        let updated = rename_project(&root, &p.id, "新名").unwrap();
+        assert_eq!(updated.name, "新名");
+
+        // index.json 与 project.json 都要改到
+        let idx = read_index(&root).unwrap();
+        assert_eq!(idx.projects.iter().find(|x| x.id == p.id).unwrap().name, "新名");
+        assert_eq!(read_project(&root, &p.id).unwrap().name, "新名");
+
+        assert!(rename_project(&root, &p.id, "   ").is_err(), "空名应被拒绝");
+        fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn rename_board_updates_summary_and_body() {
+        let root = tmpdir("renboard");
+        ensure_storage(&root).unwrap();
+        let p = create_project(&root, "P").unwrap();
+        let b = create_board(&root, &p.id, "旧板").unwrap();
+
+        let updated = rename_board(&root, &p.id, &b.id, "新板").unwrap();
+        assert_eq!(updated.name, "新板");
+
+        // project.json 的 boards[] 摘要与 board.json 本体都要改到
+        let pf = read_project(&root, &p.id).unwrap();
+        assert_eq!(pf.boards.iter().find(|x| x.id == b.id).unwrap().name, "新板");
+        assert_eq!(load_board(&root, &p.id, &b.id).unwrap().name, "新板");
+
+        assert!(rename_board(&root, &p.id, "../x", "y").is_err(), "非法 id 应被拒绝");
         fs::remove_dir_all(&root).ok();
     }
 }

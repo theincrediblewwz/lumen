@@ -1,4 +1,4 @@
-/* M1 阶段的界面样式；M2 引入画布后再按需整理 */
+/* 界面样式：右键菜单驱动的项目/白板列表 + 内联编辑（去掉了底部固定表单） */
 
 .screen-center {
   display: flex;
@@ -62,10 +62,40 @@
 }
 
 .pane-head {
-  padding: 10px 14px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 8px 8px 14px;
   font-size: 12px;
   color: var(--text-secondary);
   border-bottom: var(--border-node) solid var(--border-color);
+}
+
+.pane-head > span {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pane-add {
+  flex: 0 0 auto;
+  width: 22px;
+  height: 22px;
+  font-size: 15px;
+  line-height: 1;
+  color: var(--text-secondary);
+  background: transparent;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background var(--dur-fast) var(--ease-standard),
+    color var(--dur-fast) var(--ease-standard);
+}
+
+.pane-add:hover {
+  background: rgba(46, 90, 78, 0.12);
+  color: var(--accent);
 }
 
 .list {
@@ -113,13 +143,6 @@
   color: var(--text-secondary);
 }
 
-.pane-foot {
-  display: flex;
-  gap: 6px;
-  padding: 8px;
-  border-top: var(--border-node) solid var(--border-color);
-}
-
 .input {
   flex: 1;
   min-width: 0;
@@ -164,10 +187,6 @@
   border-color: var(--accent);
 }
 
-.btn-ghost {
-  margin-left: auto;
-}
-
 .btn-icon {
   width: 20px;
   height: 20px;
@@ -189,6 +208,21 @@
 .btn-icon:hover {
   color: #c0533f;
   background: rgba(192, 83, 63, 0.1);
+}
+
+.list-item.is-editing {
+  padding: 3px 6px;
+  cursor: default;
+}
+
+.list-item.is-editing:hover {
+  background: transparent;
+}
+
+.inline-input {
+  width: 100%;
+  font-size: var(--font-node);
+  padding: 5px 8px;
 }
 
 .canvas-placeholder {

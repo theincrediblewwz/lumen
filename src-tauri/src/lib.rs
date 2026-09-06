@@ -13,11 +13,13 @@ pub fn run() {
             commands::projects_list,
             commands::project_create,
             commands::project_delete,
+            commands::project_rename,
             commands::boards_list,
             commands::board_create,
             commands::board_load,
             commands::board_save,
             commands::board_delete,
+            commands::board_rename,
         ])
         .run(tauri::generate_context!())
         .expect("failed to launch Lumen");

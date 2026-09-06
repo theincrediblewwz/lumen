@@ -76,6 +76,8 @@ export const api = {
   projectsList: () => invoke<ProjectMeta[]>('projects_list'),
   projectCreate: (name: string) => invoke<ProjectMeta>('project_create', { name }),
   projectDelete: (id: string) => invoke<void>('project_delete', { id }),
+  projectRename: (id: string, name: string) =>
+    invoke<ProjectMeta>('project_rename', { id, name }),
 
   boardsList: (projectId: string) => invoke<BoardMeta[]>('boards_list', { projectId }),
   boardCreate: (projectId: string, name: string) =>
@@ -85,4 +87,6 @@ export const api = {
   boardSave: (board: BoardFile) => invoke<void>('board_save', { board }),
   boardDelete: (projectId: string, boardId: string) =>
     invoke<void>('board_delete', { projectId, boardId }),
+  boardRename: (projectId: string, boardId: string, name: string) =>
+    invoke<BoardMeta>('board_rename', { projectId, boardId, name }),
 };

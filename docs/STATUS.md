@@ -3,7 +3,7 @@
 > **开工前先读本文件；每完成一件事就更新本文件。**
 > 本文件只记录「进度」。计划与任务清单见 [PLAN.md](./PLAN.md)，设计与决策见 [DESIGN.md](./DESIGN.md)。
 
-**最后更新**：2026-09-06 21:12（Asia/Shanghai）
+**最后更新**：2026-09-06 21:35（Asia/Shanghai）
 
 ---
 
@@ -21,6 +21,7 @@
 | 节点结构 | **图存树显**：允许一个节点有多个父节点（交叉引用）；数据结构用图，默认呈现为树 |
 | 单元测试 | **Vitest**（DESIGN §8 已定）；纯函数内核跑在 Node 环境，测试文件与源码同目录 `*.test.ts` |
 | 坐标系约定 | 容器 transform = `translate3d(x,y,0) scale(zoom)`；`screen = world*zoom + (x,y)`。screen 指相对**画布容器左上角**，client 坐标须先减去容器 rect |
+| 标题栏策略 | **native_mac**：macOS 用 `titleBarStyle=Overlay` 保留系统红绿灯 + 内容延伸；Windows/Linux `decorations=false` 自绘右侧窗口按钮。路径与「更改目录」收进标题栏菜单 |
 
 ## 二、已完成
 
@@ -39,11 +40,13 @@
 | **应用首次成功启动** | Vite 监听 5173 正常；Rust 编译通过；`lumen.exe` 已运行，无报错 |
 | **测试基建：Vitest 接入** | `npm test` 跑通；`vitest.config.ts`（node 环境，`src/**/*.test.ts`）+ `test`/`test:watch` 脚本 |
 | **M2-1** `CanvasEngine`：视口平移/缩放 + 屏幕↔世界坐标换算（纯函数内核 + 薄类封装） | **30 项 Vitest 单测全部通过**；`npm run typecheck` 通过；`check:secrets` 通过 |
+| **UI 改版**：右键菜单替代底部固定表单 + 自定义现代化标题栏（native_mac） | `typecheck`/`npm test`(30)/`npm run build`/`cargo check` 全通过 |
+| **项目/白板重命名**（rename_project / rename_board 命令 + 存储层） | **Rust 单测 8 项全过**（新增 rename 2 项）；同步改 index/project/board.json |
 
 ## 三、进行中
 
-- 无进行中任务。M2-1 已收口，等待挑选 M2 下一子任务（M2-2 节点 DOM 层）。
-- 注：上一轮的后台会话 `sess-1`（`npm run tauri:dev`）是否仍存活未知；本轮工作为纯前端内核 + 单测，未依赖 GUI。
+- 无进行中任务。UI 改版（右键菜单 + 自定义标题栏）已收口，代码级验证（typecheck/单测/build/cargo check）全过，**等待用户实机验收 GUI 手感**。
+- 注：标题栏交互（拖拽区、红绿灯安全区、Windows 窗口按钮）我在无 GUI 沙箱里无法目视，需要你跑 `npm run tauri:dev` 反馈。
 
 ## 四、等待用户执行
 
@@ -56,10 +59,11 @@
 
 ## 五、下一步（接下来我做的）
 
-1. **M2-2** 节点 DOM 层：圆角方框、自适应宽度、样式 token 落地（消费 `CanvasEngine.transform` 与可见性剔除）
-2. **M2-3** 右键新建节点 + 双击编辑标题（需验证中文输入法）
-3. **M2-8** 命令栈：撤销 / 重做（同样纯函数、可单测）
+1. **等用户验收本轮 UI**：右键菜单（空白处/条目上）、内联新建/重命名、macOS 红绿灯安全区、Windows 自绘窗口按钮
+2. **M2-2** 节点 DOM 层：圆角方框、自适应宽度、样式 token 落地（消费 `CanvasEngine.transform` 与可见性剔除）
+3. **M2-3** 右键新建节点 + 双击编辑标题（需验证中文输入法；可复用本轮的 ContextMenu 组件）
 4. 把 `CanvasEngine` 接入 `App.tsx` 的画布占位区（`canvas-placeholder`），验证滚轮缩放锚点手感
+5. **M2-8** 命令栈：撤销 / 重做（同样纯函数、可单测）
 
 ## 六、阻塞项
 
@@ -86,3 +90,6 @@
 | MCP 无法直接 spawn npm | 本机 npm 是 `npm.ps1`，须经 `powershell -File` 包装；MCP 里用 `powershell -NoProfile -Command npm ...` 可跑通 |
 | MCP 配置改动不生效 | 只换隧道不重启 `server.mjs` 时，`config.json` 改动不会重新读取 |
 | MCP `apply_patch` 对 JSON 上下文不稳 | 给 `package.json` 打小补丁时报「patched」却未生效（同尺寸）；改用 `write_file` 全量覆盖更可靠 |
+| **在 Windows 上跑出 GUI 不代表平台错了** | Tauri 用系统 WebView（Win=WebView2 / mac=WKWebView），同一套 React 代码在开发机（本机是 Windows，故产物为 `lumen.exe`）即可调试；「主目标 macOS」指最终发布用 mac 构建。macOS 的 `.app`/`.dmg` 必须在 mac 或 CI mac runner 上 `tauri build` |
+| **自定义标题栏控件必须退出拖拽区** | 整条 titlebar 设 `-webkit-app-region: drag` 后，内部按钮要加 `no-drag`，否则点击被窗口拖拽吞掉 |
+

@@ -697,3 +697,5 @@ lumen/
 | ADR-010 | 私密文件集中在仓库内 `.local/` 目录并 gitignore，提交前跑密钥扫描 | 兼顾"方便取用"与"绝不入库"；`.gitignore` 只能防未跟踪文件，故需扫描脚本兜底（防误 `git add -f`、防已跟踪文件泄密） |
 | ADR-011 | `CanvasEngine` 拆为「纯函数内核 + 薄类封装」，坐标换算不碰 DOM | 纯函数可在 Node 侧直测（DESIGN §8），把容器 `getBoundingClientRect()` 作为参数传入即可；类只持有视口状态并委托纯函数，便于未来接入 Store/命令栈 |
 | ADR-012 | 缩放以「屏幕锚点世界点不动」为不变量（zoomAtPoint），视口用 `translate3d+scale` 整体变换 | 滚轮/捏合缩放手感的正确性可用单测钉死（往返一致、锚点不动）；容器整体 transform 避免逐节点重排，配合包围盒剔除做虚拟化（DESIGN §5.4 性能策略） |
+| ADR-013 | 自定义标题栏采用 native_mac 策略（mac 保留系统红绿灯 + Overlay，Win/Linux 自绘） | 主目标是 macOS：遵循各系统窗口惯例（mac 红绿灯在左、Win 按钮在右）比强行统一更符合用户肌肉记忆；实现上 mac 用 titleBarStyle=Overlay + hiddenTitle，其它平台 decorations=false 前端自绘 |
+| ADR-014 | 列表操作从「底部常驻表单」改为右键菜单 + 内联编辑 | 底部固定表单占用垂直空间且与白板极简气质不符；右键菜单（空白=新建、条目=打开/重命名/删除）+ 就地内联输入更贴近桌面应用直觉，ContextMenu 组件后续可复用于画布节点（M2-3） |

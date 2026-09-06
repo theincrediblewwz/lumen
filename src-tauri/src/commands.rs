@@ -66,6 +66,11 @@ pub fn project_delete(id: String) -> Result<(), String> {
     storage::delete_project(&root()?, &id)
 }
 
+#[tauri::command]
+pub fn project_rename(id: String, name: String) -> Result<storage::ProjectMeta, String> {
+    storage::rename_project(&root()?, &id, &name)
+}
+
 // ───────────────── 白板（M1-5） ─────────────────
 
 #[tauri::command]
@@ -91,4 +96,13 @@ pub fn board_save(board: storage::BoardFile) -> Result<(), String> {
 #[tauri::command]
 pub fn board_delete(project_id: String, board_id: String) -> Result<(), String> {
     storage::delete_board(&root()?, &project_id, &board_id)
+}
+
+#[tauri::command]
+pub fn board_rename(
+    project_id: String,
+    board_id: String,
+    name: String,
+) -> Result<storage::BoardMeta, String> {
+    storage::rename_board(&root()?, &project_id, &board_id, &name)
 }

@@ -84,30 +84,178 @@ body {
   height: 100%;
 }
 
-.board-topbar {
+/* ==========================================================================
+   自定义标题栏（native_mac 策略）+ 右键菜单
+   - macOS：titleBarStyle=Overlay 保留系统红绿灯，左侧留安全区
+   - Windows/Linux：decorations=false，右侧自绘窗口按钮
+   ========================================================================== */
+
+.titlebar {
   display: flex;
   align-items: center;
-  gap: 12px;
-  padding: 10px 16px;
+  height: 40px;
+  padding: 0 8px 0 14px;
   border-bottom: var(--border-node) solid var(--border-color);
-  /* macOS 红绿灯区域在 M6 用自定义标题栏时再处理安全区 */
+  background: var(--bg-node);
+  user-select: none;
+  /* 整条为拖拽区；交互控件用 data-tauri-drag-region 之外 + no-drag 类抵消 */
   -webkit-app-region: drag;
+  app-region: drag;
 }
 
-.brand {
-  font-size: 15px;
+/* macOS：为左上角系统红绿灯预留安全区，避免和品牌名重叠 */
+.titlebar.is-mac {
+  padding-left: 78px;
+}
+
+.titlebar-brand {
+  font-size: 14px;
   font-weight: 600;
   letter-spacing: 0.08em;
+  color: var(--text-primary);
 }
 
-.meta {
-  font-size: 12px;
+.titlebar-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  margin-left: auto;
+}
+
+/* 所有可点控件都要退出拖拽区，否则点击会被窗口拖拽吞掉 */
+.titlebar-btn,
+.win-btn {
+  -webkit-app-region: no-drag;
+  app-region: no-drag;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  background: transparent;
   color: var(--text-secondary);
+  cursor: pointer;
+  border-radius: 7px;
+  transition: background var(--dur-fast) var(--ease-standard),
+    color var(--dur-fast) var(--ease-standard);
 }
 
-.meta-error {
+.titlebar-menu {
+  width: 30px;
+  height: 30px;
+  margin-right: 4px;
+}
+
+.titlebar-btn:hover {
+  background: rgba(128, 128, 128, 0.12);
+  color: var(--text-primary);
+}
+
+/* Windows/Linux 窗口按钮 */
+.win-controls {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.win-btn {
+  width: 40px;
+  height: 30px;
+  border-radius: 6px;
+}
+
+.win-btn:hover {
+  background: rgba(128, 128, 128, 0.14);
+  color: var(--text-primary);
+}
+
+.win-close:hover {
+  background: #e0503a;
+  color: #fff;
+}
+
+/* 通用错误条已在 ui.css；标题栏下方沿用 .error-bar */
+
+/* ── 右键 / 浮层菜单 ── */
+.ctx-menu {
+  position: fixed;
+  z-index: 1000;
+  min-width: 168px;
+  padding: 5px;
+  background: var(--bg-node);
+  border: var(--border-node) solid var(--border-color);
+  border-radius: 10px;
+  box-shadow: var(--shadow-node-hover);
+  animation: ctx-in var(--dur-fast) var(--ease-decelerate);
+}
+
+@keyframes ctx-in {
+  from {
+    opacity: 0;
+    transform: translateY(-4px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.ctx-item {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 7px 10px;
+  font-size: 13px;
+  color: var(--text-primary);
+  background: transparent;
+  border: none;
+  border-radius: 7px;
+  cursor: pointer;
+  transition: background var(--dur-fast) var(--ease-standard);
+}
+
+.ctx-item:hover:not(:disabled) {
+  background: rgba(46, 90, 78, 0.12);
+}
+
+.ctx-item:disabled {
+  color: var(--text-secondary);
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.ctx-item.is-danger {
   color: #c0533f;
 }
+
+.ctx-item.is-danger:hover:not(:disabled) {
+  background: rgba(192, 83, 63, 0.12);
+}
+
+.ctx-sep {
+  height: 1px;
+  margin: 5px 6px;
+  background: var(--border-color);
+}
+
+.ctx-info {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 6px 10px 8px;
+}
+
+.ctx-info-text {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.ctx-info-sub {
+  font-size: 11px;
+  color: var(--text-secondary);
+  word-break: break-all;
+}
+
 
 .board-canvas {
   flex: 1;
