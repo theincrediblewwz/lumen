@@ -373,9 +373,14 @@ export default function App() {
       {error && <div className="error-bar">{error}</div>}
 
       <div className="workspace">
-        {/* 侧栏（项目 + 白板）：由标题栏三横线开关统一收起/展开 */}
-        {!sidebarCollapsed && (
-          <div className="sidebar glass-surface">
+        {/* 侧栏（项目 + 白板）：由标题栏三横线开关统一收起/展开。
+            始终挂载，用 is-collapsed 类做宽度过渡，收起/展开都有动画。 */}
+        <div
+          className={`sidebar glass-surface${sidebarCollapsed ? ' is-collapsed' : ''}${
+            activeProject ? ' has-boards' : ''
+          }`}
+        >
+          <div className="sidebar-inner">
             {/* 项目栏：空白处右键 = 新建项目 */}
             <aside className="pane pane-projects">
               <div className="pane-head">
@@ -433,7 +438,7 @@ export default function App() {
             </aside>
             )}
           </div>
-        )}
+        </div>
 
         {/* 画布区：挂 CanvasEngine（M2-2 / M2-3） */}
         {activeBoard ? (

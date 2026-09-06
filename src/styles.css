@@ -35,6 +35,9 @@
   --glass-rgb: 255, 255, 255;
   --glass-hi: rgba(255, 255, 255, 0.55);
   --glass-edge: rgba(255, 255, 255, 0.22);
+  --ambient-a: rgba(46, 90, 78, 0.16);
+  --ambient-b: rgba(84, 130, 200, 0.14);
+  --ambient-c: rgba(210, 150, 90, 0.12);
 }
 
 /* 浅色（默认） */
@@ -54,6 +57,9 @@
   --glass-rgb: 250, 251, 252;
   --glass-hi: rgba(255, 255, 255, 0.7);
   --glass-edge: rgba(255, 255, 255, 0.55);
+  --ambient-a: rgba(46, 90, 78, 0.16);
+  --ambient-b: rgba(84, 130, 200, 0.14);
+  --ambient-c: rgba(210, 150, 90, 0.12);
 }
 
 /* 纸感 */
@@ -72,6 +78,9 @@
   --glass-rgb: 253, 251, 246;
   --glass-hi: rgba(255, 252, 244, 0.66);
   --glass-edge: rgba(255, 250, 238, 0.5);
+  --ambient-a: rgba(138, 90, 43, 0.18);
+  --ambient-b: rgba(160, 120, 60, 0.14);
+  --ambient-c: rgba(120, 140, 80, 0.12);
 }
 
 /* 深色 */
@@ -90,6 +99,9 @@
   --glass-rgb: 34, 37, 43;
   --glass-hi: rgba(255, 255, 255, 0.10);
   --glass-edge: rgba(255, 255, 255, 0.09);
+  --ambient-a: rgba(111, 179, 160, 0.20);
+  --ambient-b: rgba(70, 110, 180, 0.18);
+  --ambient-c: rgba(150, 110, 70, 0.16);
 }
 
 * {
@@ -111,6 +123,16 @@ body {
   line-height: 1.5;
   color: var(--text-primary);
   background: var(--bg-chrome);
+}
+
+/* 玻璃需要"身后有东西可透"才显质感。开启玻璃时给整窗铺一层柔和的
+   环境光晕背景（跟随主题的强调色），让侧栏/标题栏/菜单的模糊有内容可折射。 */
+html.glass-on body {
+  background:
+    radial-gradient(120% 90% at 12% 0%, var(--ambient-a), transparent 55%),
+    radial-gradient(120% 90% at 100% 20%, var(--ambient-b), transparent 55%),
+    radial-gradient(140% 120% at 50% 120%, var(--ambient-c), transparent 60%),
+    var(--bg-chrome);
   /* 更干净的字形渲染，缓解「小气感」 */
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
@@ -506,12 +528,55 @@ body {
    侧边栏收起（竖条）+ 全屏模式
    ========================================================================== */
 
-/* 侧栏：项目栏 + 白板栏，整体由标题栏三横线开关收起/展开 */
+/* 侧栏：项目栏 + 白板栏，整体由标题栏三横线开关收起/展开。
+   始终挂载：用 width + opacity + translateX 过渡，收起/展开都丝滑。 */
 .sidebar {
-  display: flex;
   flex: 0 0 auto;
+  width: 224px; /* 未选项目：只有项目栏 */
   height: 100%;
   min-height: 0;
+  overflow: hidden;
+  transition:
+    width var(--dur-slow) var(--ease-standard),
+    opacity var(--dur-normal) var(--ease-standard);
+}
+
+.sidebar.has-boards {
+  width: 448px; /* 选中项目：项目栏 + 白板栏 */
+}
+
+.sidebar.is-collapsed {
+  width: 0;
+  opacity: 0;
+}
+
+/* 内层固定宽度，避免收起时内容被挤压重排（只做整体平移淡出） */
+.sidebar-inner {
+  display: flex;
+  width: 448px;
+  height: 100%;
+  min-height: 0;
+  transition: transform var(--dur-slow) var(--ease-standard);
+}
+
+.sidebar.is-collapsed .sidebar-inner {
+  transform: translateX(-24px);
+}
+
+/* 白板栏出现/消失的平滑过渡 */
+.pane-boards {
+  animation: pane-slide var(--dur-normal) var(--ease-decelerate);
+}
+
+@keyframes pane-slide {
+  from {
+    opacity: 0;
+    transform: translateX(-10px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
 }
 
 /* 全屏：铺满屏幕，标题栏已隐藏；仅留退出按钮 */
@@ -591,46 +656,29 @@ html.motion-off * {
   transition-duration: 0.001ms !important;
 }
 
-/* ── 侧栏收起/展开动画 ── */
-.sidebar {
-  overflow: hidden;
-  animation: sidebar-in var(--dur-normal) var(--ease-decelerate);
-}
-
-@keyframes sidebar-in {
-  from {
-    opacity: 0;
-    transform: translateX(-14px);
-    width: 0;
-  }
-  to {
-    opacity: 1;
-    transform: none;
-  }
-}
-
-.pane {
-  animation: fade-in var(--dur-normal) var(--ease-standard);
-}
-
 @keyframes fade-in {
   from { opacity: 0; }
   to { opacity: 1; }
 }
 
-/* ── 节点：改版为 标题 + 完整问题，框随内容增高 ── */
+/* ── 节点：改版为 标题 + 完整问题，框随内容增高 ──
+   位移/缩放走 transition（拖拽、选中、hover 都丝滑）；出现用一次性动画。 */
 .node-card {
   display: flex;
   flex-direction: column;
   gap: 6px;
   height: auto;
   animation: node-pop var(--dur-normal) var(--ease-spring);
+  transition:
+    box-shadow var(--dur-fast) var(--ease-standard),
+    border-color var(--dur-fast) var(--ease-standard),
+    outline-color var(--dur-fast) var(--ease-standard);
 }
 
 @keyframes node-pop {
   from {
     opacity: 0;
-    transform: scale(0.9);
+    transform: scale(0.86);
   }
   to {
     opacity: 1;
@@ -1039,3 +1087,111 @@ html.glass-on .canvas-toolbar {
 html.glass-on .node-card.is-selected {
   border-color: var(--glass-edge);
 }
+
+/* ==========================================================================
+   动画精修（全局补全 + 丝滑化）
+   —— 统一：可交互元素给 transition；出现类给一次性动画；全部受 motion-off 管控
+   ========================================================================== */
+
+/* 列表项：hover 轻微右移 + 出现淡入 */
+.list-item {
+  transition:
+    background var(--dur-fast) var(--ease-standard),
+    transform var(--dur-fast) var(--ease-standard);
+}
+.list-item:hover {
+  transform: translateX(2px);
+}
+.list-item.is-active {
+  transform: none;
+}
+
+/* 侧栏面板标题栏、加号按钮的按压反馈 */
+.pane-add:active,
+.titlebar-btn:active,
+.win-btn:active,
+.canvas-toolbar .tb-btn:active:not(:disabled),
+.seg-btn:active {
+  transform: scale(0.92);
+}
+.pane-add,
+.canvas-toolbar .tb-btn,
+.seg-btn {
+  transition:
+    background var(--dur-fast) var(--ease-standard),
+    color var(--dur-fast) var(--ease-standard),
+    transform var(--dur-instant) var(--ease-standard);
+}
+
+/* 标题栏三横线开关：收起时旋转一下，给出状态感 */
+.titlebar-sidebar svg {
+  transition: transform var(--dur-normal) var(--ease-spring);
+}
+.titlebar-sidebar.is-collapsed svg {
+  transform: rotate(90deg);
+}
+
+/* 主按钮/次按钮统一按压反馈 */
+.btn,
+.bubble-edit,
+.settings-close {
+  transition:
+    background var(--dur-fast) var(--ease-standard),
+    filter var(--dur-fast) var(--ease-standard),
+    transform var(--dur-instant) var(--ease-standard);
+}
+.btn:active:not(:disabled),
+.bubble-edit:active,
+.settings-close:active {
+  transform: scale(0.96);
+}
+
+/* 全屏进入/退出：整面淡入 + 退出按钮浮现 */
+.board-surface {
+  transition: background var(--dur-slow) var(--ease-standard);
+}
+.fullscreen-exit {
+  animation: bubble-in var(--dur-normal) var(--ease-spring);
+}
+
+/* 画布视图（占位 ↔ 画布）切换淡入 */
+.canvas-placeholder,
+.board-canvas-live {
+  animation: fade-in var(--dur-normal) var(--ease-standard);
+}
+.placeholder-hint {
+  animation: rise-in var(--dur-normal) var(--ease-decelerate);
+}
+
+@keyframes rise-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* 错误条滑入 */
+.error-bar {
+  animation: rise-in var(--dur-fast) var(--ease-decelerate);
+}
+
+/* 开启玻璃时，画布对浮层透出一点点，让气泡/菜单折射真实内容 */
+html.glass-on .board-canvas {
+  background-color: color-mix(in srgb, var(--bg-canvas) 92%, transparent);
+}
+
+/* 节点 hover 轻微抬起（非拖拽/编辑态） */
+.node-card:hover:not(.is-editing) {
+  transform: translateY(-1px);
+}
+
+/* 设置面板遮罩淡入已在上；卡片内区块入场做轻微下落 */
+.settings-section {
+  animation: rise-in var(--dur-normal) var(--ease-decelerate) both;
+}
+.settings-section:nth-of-type(2) { animation-delay: 40ms; }
+.settings-section:nth-of-type(3) { animation-delay: 80ms; }
