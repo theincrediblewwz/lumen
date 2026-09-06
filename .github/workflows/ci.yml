@@ -1,0 +1,31 @@
+# 日常检查：只在 Linux 上跑（1x 分钟，几乎不消耗额度）
+# 按 docs/PLAN.md §1.5 的约定 —— macOS 构建只在里程碑打 tag 时触发（见 release.yml）
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  check:
+    name: 类型检查 · 密钥扫描
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 'lts/*'
+          cache: 'npm'
+
+      - name: 安装依赖
+        run: npm install
+
+      - name: 类型检查
+        run: npm run typecheck
+
+      # 公开仓库的必备防线：.gitignore 挡不住「已跟踪文件」和「硬编码」，
+      # 这里对已入库内容再扫一遍（见 docs/DESIGN.md §11.6）
+      - name: 密钥扫描
+        run: npm run check:secrets

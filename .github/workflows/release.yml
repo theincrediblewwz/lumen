@@ -1,0 +1,67 @@
+# 里程碑构建：打 tag（v*）才触发，产出 macOS 与 Windows 安装包
+# 公开仓库下 Actions 分钟数不限，但仍按里程碑节奏构建（ADR-007）
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+jobs:
+  build:
+    permissions:
+      contents: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: macos-latest # macos-15，Apple Silicon arm64
+            args: '--target aarch64-apple-darwin'
+            rust_target: 'aarch64-apple-darwin'
+          - platform: windows-latest
+            args: ''
+            rust_target: 'x86_64-pc-windows-msvc'
+
+    runs-on: ${{ matrix.platform }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 'lts/*'
+          cache: 'npm'
+
+      - name: 安装 Rust 工具链
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.rust_target }}
+
+      # Rust 冷编译 15-25 分钟，缓存后降到 3-6 分钟（风险 R-1）
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: 安装前端依赖
+        run: npm install
+
+      - name: 构建并发布
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # ── 签名与公证 ────────────────────────────────────────────
+          # ADR-008：一期不做签名，出 ad-hoc 构建（自用 + 极小范围分享）。
+          # 日后若需顺畅分发，在仓库 Settings → Secrets 补上以下变量，
+          # tauri-action 会自动完成 签名 → 公证 → staple：
+          #   APPLE_CERTIFICATE / APPLE_CERTIFICATE_PASSWORD / APPLE_SIGNING_IDENTITY
+          #   APPLE_ID / APPLE_PASSWORD / APPLE_TEAM_ID
+        with:
+          tagName: v__VERSION__
+          releaseName: 'Lumen v__VERSION__'
+          releaseBody: |
+            脉络 Lumen 构建产物。
+
+            - macOS：Apple Silicon (arm64) dmg。未签名，首次运行请右键 → 打开。
+            - Windows：NSIS 安装包。未签名，SmartScreen 提示时选择「仍要运行」。
+          releaseDraft: true
+          prerelease: false
+          args: ${{ matrix.args }}

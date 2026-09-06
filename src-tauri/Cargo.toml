@@ -1,0 +1,19 @@
+[package]
+name = "lumen"
+version = "0.1.0"
+description = "脉络 Lumen — 本地优先的极简白板"
+authors = ["theincrediblewwz"]
+edition = "2021"
+rust-version = "1.77"
+
+[lib]
+name = "lumen_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
