@@ -1,0 +1,204 @@
+/* M1 阶段的界面样式；M2 引入画布后再按需整理 */
+
+.screen-center {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  padding: 24px;
+}
+
+.setup-card {
+  max-width: 420px;
+  text-align: center;
+  padding: 32px 28px;
+  background: var(--bg-node);
+  border: var(--border-node) solid var(--border-color);
+  border-radius: 14px;
+  box-shadow: var(--shadow-node);
+}
+
+.setup-title {
+  margin: 0 0 12px;
+  font-size: 26px;
+  font-weight: 600;
+  letter-spacing: 0.16em;
+}
+
+.setup-desc {
+  margin: 0 0 22px;
+  font-size: 13px;
+  line-height: 1.7;
+  color: var(--text-secondary);
+}
+
+.error-text {
+  margin: 14px 0 0;
+  font-size: 12px;
+  color: #c0533f;
+}
+
+.error-bar {
+  padding: 8px 16px;
+  font-size: 12px;
+  color: #c0533f;
+  background: rgba(192, 83, 63, 0.08);
+  border-bottom: var(--border-node) solid var(--border-color);
+}
+
+.workspace {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+}
+
+.pane {
+  display: flex;
+  flex-direction: column;
+  width: 208px;
+  flex: 0 0 208px;
+  border-right: var(--border-node) solid var(--border-color);
+  background: var(--bg-node);
+}
+
+.pane-head {
+  padding: 10px 14px;
+  font-size: 12px;
+  color: var(--text-secondary);
+  border-bottom: var(--border-node) solid var(--border-color);
+}
+
+.list {
+  flex: 1;
+  margin: 0;
+  padding: 6px;
+  list-style: none;
+  overflow-y: auto;
+}
+
+.list-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 10px;
+  font-size: var(--font-node);
+  border-radius: var(--radius-node);
+  cursor: pointer;
+  transition: background var(--dur-fast) var(--ease-standard);
+}
+
+.list-item:hover {
+  background: rgba(128, 128, 128, 0.08);
+}
+
+.list-item.is-active {
+  background: rgba(46, 90, 78, 0.12);
+}
+
+.list-title {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.list-meta {
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+
+.list-empty {
+  padding: 10px;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.pane-foot {
+  display: flex;
+  gap: 6px;
+  padding: 8px;
+  border-top: var(--border-node) solid var(--border-color);
+}
+
+.input {
+  flex: 1;
+  min-width: 0;
+  padding: 5px 8px;
+  font-size: 12px;
+  color: var(--text-primary);
+  background: var(--bg-canvas);
+  border: var(--border-node) solid var(--border-color);
+  border-radius: 8px;
+  outline: none;
+}
+
+.input:focus {
+  border-color: var(--accent);
+}
+
+.btn {
+  padding: 5px 12px;
+  font-size: 12px;
+  color: var(--text-primary);
+  background: var(--bg-canvas);
+  border: var(--border-node) solid var(--border-color);
+  border-radius: 8px;
+  cursor: pointer;
+  transition: background var(--dur-fast) var(--ease-standard);
+}
+
+.btn:hover:not(:disabled) {
+  background: rgba(128, 128, 128, 0.1);
+}
+
+.btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.btn-primary {
+  padding: 8px 20px;
+  font-size: 13px;
+  color: #fff;
+  background: var(--accent);
+  border-color: var(--accent);
+}
+
+.btn-ghost {
+  margin-left: auto;
+}
+
+.btn-icon {
+  width: 20px;
+  height: 20px;
+  font-size: 14px;
+  line-height: 1;
+  color: var(--text-secondary);
+  background: transparent;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity var(--dur-fast) var(--ease-standard);
+}
+
+.list-item:hover .btn-icon {
+  opacity: 1;
+}
+
+.btn-icon:hover {
+  color: #c0533f;
+  background: rgba(192, 83, 63, 0.1);
+}
+
+.canvas-placeholder {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: 1;
+}
+
+.placeholder-hint {
+  font-size: 13px;
+  color: var(--text-secondary);
+}

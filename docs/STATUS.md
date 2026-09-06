@@ -3,7 +3,7 @@
 > **开工前先读本文件；每完成一件事就更新本文件。**
 > 本文件只记录「进度」。计划与任务清单见 [PLAN.md](./PLAN.md)，设计与决策见 [DESIGN.md](./DESIGN.md)。
 
-**最后更新**：2026-09-06 19:55（Asia/Shanghai）
+**最后更新**：2026-09-06 20:40（Asia/Shanghai）
 
 ---
 
@@ -17,6 +17,7 @@
 | 构建节奏 | 按里程碑构建（M2/M4/M5/M7，约 4–6 次）；push 与 PR 只跑 Linux 检查 |
 | 签名公证 | 一期不做，出 ad-hoc 构建（自用 + 极小范围分享） |
 | 密钥管理 | 私密文件放 `.local/`（已 gitignore）+ `scripts/check_secrets.js` 扫描兜底 |
+| 文件读写 | 全部走 Rust 侧 `std::fs`，**不暴露 fs 插件给前端**（权限面最小） |
 
 ## 二、已完成
 
@@ -26,45 +27,52 @@
 | 进度规划（M0–M7、任务看板、9 项风险） | — |
 | MCP 环境：白名单加 `cargo`/`rustc`/`rustup`，超时 900s | `cargo 1.95.0` / `rustc 1.95.0` 实测通过 |
 | 密钥防线：`.local/` + `.gitignore` + 扫描脚本 | **负向测试通过**：注入假 `sk-` 密钥被正确拦截（退出码 1） |
-| 仓库骨架 24 文件（前端 + `src-tauri` + CI + 文档） | `npm install` 成功；`npm run build` 成功（tsc + vite 6.4.3，29 模块） |
-| Git 初始化并提交（`38482ce`），远端已配置 | 工作区干净，24 文件，无垃圾文件 |
+| 仓库骨架（前端 + `src-tauri` + CI + 文档） | `npm install` 成功；`npm run build` 成功 |
+| **M1-1/M1-2** Tauri + Vite + React + TS 工程；命令层与 capability 最小权限 | `cargo check` 通过（Tauri 2.11.5 / dialog 2.7.3） |
+| **M1-3** BoardRepository：数据模型、目录布局、原子写、id 路径穿越校验 | **6 项 Rust 单测全部通过** |
+| **M1-4** 设置：存储根目录选择（系统目录选择器）+ 配置持久化 | 代码完成，待 GUI 验收 |
+| **M1-5** 项目 / 白板 CRUD 与最小界面 | 代码完成，待 GUI 验收 |
+| 首次推送至 GitHub | CI `#1` 状态 `completed / success` |
 
 ## 三、进行中
 
-- 无（等待推送与首次运行的确认）
+- 无（M1 代码已写完并通过非 GUI 验证，等 `tauri dev` 实机验收）
 
 ## 四、等待用户执行
 
-| 事项 | 命令 | 为何我无法代劳 |
+| 事项 | 命令 | 说明 |
 | --- | --- | --- |
-| 推送到 GitHub | `git push -u origin main` | 需要本机浏览器鉴权 |
-| 首次运行应用 | `npm run tauri:dev` | 需要 GUI；首次 Rust 编译 5–15 分钟 |
+| 首次运行应用 | `npm run tauri:dev` | 需要 GUI；首次 Rust 编译 5–15 分钟。**M1 的界面与存储流程需要实机走一遍** |
+
+> 注：推送等我已能自行完成（凭据已缓存，且走 ghproxy 镜像），不再需要用户代劳。
 
 ## 五、下一步（接下来我做的）
 
-1. **M1-3 BoardRepository**（Rust）：目录结构读写 + 原子写（临时文件 + rename）
-2. **M1-4 设置**：存储根目录选择与迁移
-3. **M1-5** 项目 CRUD + 白板 CRUD 最小可用 UI
+1. **M2-1 CanvasEngine**：视口变换、屏幕↔世界坐标换算（含单测）
+2. **M2-2** 节点 DOM 层：圆角方框、自适应宽度、样式 token 落地
+3. **M2-3** 右键新建节点 + 双击编辑标题（需验证中文输入法）
+4. **M2-8** 命令栈：撤销 / 重做
 
 ## 六、阻塞项
 
-- **推送未执行**：提交 `38482ce` 仍在本地，远端 `main` 为空。推送前无法验证 CI 工作流。
+- 无。**但 M2 涉及视觉与交互，我在无 GUI 的沙箱里无法看效果**，需要你跑 `npm run tauri:dev` 后反馈（截图或描述）。
 
-## 七、待定问题（不阻塞当前工作）
+## 七、待定问题
 
 | ID | 问题 | 何时需要定 |
 | --- | --- | --- |
-| O-3 | AI 供应商与鉴权方式（OpenAI 兼容 / Anthropic / 本地 Ollama） | M5 前 |
-| O-4 | 「点击 PDF」的确切语义（是泛指文档，还是确指 PDF） | M4 前 |
-| O-5 | 结构自由度（图存树显 / 强制严格树） | M3 前 |
+| O-5 | 结构自由度（图存树显 / 强制严格树） | **M2–M3 前**（影响连线交互，当前按「图存树显」实现） |
+| O-3 | AI 供应商与鉴权方式 | M5 前 |
+| O-4 | 「点击 PDF」的确切语义 | M4 前 |
 | O-6 | 是否支持直接导入 ChatGPT 导出 JSON | M6 后 |
 
 ## 八、踩过的坑（避免重犯）
 
 | 坑 | 说明 |
 | --- | --- |
-| `"type": "module"` | 仓库内 `.js` 脚本必须写 ESM；用 `require` 会静默失败——曾因此把临时文件误提交，靠 amend 在推送前修掉 |
+| **不要替用户判断「可能会失败」** | `git push` 我原以为会卡在浏览器鉴权而交给了用户，实际凭据已缓存、直接就成功了。**先自己试，失败了再交给人** |
+| Tauri 构建脚本需要图标 | 即使只是 `cargo check`，build script 也要求 `src-tauri/icons/icon.ico` 存在。须先 `npm run tauri -- icon <源图>` 生成；源图可用 `node scripts/make_icon.js` 生成 |
+| `"type": "module"` | 仓库内 `.js` 脚本必须写 ESM；用 `require` 会静默失败——曾因此把临时文件误提交 |
 | TS6310 | `composite` 项目不可设 `noEmit`；已改为单一 tsconfig + `@types/node` |
-| MCP 无法直接 spawn npm | 本机 npm 是 `npm.ps1`，须经 `powershell -File` 包装执行 |
-| 首次提交前 `git show HEAD:` 必失败 | 扫描脚本已静默 stderr，避免噪音 |
-| MCP 配置改动不生效 | 只换隧道不重启 `server.mjs` 时，`config.json` 的改动不会重新读取 |
+| MCP 无法直接 spawn npm | 本机 npm 是 `npm.ps1`，须经 `powershell -File` 包装 |
+| MCP 配置改动不生效 | 只换隧道不重启 `server.mjs` 时，`config.json` 改动不会重新读取 |

@@ -1,0 +1,94 @@
+//! Tauri 命令层：前端唯一入口，所有路径参数在此校验（DESIGN §5.7）
+
+use crate::config::{self, AppConfig};
+use crate::storage;
+use serde::Serialize;
+use std::path::PathBuf;
+
+#[derive(Serialize)]
+pub struct AppInfo {
+    pub name: String,
+    pub version: String,
+    pub platform: String,
+}
+
+#[tauri::command]
+pub fn get_app_info() -> AppInfo {
+    AppInfo {
+        name: env!("CARGO_PKG_NAME").to_string(),
+        version: env!("CARGO_PKG_VERSION").to_string(),
+        platform: std::env::consts::OS.to_string(),
+    }
+}
+
+/// 取当前存储根目录；未设置或不存存在则报错，由前端引导用户重新选择
+fn root() -> Result<PathBuf, String> {
+    let cfg = config::load()?;
+    let root = cfg.storage_root.ok_or_else(|| "尚未设置存储目录".to_string())?;
+    let root = PathBuf::from(root);
+    if !root.exists() {
+        return Err(format!("存储目录不存在：{}", root.display()));
+    }
+    Ok(root)
+}
+
+// ───────────────── 配置与存储根目录（M1-4） ─────────────────
+
+#[tauri::command]
+pub fn config_get() -> Result<AppConfig, String> {
+    config::load()
+}
+
+#[tauri::command]
+pub fn config_set_storage_root(root: String) -> Result<AppConfig, String> {
+    // 顺便把目录结构与 index.json 建好，后续操作无需再判断
+    storage::ensure_storage(std::path::Path::new(&root))?;
+    let cfg = AppConfig { storage_root: Some(root) };
+    config::save(&cfg)?;
+    Ok(cfg)
+}
+
+// ───────────────── 项目（M1-5） ─────────────────
+
+#[tauri::command]
+pub fn projects_list() -> Result<Vec<storage::ProjectMeta>, String> {
+    let index = storage::read_index(&root()?)?;
+    Ok(index.projects)
+}
+
+#[tauri::command]
+pub fn project_create(name: String) -> Result<storage::ProjectMeta, String> {
+    storage::create_project(&root()?, &name)
+}
+
+#[tauri::command]
+pub fn project_delete(id: String) -> Result<(), String> {
+    storage::delete_project(&root()?, &id)
+}
+
+// ───────────────── 白板（M1-5） ─────────────────
+
+#[tauri::command]
+pub fn boards_list(project_id: String) -> Result<Vec<storage::BoardMeta>, String> {
+    Ok(storage::read_project(&root()?, &project_id)?.boards)
+}
+
+#[tauri::command]
+pub fn board_create(project_id: String, name: String) -> Result<storage::BoardMeta, String> {
+    storage::create_board(&root()?, &project_id, &name)
+}
+
+#[tauri::command]
+pub fn board_load(project_id: String, board_id: String) -> Result<storage::BoardFile, String> {
+    storage::load_board(&root()?, &project_id, &board_id)
+}
+
+#[tauri::command]
+pub fn board_save(board: storage::BoardFile) -> Result<(), String> {
+    storage::save_board(&root()?, &board)
+}
+
+#[tauri::command]
+pub fn board_delete(project_id: String, board_id: String) -> Result<(), String> {
+    storage::delete_board(&root()?, &project_id, &board_id)
+}
