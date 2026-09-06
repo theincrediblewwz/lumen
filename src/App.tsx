@@ -4,6 +4,7 @@ import { ContextMenu, type ContextMenuState } from './components/ContextMenu';
 import { TitleBar } from './components/TitleBar';
 import { BoardCanvas } from './components/BoardCanvas';
 import type { Viewport } from './canvas/CanvasEngine';
+import { getCurrentWindow } from '@tauri-apps/api/window';
 
 type Phase = 'loading' | 'setup' | 'ready';
 
@@ -26,6 +27,10 @@ export default function App() {
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  const [projectsCollapsed, setProjectsCollapsed] = useState(false);
+  const [boardsCollapsed, setBoardsCollapsed] = useState(false);
+  const [fullscreen, setFullscreen] = useState(false);
 
   const [menu, setMenu] = useState<ContextMenuState | null>(null);
   const [editing, setEditing] = useState<Editing>(null);
@@ -59,6 +64,33 @@ export default function App() {
     window.addEventListener('contextmenu', block);
     return () => window.removeEventListener('contextmenu', block);
   }, []);
+
+  /* ── 全屏模式 ── */
+  const applyFullscreen = useCallback((on: boolean) => {
+    setFullscreen(on);
+    getCurrentWindow().setFullscreen(on).catch(() => {});
+  }, []);
+  const toggleFullscreen = useCallback(() => {
+    setFullscreen((cur) => {
+      const next = !cur;
+      getCurrentWindow().setFullscreen(next).catch(() => {});
+      return next;
+    });
+  }, []);
+
+  /* F11 切换全屏；Esc 退出全屏 */
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'F11') {
+        e.preventDefault();
+        toggleFullscreen();
+      } else if (e.key === 'Escape' && fullscreen) {
+        applyFullscreen(false);
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [fullscreen, toggleFullscreen, applyFullscreen]);
 
   useEffect(() => {
     if (editing) {
@@ -194,6 +226,7 @@ export default function App() {
     openAt(e, [
       { type: 'info', text: '脉络 Lumen', sub: root ?? '未设置存储目录' },
       { type: 'separator' },
+      { type: 'item', label: '进入全屏  F11', onClick: () => applyFullscreen(true) },
       { type: 'item', label: '更改存储目录…', onClick: chooseDir },
     ]);
 
@@ -279,18 +312,48 @@ export default function App() {
 
   /* ── 主界面 ── */
   return (
-    <div className="board-surface">
-      <TitleBar platform={platform} brand="脉络" onMenu={appMenu} />
+    <div className={`board-surface${fullscreen ? ' is-fullscreen' : ''}`}>
+      {!fullscreen && <TitleBar platform={platform} brand="脉络" onMenu={appMenu} />}
+
+      {fullscreen && (
+        <button
+          type="button"
+          className="fullscreen-exit"
+          title="退出全屏  Esc"
+          onClick={() => applyFullscreen(false)}
+        >
+          <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true">
+            <path
+              d="M6 2H2v4M14 6V2h-4M10 14h4v-4M2 10v4h4"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="1.5"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            />
+          </svg>
+          <span>退出全屏</span>
+        </button>
+      )}
 
       {error && <div className="error-bar">{error}</div>}
 
       <div className="workspace">
-        {/* 项目栏：空白处右键 = 新建项目 */}
+        {/* 项目栏：可收起，空白处右键 = 新建项目 */}
+        {projectsCollapsed ? (
+          <div className="pane-rail" onClick={() => setProjectsCollapsed(false)}>
+            <button className="pane-rail-btn" title="展开项目栏">▸</button>
+            <span className="pane-rail-label">项目</span>
+          </div>
+        ) : (
         <aside className="pane pane-projects">
           <div className="pane-head">
             <span>项目</span>
             <button className="pane-add" title="新建项目" onClick={() => setEditing({ kind: 'new-project' })}>
               ＋
+            </button>
+            <button className="pane-add" title="收起项目栏" onClick={() => setProjectsCollapsed(true)}>
+              ◂
             </button>
           </div>
           <ul className="list" onContextMenu={projectsPaneMenu}>
@@ -310,8 +373,15 @@ export default function App() {
             )}
           </ul>
         </aside>
+        )}
 
-        {/* 白板栏：空白处右键 = 新建白板 */}
+        {/* 白板栏：可收起，空白处右键 = 新建白板 */}
+        {boardsCollapsed ? (
+          <div className="pane-rail" onClick={() => setBoardsCollapsed(false)}>
+            <button className="pane-rail-btn" title="展开白板栏">▸</button>
+            <span className="pane-rail-label">白板</span>
+          </div>
+        ) : (
         <aside className="pane pane-boards">
           <div className="pane-head">
             <span>{activeProject ? `白板 · ${activeProject.name}` : '白板'}</span>
@@ -320,6 +390,9 @@ export default function App() {
                 ＋
               </button>
             )}
+            <button className="pane-add" title="收起白板栏" onClick={() => setBoardsCollapsed(true)}>
+              ◂
+            </button>
           </div>
           <ul className="list" onContextMenu={activeProject ? boardsPaneMenu : undefined}>
             {boards.map((b) => (
@@ -340,6 +413,7 @@ export default function App() {
             {!activeProject && <li className="list-empty">先选一个项目</li>}
           </ul>
         </aside>
+        )}
 
         {/* 画布区：挂 CanvasEngine（M2-2 / M2-3） */}
         {activeBoard ? (
