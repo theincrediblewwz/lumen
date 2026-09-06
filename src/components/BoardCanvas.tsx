@@ -93,6 +93,10 @@ export function BoardCanvas({
 
   const engine = engineRef.current;
 
+  /** 始终指向最新的图状态：供 window 级拖拽监听读取（避免闭包捕获旧值） */
+  const graphRef = useRef(history.present);
+  graphRef.current = history.present;
+
   /** 一次原子变更：记历史 + 落盘 */
   const apply = useCallback(
     (next: Graph) => {
@@ -227,7 +231,10 @@ export function BoardCanvas({
     (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
   };
 
-  /* ── 锚点按下：开始拉连线 ── */
+  /* ── 锚点按下：开始拉连线 ──
+     锚点元素在拖拽中会因 hover 消失而被卸载、指针捕获也会随之失效，
+     故不依赖锚点元素/指针捕获，直接挂 window 级监听全程自算，
+     并用 graphRef 读取最新节点/连线（规避闭包旧值）。 */
   const onAnchorPointerDown = (e: React.PointerEvent, id: string) => {
     if (e.button !== 0) return;
     e.stopPropagation();
@@ -237,8 +244,62 @@ export function BoardCanvas({
     const b = boxOf(n);
     drag.current = { kind: 'connect', fromId: id };
     setConnect({ fromId: id, to: { x: b.x + b.w / 2, y: b.y + b.h / 2 }, hoverId: null });
-    // 在画布容器上捕获指针，保证移出源节点也持续收到 move
-    wrapRef.current?.setPointerCapture(e.pointerId);
+
+    const onMove = (ev: PointerEvent) => {
+      const r = rect();
+      const world = engine.toWorld({ x: ev.clientX - r.left, y: ev.clientY - r.top });
+      let hoverId: string | null = null;
+      for (const nn of graphRef.current.nodes) {
+        if (nn.id === id) continue;
+        if (boxContains(boxOf(nn), world)) {
+          hoverId = nn.id;
+          break;
+        }
+      }
+      setConnect({ fromId: id, to: world, hoverId });
+    };
+
+    const onUp = (ev: PointerEvent) => {
+      window.removeEventListener('pointermove', onMove);
+      window.removeEventListener('pointerup', onUp);
+      drag.current = null;
+      // 用落点重新命中，避免依赖异步 state
+      const r = rect();
+      const world = engine.toWorld({ x: ev.clientX - r.left, y: ev.clientY - r.top });
+      let target: string | null = null;
+      for (const nn of graphRef.current.nodes) {
+        if (nn.id === id) continue;
+        if (boxContains(boxOf(nn), world)) {
+          target = nn.id;
+          break;
+        }
+      }
+      setConnect(null);
+      if (target && target !== id) {
+        const curEdges = graphRef.current.edges;
+        const dup = curEdges.some(
+          (ed) =>
+            (ed.from === id && ed.to === target) ||
+            (!ed.directed && ed.from === target && ed.to === id),
+        );
+        if (!dup) {
+          const edge: BoardEdge = {
+            id: newEdgeId(),
+            from: id,
+            to: target,
+            directed: true,
+            label: null,
+            created_at: new Date().toISOString(),
+          };
+          apply({ nodes: graphRef.current.nodes, edges: [...curEdges, edge] });
+          setSelectedEdge(edge.id);
+          setSelected(null);
+        }
+      }
+    };
+
+    window.addEventListener('pointermove', onMove);
+    window.addEventListener('pointerup', onUp);
   };
 
   const onPointerMove = (e: React.PointerEvent) => {
@@ -261,20 +322,8 @@ export function BoardCanvas({
           nodes: h.present.nodes.map((n) => (n.id === d.id ? { ...n, x: n.x + dx, y: n.y + dy } : n)),
         }),
       );
-    } else {
-      // connect：更新终点世界坐标 + 命中目标节点
-      const r = rect();
-      const world = engine.toWorld({ x: e.clientX - r.left, y: e.clientY - r.top });
-      let hoverId: string | null = null;
-      for (const n of nodes) {
-        if (n.id === d.fromId) continue;
-        if (boxContains(boxOf(n), world)) {
-          hoverId = n.id;
-          break;
-        }
-      }
-      setConnect({ fromId: d.fromId, to: world, hoverId });
     }
+    // 'connect' 由 onAnchorPointerDown 里的 window 级监听处理，这里不涉及
   };
 
   const onPointerUp = (e: React.PointerEvent) => {
@@ -282,7 +331,6 @@ export function BoardCanvas({
     drag.current = null;
     if (!d) return;
     (e.currentTarget as HTMLElement).releasePointerCapture?.(e.pointerId);
-    wrapRef.current?.releasePointerCapture?.(e.pointerId);
     if (d.kind === 'pan') {
       onChange(nodes, edges, engine.viewport);
     } else if (d.kind === 'node') {
@@ -293,31 +341,8 @@ export function BoardCanvas({
           return commitFromBaseline(h, d.baseline);
         });
       }
-    } else {
-      // connect：落到某节点则建立连线
-      const target = connect?.hoverId ?? null;
-      setConnect(null);
-      if (target && target !== d.fromId) {
-        const dup = edges.some(
-          (ed) =>
-            (ed.from === d.fromId && ed.to === target) ||
-            (!ed.directed && ed.from === target && ed.to === d.fromId),
-        );
-        if (!dup) {
-          const edge: BoardEdge = {
-            id: newEdgeId(),
-            from: d.fromId,
-            to: target,
-            directed: true,
-            label: null,
-            created_at: new Date().toISOString(),
-          };
-          apply({ nodes, edges: [...edges, edge] });
-          setSelectedEdge(edge.id);
-          setSelected(null);
-        }
-      }
     }
+    // 'connect' 全程由 onAnchorPointerDown 的 window 监听处理
   };
 
   /* ── 右键：空白 ── */
