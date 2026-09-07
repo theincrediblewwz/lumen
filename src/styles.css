@@ -1387,19 +1387,31 @@ html.native-glass .node-card {
 
 .node-anchor {
   position: absolute;
-  width: 12px;
-  height: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
   transform: translate(-50%, -50%);
   border-radius: 50%;
-  background: var(--bg-node);
-  border: 2px solid var(--accent);
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.18);
+  background: var(--accent);
+  border: 2px solid var(--bg-node);
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.22);
   cursor: crosshair;
   pointer-events: auto;
   opacity: 0;
   animation: anchor-in var(--dur-fast) var(--ease-decelerate) forwards;
   transition: transform var(--dur-fast) var(--ease-spring),
-    background var(--dur-fast) var(--ease-standard);
+    box-shadow var(--dur-fast) var(--ease-standard);
+}
+
+/* 中心小白点，暗示"从此拉出连线" */
+.node-anchor::after {
+  content: '';
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: var(--bg-node);
 }
 
 @keyframes anchor-in {
@@ -1408,8 +1420,8 @@ html.native-glass .node-card {
 }
 
 .node-anchor:hover {
-  transform: translate(-50%, -50%) scale(1.35);
-  background: var(--accent);
+  transform: translate(-50%, -50%) scale(1.4);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.28), 0 0 0 4px var(--accent-soft);
 }
 
 /* 拖拽落点悬停高亮目标节点 */
@@ -1417,4 +1429,5 @@ html.native-glass .node-card {
   border-color: var(--accent);
   box-shadow: var(--shadow-node-hover), 0 0 0 3px var(--accent-soft);
 }
+
 

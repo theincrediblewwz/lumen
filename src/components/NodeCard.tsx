@@ -68,13 +68,8 @@ function AutoTextarea({
   );
 }
 
-/** 四个边缘中点锚点：按下即开始拉连线（M3-1） */
-const ANCHORS: { side: string; cx: string; cy: string }[] = [
-  { side: 'top', cx: '50%', cy: '0%' },
-  { side: 'right', cx: '100%', cy: '50%' },
-  { side: 'bottom', cx: '50%', cy: '100%' },
-  { side: 'left', cx: '0%', cy: '50%' },
-];
+/** 单个连线手柄：放在节点右侧中点，按下即开始拉连线（连线几何本就从节点中心
+    朝目标算、吸附到边框，故一个手柄足矣，四个是冗余）。 */
 
 export const NodeCard = memo(function NodeCard({
   node,
@@ -192,22 +187,20 @@ export const NodeCard = memo(function NodeCard({
         </>
       )}
 
-      {/* 连线锚点（选中/悬停时出现，按下即拉线） */}
+      {/* 连线手柄（选中/悬停时出现，按下即拉线）：节点右侧中点，单个 */}
       {showAnchors && !editing && (
         <div className="node-anchors" aria-hidden="true">
-          {ANCHORS.map((a) => (
-            <span
-              key={a.side}
-              className={`node-anchor anchor-${a.side}`}
-              style={{ left: a.cx, top: a.cy }}
-              title="拖到另一个节点建立连线"
-              onPointerDown={(e) => onAnchorPointerDown(e, node.id)}
-              onClick={(e) => e.stopPropagation()}
-              onDoubleClick={(e) => e.stopPropagation()}
-            />
-          ))}
+          <span
+            className="node-anchor anchor-right"
+            style={{ left: '100%', top: '50%' }}
+            title="拖到另一个节点建立连线"
+            onPointerDown={(e) => onAnchorPointerDown(e, node.id)}
+            onClick={(e) => e.stopPropagation()}
+            onDoubleClick={(e) => e.stopPropagation()}
+          />
         </div>
       )}
     </div>
   );
 });
+
