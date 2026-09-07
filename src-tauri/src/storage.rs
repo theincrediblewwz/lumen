@@ -589,6 +589,41 @@ pub fn read_doc(
 }
 
 /// 解析并校验白板 docs/ 下某文档的绝对路径（供"用系统程序打开"等使用）。
+// ─────────────────────────── AI 对话历史（M5） ───────────────────────────
+//
+// 每块白板的对话历史长期保存在白板文件夹下的 chats.json（与 docs/ 同级），
+// 随白板整体复制/迁移。前端拥有其 JSON 结构，这里只做原子读写字符串。
+
+pub fn chats_file(root: &Path, project_id: &str, board_id: &str) -> PathBuf {
+    board_dir(root, project_id, board_id).join("chats.json")
+}
+
+/// 读取某白板的对话历史原始 JSON 文本；不存在则返回空串（前端按空处理）。
+pub fn read_chats(root: &Path, project_id: &str, board_id: &str) -> Result<String, String> {
+    let pid = safe_id(project_id)?;
+    let bid = safe_id(board_id)?;
+    let p = chats_file(root, pid, bid);
+    if !p.exists() {
+        return Ok(String::new());
+    }
+    fs::read_to_string(&p).map_err(|e| format!("读取对话历史失败: {e}"))
+}
+
+/// 原子写入某白板的对话历史 JSON 文本。
+pub fn write_chats(
+    root: &Path,
+    project_id: &str,
+    board_id: &str,
+    content: &str,
+) -> Result<(), String> {
+    let pid = safe_id(project_id)?;
+    let bid = safe_id(board_id)?;
+    // 轻量校验：必须是合法 JSON，避免写坏文件
+    serde_json::from_str::<serde_json::Value>(content)
+        .map_err(|e| format!("对话历史不是合法 JSON: {e}"))?;
+    atomic_write(&chats_file(root, pid, bid), content)
+}
+
 pub fn resolve_doc_path(
     root: &Path,
     project_id: &str,

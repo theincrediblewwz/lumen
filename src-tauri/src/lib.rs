@@ -60,6 +60,8 @@ pub fn run() {
             commands::doc_read,
             commands::doc_delete,
             commands::open_doc_external,
+            commands::chats_read,
+            commands::chats_write,
             ai::ai_chat_stream,
             ai::ai_cancel,
         ])

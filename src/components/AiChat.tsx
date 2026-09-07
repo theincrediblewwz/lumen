@@ -13,6 +13,15 @@ import type { ToolContext } from '../ai/tools';
 import { buildBoardOutline, buildSystemPrompt } from '../ai/boardContext';
 import { maskNodeRefs, unmaskNodeRefs } from '../ai/nodeRef';
 import { jumpToNode } from '../ai/nodeJump';
+import {
+  loadBoardChats,
+  saveBoardChats,
+  deriveTitle,
+  newId,
+  type ChatsFile,
+  type Conversation,
+  type StoredMessage,
+} from '../ai/chatStore';
 import type { ChatMessage } from '../ai/provider';
 import type { BoardNode } from '../api';
 
@@ -65,7 +74,10 @@ function MessageBody({
     // 1) 渲染前把 [[node:id]] 换成 markdown 不会破坏的占位 token
     const { text, ids } = maskNodeRefs(content);
     // 2) 正常渲染 markdown + 公式占位
-    const rendered = renderMarkdown(text, undefined, { guessMath: true }).html;
+    // 关键：AI 输出的是规范 markdown（表格/加粗/需要公式时自己写 $…$），
+    // 绝不能开 guessMath —— 那个启发式是给缺分界符的导入文档用的，
+    // 会把表格分隔行 |---| 和加粗 ** 误当公式，把整段 markdown 搅烂。
+    const rendered = renderMarkdown(text, undefined, { guessMath: false }).html;
     // 3) 渲染后把占位换成显示标题的可点击胶囊
     return unmaskNodeRefs(rendered, ids, titleOf);
   }, [content, titleOf]);
@@ -107,6 +119,11 @@ export function AiChat({ projectId, boardId, boardName, standalone, platform, on
   const [input, setInput] = useState('');
   const [busy, setBusy] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
+  const [showHistory, setShowHistory] = useState(false);
+  // 对话历史（长期存白板 chats.json）：全部会话 + 当前会话 id
+  const [chats, setChats] = useState<ChatsFile>({ version: 1, conversations: [] });
+  const [convId, setConvId] = useState<string>(() => newId());
+  const loadedRef = useRef(false);
   const handleRef = useRef<StreamHandle | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const configured = isAiConfigured(settings);
@@ -122,6 +139,81 @@ export function AiChat({ projectId, boardId, boardName, standalone, platform, on
       .then(setBoard)
       .catch(() => setBoard(null));
   }, [projectId, boardId]);
+
+  // 加载本白板的历史对话（长期持久化，退出不丢）。
+  // 若已有会话，默认续接最近一条；否则开新会话。
+  useEffect(() => {
+    if (!projectId || !boardId) return;
+    let alive = true;
+    loadBoardChats(projectId, boardId).then((loaded) => {
+      if (!alive) return;
+      setChats(loaded);
+      const last = loaded.conversations[loaded.conversations.length - 1];
+      if (last) {
+        setConvId(last.id);
+        setMessages(last.messages.map((m) => ({ role: m.role, content: m.content, error: m.error })));
+      }
+      loadedRef.current = true;
+    });
+    return () => {
+      alive = false;
+    };
+  }, [projectId, boardId]);
+
+  // 把当前会话的消息落盘（合并进 chats 后整体保存）。
+  const persist = useCallback(
+    (uiMsgs: UiMessage[]) => {
+      if (!loadedRef.current) return;
+      const stored: StoredMessage[] = uiMsgs
+        .filter((m) => !m.streaming && m.content)
+        .map((m) => ({
+          role: m.role,
+          content: m.content,
+          error: m.error,
+          at: new Date().toISOString(),
+        }));
+      if (stored.length === 0) return;
+      setChats((prev) => {
+        const now = new Date().toISOString();
+        const idx = prev.conversations.findIndex((c) => c.id === convId);
+        const conv: Conversation = {
+          id: convId,
+          title: deriveTitle(stored),
+          createdAt: idx >= 0 ? prev.conversations[idx].createdAt : now,
+          updatedAt: now,
+          messages: stored,
+        };
+        const conversations = prev.conversations.slice();
+        if (idx >= 0) conversations[idx] = conv;
+        else conversations.push(conv);
+        const next = { version: 1 as const, conversations };
+        void saveBoardChats(projectId, boardId, next);
+        return next;
+      });
+    },
+    [convId, projectId, boardId],
+  );
+
+  // 新建对话：保存当前 → 清空开新会话
+  const newConversation = useCallback(() => {
+    setConvId(newId());
+    setMessages([]);
+    setShowHistory(false);
+    setShowSettings(false);
+  }, []);
+
+  // 切到某条历史会话
+  const openConversation = useCallback(
+    (id: string) => {
+      const conv = chats.conversations.find((c) => c.id === id);
+      if (!conv) return;
+      setConvId(id);
+      setMessages(conv.messages.map((m) => ({ role: m.role, content: m.content, error: m.error })));
+      setShowHistory(false);
+      setShowSettings(false);
+    },
+    [chats],
+  );
 
   // 窗口控制（独立窗口）
   const winCtl = useCallback(async (action: 'minimize' | 'maximize' | 'close') => {
@@ -199,6 +291,10 @@ export function AiChat({ projectId, boardId, boardName, standalone, platform, on
           patchLast((m) => ({ ...m, streaming: false, tool: undefined }));
           setBusy(false);
           handleRef.current = null;
+          setMessages((cur) => {
+            persist(cur);
+            return cur;
+          });
         },
         onError: (msg) => {
           patchLast((m) => ({
@@ -210,11 +306,15 @@ export function AiChat({ projectId, boardId, boardName, standalone, platform, on
           }));
           setBusy(false);
           handleRef.current = null;
+          setMessages((cur) => {
+            persist(cur);
+            return cur;
+          });
         },
       },
       toolCtx,
     );
-  }, [input, busy, configured, messages, settings, systemPrompt, board, projectId, boardId]);
+  }, [input, busy, configured, messages, settings, systemPrompt, board, projectId, boardId, persist]);
 
   const stop = useCallback(() => {
     handleRef.current?.cancel();
@@ -261,9 +361,33 @@ export function AiChat({ projectId, boardId, boardName, standalone, platform, on
           <button
             type="button"
             className="ai-icon-btn"
+            title="新对话"
+            aria-label="新对话"
+            onClick={newConversation}
+          >
+            ＋
+          </button>
+          <button
+            type="button"
+            className={`ai-icon-btn${showHistory ? ' is-active' : ''}`}
+            title={showHistory ? '返回对话' : '历史对话'}
+            aria-label="历史对话"
+            onClick={() => {
+              setShowHistory((v) => !v);
+              setShowSettings(false);
+            }}
+          >
+            🕘
+          </button>
+          <button
+            type="button"
+            className="ai-icon-btn"
             title={showSettings ? '返回对话' : '设置'}
             aria-label="设置"
-            onClick={() => setShowSettings((v) => !v)}
+            onClick={() => {
+              setShowSettings((v) => !v);
+              setShowHistory(false);
+            }}
           >
             ⚙
           </button>
@@ -315,6 +439,38 @@ export function AiChat({ projectId, boardId, boardName, standalone, platform, on
 
       {showSettings ? (
         <AiSettingsForm initial={settings} onSave={saveAndClose} onCancel={() => setShowSettings(false)} />
+      ) : showHistory ? (
+        <div className="ai-history">
+          <div className="ai-history-head">
+            <h3>历史对话</h3>
+            <button type="button" className="ai-btn-secondary" onClick={newConversation}>
+              ＋ 新对话
+            </button>
+          </div>
+          {chats.conversations.length === 0 ? (
+            <p className="ai-hint">还没有历史对话。发起对话后会自动保存在本白板文件夹里，退出也不会丢失。</p>
+          ) : (
+            <ul className="ai-history-list">
+              {chats.conversations
+                .slice()
+                .reverse()
+                .map((c) => (
+                  <li key={c.id}>
+                    <button
+                      type="button"
+                      className={`ai-history-item${c.id === convId ? ' is-current' : ''}`}
+                      onClick={() => openConversation(c.id)}
+                    >
+                      <span className="ai-history-title">{c.title}</span>
+                      <span className="ai-history-meta">
+                        {c.messages.length} 条 · {new Date(c.updatedAt).toLocaleString()}
+                      </span>
+                    </button>
+                  </li>
+                ))}
+            </ul>
+          )}
+        </div>
       ) : (
         <>
           <div className="ai-messages" ref={scrollRef}>

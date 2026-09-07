@@ -150,6 +150,70 @@
 .ai-icon-btn:hover {
   background: var(--bg-hover, rgba(47, 158, 119, 0.12));
 }
+.ai-icon-btn.is-active {
+  background: var(--bg-hover, rgba(47, 158, 119, 0.18));
+  color: var(--accent, #2f9e77);
+}
+
+/* ── 历史对话面板（M5 持久化） ── */
+.ai-history {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 14px 16px;
+}
+.ai-history-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12px;
+}
+.ai-history-head h3 {
+  margin: 0;
+  font-size: 15px;
+  color: var(--text-primary, #1c2b26);
+}
+.ai-history-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.ai-history-item {
+  width: 100%;
+  text-align: left;
+  border: 1px solid var(--border, rgba(0, 0, 0, 0.08));
+  background: var(--bg-card, #fff);
+  border-radius: 8px;
+  padding: 9px 11px;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  transition: border-color 0.12s ease, background 0.12s ease;
+}
+.ai-history-item:hover {
+  border-color: var(--accent, #2f9e77);
+  background: var(--bg-hover, rgba(47, 158, 119, 0.06));
+}
+.ai-history-item.is-current {
+  border-color: var(--accent, #2f9e77);
+  background: var(--bg-hover, rgba(47, 158, 119, 0.1));
+}
+.ai-history-title {
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--text-primary, #1c2b26);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ai-history-meta {
+  font-size: 11.5px;
+  color: var(--text-secondary, #7a8b84);
+}
 
 /* 消息区 */
 .ai-messages {

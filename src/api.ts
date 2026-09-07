@@ -105,6 +105,12 @@ export const api = {
   /** 用系统默认程序打开文档（如 PDF）——O-4：点击 PDF = 交系统程序打开 */
   docOpenExternal: (projectId: string, boardId: string, path: string) =>
     invoke<void>('open_doc_external', { projectId, boardId, path }),
+
+  /* ── AI 对话历史持久化（M5，存白板 chats.json） ── */
+  chatsRead: (projectId: string, boardId: string) =>
+    invoke<string>('chats_read', { projectId, boardId }),
+  chatsWrite: (projectId: string, boardId: string, content: string) =>
+    invoke<void>('chats_write', { projectId, boardId, content }),
 };
 
 /** 打开系统文件选择框，返回选中的 .md 文件绝对路径（可多选）。 */

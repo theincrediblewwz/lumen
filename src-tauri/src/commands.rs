@@ -144,6 +144,18 @@ pub fn doc_delete(project_id: String, board_id: String, path: String) -> Result<
     storage::delete_doc(&root()?, &project_id, &board_id, &path)
 }
 
+// ───────────────── AI 对话历史持久化（M5） ─────────────────
+
+#[tauri::command]
+pub fn chats_read(project_id: String, board_id: String) -> Result<String, String> {
+    storage::read_chats(&root()?, &project_id, &board_id)
+}
+
+#[tauri::command]
+pub fn chats_write(project_id: String, board_id: String, content: String) -> Result<(), String> {
+    storage::write_chats(&root()?, &project_id, &board_id, &content)
+}
+
 
 // ───────────────── 用系统默认程序打开文档（O-4，M5/M6） ─────────────────
 
