@@ -1665,6 +1665,30 @@ html.native-glass .node-card {
 .np-doc-add:hover:not(:disabled) { background: color-mix(in srgb, var(--accent) 20%, transparent); }
 .np-doc-add:disabled { opacity: 0.5; cursor: default; }
 
+/* ── 问题节点渲染预览方框（需求③） ── */
+.np-preview {
+  border: var(--border-node) solid var(--border-color);
+  border-radius: 10px;
+  background: var(--bg-node);
+  padding: 10px 12px;
+  max-height: 220px;
+  overflow: auto;
+}
+.np-preview-body {
+  font-size: 13.5px;
+  line-height: 1.55;
+  color: var(--text-primary);
+}
+.np-preview-body > :first-child { margin-top: 0; }
+.np-preview-body > :last-child { margin-bottom: 0; }
+.np-preview-body h1 { font-size: 1.35em; margin: 0.3em 0; }
+.np-preview-body h2 { font-size: 1.15em; border: none; padding: 0; }
+.np-preview-empty {
+  font-size: 12px;
+  color: var(--text-secondary);
+  font-style: italic;
+}
+
 /* ── 关联文档预览卡（NodePanel 内，缩略渲染方框） ── */
 .np-doc-grid {
   display: grid;

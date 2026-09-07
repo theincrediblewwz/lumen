@@ -1,6 +1,38 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import type { BoardNode } from '../api';
 import { DocPreview } from './DocPreview';
+import { renderMarkdown } from '../reader/engine';
+import { typesetMath } from '../reader/reader';
+
+/**
+ * 问题节点的「渲染预览方框」：把标题+完整问题当作 Markdown（含公式）实时渲染，
+ * 让用户在编辑时看到公式/格式的最终效果（需求 ③）。空内容时提示占位。
+ */
+function NodeRenderPreview({ title, summary, guessMath }: { title: string; summary: string; guessMath: boolean }) {
+  const ref = useRef<HTMLDivElement>(null);
+  const html = useMemo(() => {
+    const src = [title.trim() ? `# ${title.trim()}` : '', summary.trim()].filter(Boolean).join('\n\n');
+    if (!src.trim()) return '';
+    return renderMarkdown(src, undefined, { guessMath }).html;
+  }, [title, summary, guessMath]);
+
+  useEffect(() => {
+    if (html && ref.current) {
+      const handle = typesetMath(ref.current, 40);
+      return () => handle.cancel();
+    }
+  }, [html]);
+
+  return (
+    <div className="np-preview">
+      {html ? (
+        <div ref={ref} className="np-preview-body markdown-body" dangerouslySetInnerHTML={{ __html: html }} />
+      ) : (
+        <div className="np-preview-empty">在上方输入内容，这里会显示渲染效果（支持公式）。</div>
+      )}
+    </div>
+  );
+}
 
 /** 可选的节点颜色标记（左边框色条），null = 默认（用主题强调色） */
 const COLOR_SWATCHES: { id: string | null; label: string; color: string }[] = [
@@ -140,6 +172,9 @@ export function NodePanel({
           placeholder="写下完整、具体的问题…"
           onCommit={(v) => onCommit(node.id, { summary: v })}
         />
+
+        <label className="np-label">渲染预览</label>
+        <NodeRenderPreview title={node.title} summary={node.summary ?? ''} guessMath={guessMath} />
 
         <label className="np-label">颜色标记</label>
         <div className="np-swatches">
