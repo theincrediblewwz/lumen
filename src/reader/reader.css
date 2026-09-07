@@ -1,51 +1,19 @@
 /* ==========================================================================
-   阅读内核样式（M4）：三主题 + Markdown 排版 + TOC + 工具栏
-   与 src/styles.css 的设计语言一致；阅读器自带主题变量，独立于白板主题，
-   这样阅读窗口可单独切换浅/纸/暗，不影响画布。
+   阅读内核样式（M4 + 阅读体验增强）
+   主题跟随软件主体：直接用 :root 的 --bg / --text / --accent 等 token，
+   不再自带 data-reader-theme（ADR-027）。支持连续滚动 / 双页两种模式、
+   页码、全屏。
    ========================================================================== */
 
 .reader {
-  --r-bg: #ffffff;
-  --r-fg: #1c1e21;
-  --r-fg-soft: #5a6b64;
-  --r-border: #e7edea;
-  --r-accent: #2e5a4e;
-  --r-accent-soft: rgba(46, 90, 78, 0.1);
-  --r-code-bg: #f4f6f5;
-  --r-quote-bar: #cfe0d9;
-  --r-bar-bg: #eef7f2;
   --reader-font-scale: 1;
-
+  --r-code-bg: var(--bg-hover);
   display: flex;
   flex-direction: column;
   height: 100%;
   min-height: 0;
-  background: var(--r-bg);
-  color: var(--r-fg);
-}
-
-.reader[data-reader-theme='paper'] {
-  --r-bg: #fbf8f1;
-  --r-fg: #2b2721;
-  --r-fg-soft: #7a7266;
-  --r-border: #e3ddcd;
-  --r-accent: #8a5a2b;
-  --r-accent-soft: rgba(138, 90, 43, 0.12);
-  --r-code-bg: #f2ecdd;
-  --r-quote-bar: #ddd0b5;
-  --r-bar-bg: #f2ede1;
-}
-
-.reader[data-reader-theme='dark'] {
-  --r-bg: #17181c;
-  --r-fg: #e6e7ea;
-  --r-fg-soft: #9aa0a8;
-  --r-border: #2e3138;
-  --r-accent: #6fb3a0;
-  --r-accent-soft: rgba(111, 179, 160, 0.16);
-  --r-code-bg: #22252b;
-  --r-quote-bar: #3a4048;
-  --r-bar-bg: #1a1b1f;
+  background: var(--bg-canvas);
+  color: var(--text-primary);
 }
 
 /* 独立窗口铺满视口 */
@@ -61,8 +29,8 @@
   flex: 0 0 auto;
   height: 48px;
   padding: 0 12px 0 18px;
-  border-bottom: 1px solid var(--r-border);
-  background: var(--r-bar-bg);
+  border-bottom: 1px solid var(--border-color);
+  background: var(--bg-chrome);
 }
 
 .reader-title {
@@ -70,7 +38,7 @@
   margin: 0;
   font-size: 15px;
   font-weight: 650;
-  color: var(--r-fg);
+  color: var(--text-primary);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -79,16 +47,15 @@
 .reader-tools {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 10px;
 }
 
-.reader-font,
-.reader-themes {
+.reader-seg {
   display: inline-flex;
   align-items: center;
   gap: 4px;
   padding: 3px;
-  background: var(--r-accent-soft);
+  background: var(--accent-soft);
   border-radius: 9px;
 }
 
@@ -96,7 +63,7 @@
   min-width: 40px;
   text-align: center;
   font-size: 12px;
-  color: var(--r-fg-soft);
+  color: var(--text-secondary);
   font-variant-numeric: tabular-nums;
 }
 
@@ -109,7 +76,7 @@
   padding: 0 8px;
   font-size: 13px;
   font-family: inherit;
-  color: var(--r-fg-soft);
+  color: var(--text-secondary);
   background: transparent;
   border: none;
   border-radius: 7px;
@@ -117,23 +84,19 @@
   transition: background 140ms ease, color 140ms ease;
 }
 .reader-btn:hover:not(:disabled) {
-  background: var(--r-bg);
-  color: var(--r-fg);
+  background: var(--bg-node);
+  color: var(--text-primary);
 }
-.reader-btn:disabled {
-  opacity: 0.4;
-  cursor: default;
-}
+.reader-btn:disabled { opacity: 0.4; cursor: default; }
 .reader-btn.is-active {
-  background: var(--r-bg);
-  color: var(--r-accent);
+  background: var(--bg-node);
+  color: var(--accent);
   font-weight: 650;
 }
-.reader-close {
-  margin-left: 4px;
-}
+.reader-icon { min-width: 30px; padding: 0 6px; }
+.reader-close { margin-left: 2px; }
 
-/* ── 主体：TOC + 正文 ── */
+/* ── 主体：TOC + 舞台 ── */
 .reader-main {
   display: flex;
   flex: 1;
@@ -144,8 +107,8 @@
   flex: 0 0 232px;
   overflow-y: auto;
   padding: 16px 8px 24px;
-  border-right: 1px solid var(--r-border);
-  background: var(--r-bar-bg);
+  border-right: 1px solid var(--border-color);
+  background: var(--bg-chrome);
 }
 .reader-toc-head {
   padding: 0 10px 8px;
@@ -153,13 +116,9 @@
   font-weight: 600;
   letter-spacing: 0.06em;
   text-transform: uppercase;
-  color: var(--r-fg-soft);
+  color: var(--text-secondary);
 }
-.reader-toc-list {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-}
+.reader-toc-list { list-style: none; margin: 0; padding: 0; }
 .reader-toc-item button {
   display: block;
   width: 100%;
@@ -167,7 +126,7 @@
   padding: 5px 10px;
   font-size: 13px;
   line-height: 1.4;
-  color: var(--r-fg-soft);
+  color: var(--text-secondary);
   background: transparent;
   border: none;
   border-radius: 7px;
@@ -177,15 +136,8 @@
   white-space: nowrap;
   transition: background 140ms ease, color 140ms ease;
 }
-.reader-toc-item button:hover {
-  background: var(--r-accent-soft);
-  color: var(--r-fg);
-}
-.reader-toc-item.is-active button {
-  color: var(--r-accent);
-  font-weight: 650;
-  background: var(--r-accent-soft);
-}
+.reader-toc-item button:hover { background: var(--accent-soft); color: var(--text-primary); }
+.reader-toc-item.is-active button { color: var(--accent); font-weight: 650; background: var(--accent-soft); }
 .reader-toc-item.lvl-1 button { padding-left: 10px; font-weight: 600; }
 .reader-toc-item.lvl-2 button { padding-left: 20px; }
 .reader-toc-item.lvl-3 button { padding-left: 32px; font-size: 12.5px; }
@@ -193,23 +145,114 @@
 .reader-toc-item.lvl-5 button,
 .reader-toc-item.lvl-6 button { padding-left: 44px; font-size: 12px; }
 
+/* 舞台：包住滚动体，用于叠加页码/翻页控件 */
+.reader-stage {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  display: flex;
+}
+
 .reader-body {
   flex: 1;
   min-width: 0;
   overflow-y: auto;
-  padding: 32px 48px 120px;
+  overflow-x: hidden;
   scroll-behavior: smooth;
 }
+
+/* 连续滚动：正文居中一列 */
+.reader-pageflow {
+  padding: 32px 48px 120px;
+}
+
+/* ── 双页模式：CSS 多栏横向铺排，页间无缝 ── */
+.reader.is-paged .reader-body {
+  overflow-x: auto;
+  overflow-y: hidden;
+}
+.reader.is-paged .reader-pageflow {
+  height: 100%;
+  padding: 40px 0 56px;
+  margin: 0;
+  max-width: none;
+  column-fill: auto;
+  /* column-width / column-gap 由 JS 按视口设置 */
+  box-sizing: border-box;
+}
+/* 双页时首列左侧、末列右侧留出页边距，栏间距即页与页之间（无额外缝隙） */
+.reader.is-paged .reader-pageflow {
+  padding-left: 40px;
+  padding-right: 40px;
+}
+
+/* 页码：固定在舞台左下角坐标系，随横向滚动位移 */
+.reader-pagenums {
+  position: absolute;
+  left: 0;
+  bottom: 0;
+  height: 0;
+  pointer-events: none;
+  overflow: visible;
+}
+.reader-pagenum {
+  position: absolute;
+  bottom: 20px;
+  font-size: 12px;
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+  opacity: 0.7;
+}
+
+/* 翻页按钮（双页） */
+.reader-flip {
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 40px;
+  height: 64px;
+  font-size: 26px;
+  line-height: 1;
+  color: var(--text-secondary);
+  background: color-mix(in srgb, var(--bg-node) 80%, transparent);
+  border: 1px solid var(--border-color);
+  border-radius: 12px;
+  cursor: pointer;
+  transition: opacity 140ms ease, background 140ms ease, color 140ms ease;
+  z-index: 3;
+}
+.reader-flip:hover:not(:disabled) { color: var(--accent); background: var(--bg-node); }
+.reader-flip:disabled { opacity: 0.25; cursor: default; }
+.reader-flip-prev { left: 8px; }
+.reader-flip-next { right: 8px; }
+
+.reader-pagebar {
+  position: absolute;
+  bottom: 16px;
+  right: 20px;
+  font-size: 12px;
+  color: var(--text-secondary);
+  background: color-mix(in srgb, var(--bg-node) 80%, transparent);
+  padding: 4px 10px;
+  border-radius: 8px;
+  pointer-events: none;
+}
+
+/* 全屏时隐藏 TOC，正文更宽 */
+.reader.is-fullscreen .reader-pageflow { padding-left: 8%; padding-right: 8%; }
 
 /* ── Markdown 排版（字号随 --reader-font-scale 缩放） ── */
 .markdown-body {
   font-size: calc(16px * var(--reader-font-scale));
   line-height: 1.75;
-  color: var(--r-fg);
+  color: var(--text-primary);
+}
+/* 连续模式下限制阅读宽度并居中 */
+.reader:not(.is-paged) .markdown-body {
   max-width: 820px;
   margin: 0 auto;
-  word-wrap: break-word;
 }
+.markdown-body { word-wrap: break-word; }
 .markdown-body > *:first-child { margin-top: 0; }
 .markdown-body h1,
 .markdown-body h2,
@@ -219,13 +262,14 @@
   line-height: 1.3;
   font-weight: 680;
   scroll-margin-top: 16px;
+  color: var(--text-primary);
 }
 .markdown-body h1 { font-size: 1.9em; }
-.markdown-body h2 { font-size: 1.5em; padding-bottom: 0.25em; border-bottom: 1px solid var(--r-border); }
+.markdown-body h2 { font-size: 1.5em; padding-bottom: 0.25em; border-bottom: 1px solid var(--border-color); }
 .markdown-body h3 { font-size: 1.25em; }
 .markdown-body h4 { font-size: 1.08em; }
 .markdown-body p { margin: 0.85em 0; }
-.markdown-body a { color: var(--r-accent); text-decoration: none; }
+.markdown-body a { color: var(--accent); text-decoration: none; }
 .markdown-body a:hover { text-decoration: underline; }
 .markdown-body ul,
 .markdown-body ol { padding-left: 1.6em; margin: 0.7em 0; }
@@ -233,9 +277,9 @@
 .markdown-body blockquote {
   margin: 1em 0;
   padding: 0.4em 1.1em;
-  color: var(--r-fg-soft);
-  border-left: 3px solid var(--r-quote-bar);
-  background: var(--r-accent-soft);
+  color: var(--text-secondary);
+  border-left: 3px solid var(--border-strong);
+  background: var(--accent-soft);
   border-radius: 0 8px 8px 0;
 }
 .markdown-body code {
@@ -250,51 +294,27 @@
   padding: 14px 16px;
   overflow-x: auto;
   background: var(--r-code-bg);
-  border: 1px solid var(--r-border);
+  border: 1px solid var(--border-color);
   border-radius: 10px;
   line-height: 1.55;
 }
-.markdown-body pre code {
-  padding: 0;
-  background: transparent;
-  font-size: 0.86em;
-}
-.markdown-body table {
-  border-collapse: collapse;
-  margin: 1em 0;
-  width: 100%;
-  font-size: 0.95em;
-}
+.markdown-body pre code { padding: 0; background: transparent; font-size: 0.86em; }
+.markdown-body table { border-collapse: collapse; margin: 1em 0; width: 100%; font-size: 0.95em; }
 .markdown-body th,
-.markdown-body td {
-  padding: 7px 12px;
-  border: 1px solid var(--r-border);
-  text-align: left;
-}
-.markdown-body th { background: var(--r-accent-soft); font-weight: 640; }
+.markdown-body td { padding: 7px 12px; border: 1px solid var(--border-color); text-align: left; }
+.markdown-body th { background: var(--accent-soft); font-weight: 640; }
 .markdown-body img { max-width: 100%; border-radius: 8px; }
-.markdown-body hr { border: none; border-top: 1px solid var(--r-border); margin: 1.8em 0; }
+.markdown-body hr { border: none; border-top: 1px solid var(--border-color); margin: 1.8em 0; }
 
-/* 公式：块级居中、行内不换行 */
-.markdown-body .math-block {
-  margin: 1.1em 0;
-  overflow-x: auto;
-  overflow-y: hidden;
-  text-align: center;
-}
+/* 公式 */
+.markdown-body .math-block { margin: 1.1em 0; overflow-x: auto; overflow-y: hidden; text-align: center; }
 .markdown-body .math-inline { white-space: nowrap; }
-.markdown-body .math-error {
-  color: #c0533f;
-  font-family: ui-monospace, monospace;
-  font-size: 0.9em;
-}
+.markdown-body .math-error { color: #c0533f; font-family: ui-monospace, monospace; font-size: 0.9em; }
 
 /* 锚点跳转高亮闪烁 */
-.markdown-body .anchor-flash {
-  animation: anchor-flash 1.6s ease;
-}
+.markdown-body .anchor-flash { animation: anchor-flash 1.6s ease; }
 @keyframes anchor-flash {
-  0%, 20% { background: var(--r-accent-soft); }
+  0%, 20% { background: var(--accent-soft); }
   100% { background: transparent; }
 }
 
@@ -305,8 +325,8 @@
   justify-content: center;
   height: 100vh;
   font-size: 15px;
-  color: #5a6b64;
-  background: #fff;
+  color: var(--text-secondary);
+  background: var(--bg-canvas);
 }
 .reader-splash-error { color: #c0533f; }
 
@@ -322,12 +342,9 @@
   backdrop-filter: blur(3px);
   animation: reader-overlay-in 200ms ease;
 }
-@keyframes reader-overlay-in {
-  from { opacity: 0; }
-  to { opacity: 1; }
-}
+@keyframes reader-overlay-in { from { opacity: 0; } to { opacity: 1; } }
 .reader-overlay .reader {
-  width: min(1100px, 94vw);
+  width: min(1200px, 94vw);
   height: 92vh;
   margin: auto;
   border-radius: 16px;
@@ -335,6 +352,8 @@
   box-shadow: 0 24px 80px rgba(0, 0, 0, 0.32);
   animation: reader-panel-in 220ms cubic-bezier(0, 0, 0.2, 1);
 }
+/* 浮层里进入全屏时铺满 */
+.reader-overlay .reader.is-fullscreen { width: 100vw; height: 100vh; border-radius: 0; }
 @keyframes reader-panel-in {
   from { opacity: 0; transform: translateY(14px) scale(0.99); }
   to { opacity: 1; transform: none; }
@@ -342,5 +361,5 @@
 
 @media (max-width: 720px) {
   .reader-toc { display: none; }
-  .reader-body { padding: 24px 20px 100px; }
+  .reader-pageflow { padding: 24px 20px 100px; }
 }

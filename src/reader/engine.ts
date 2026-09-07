@@ -175,6 +175,119 @@ const mathPlugin: PluginSimple = (md) => {
     `<div class="math math-block" data-tex="${escapeAttr(tokens[idx].content)}"></div>\n`;
 };
 
+/* ── 猜测渲染：识别未用 $ 分界符、但明显是数学的行内片段 ── */
+
+/**
+ * 判断一个片段「像不像数学」：含 LaTeX 命令(\alpha \sim \frac…)、上/下标(^ _)、
+ * 或典型数学符号组合。用于 guessMath：把这类裸片段自动包成行内公式。
+ * 保守判定，尽量不误伤普通文本/代码。
+ */
+export function looksLikeMath(s: string): boolean {
+  const t = s.trim();
+  if (!t) return false;
+  // 含 LaTeX 反斜杠命令：\varepsilon \sim \frac 等
+  if (/\\[a-zA-Z]{2,}/.test(t)) return true;
+  // 含上标/下标且旁边有字母数字：x^2, a_{ij}, |x|^{1/3}
+  if (/[\^_]\{?[^\s]/.test(t) && /[A-Za-z0-9|)\]}]/.test(t)) return true;
+  return false;
+}
+
+/**
+ * guessMath 预处理：在 markdown 源码里，把「明显是数学、但没被 $ 包住」的
+ * 行内片段用 $…$ 包起来，交给正常的公式管线渲染。
+ *
+ * 规则（保守，避免误伤）：
+ *  - 逐行处理，跳过代码围栏 ``` 内部与行内代码 `…`；
+ *  - 已经在 $…$ / $$…$$ 里的不动；
+ *  - 候选片段：连续的非空白“类公式”串——含 \命令 或 ^/_ 上下标，
+ *    且不落在 URL / 纯英文单词里。命中则用 $ 包裹。
+ */
+export function preprocessGuessMath(src: string): string {
+  const lines = src.split('\n');
+  let inFence = false;
+  const out: string[] = [];
+
+  for (const line of lines) {
+    if (/^\s*(```|~~~)/.test(line)) {
+      inFence = !inFence;
+      out.push(line);
+      continue;
+    }
+    if (inFence) {
+      out.push(line);
+      continue;
+    }
+    out.push(guessInline(line));
+  }
+  return out.join('\n');
+}
+
+/** 对单行做行内猜测包裹，跳过行内代码与已有 $ 公式区。 */
+function guessInline(line: string): string {
+  // 把行按「代码段 / 已有公式段 / 普通段」切分，只在普通段里做替换
+  const segments: { text: string; protect: boolean }[] = [];
+  const re = /(`[^`]*`|\$\$[\s\S]*?\$\$|\$[^$\n]+\$)/g;
+  let last = 0;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(line)) !== null) {
+    if (m.index > last) segments.push({ text: line.slice(last, m.index), protect: false });
+    segments.push({ text: m[0], protect: true });
+    last = m.index + m[0].length;
+  }
+  if (last < line.length) segments.push({ text: line.slice(last), protect: false });
+
+  return segments
+    .map((seg) => (seg.protect ? seg.text : wrapMathTokens(seg.text)))
+    .join('');
+}
+
+/**
+ * 在普通文本段里，找出连续的「类公式」token 串并用 $…$ 包裹。
+ * token 边界：空白与中文标点/中文字符。允许公式内包含 \ { } ^ _ | ( ) [ ] 数字字母
+ * 与常见运算符 + - = < > / ~ 等。
+ */
+function wrapMathTokens(text: string): string {
+  // 允许出现在“数学串”里的字符
+  const mathChar = /[A-Za-z0-9\\{}\^_|()\[\].,;:+\-*/=<>~'"!]/;
+  let res = '';
+  let i = 0;
+  const n = text.length;
+  while (i < n) {
+    if (mathChar.test(text[i])) {
+      let j = i;
+      let buf = '';
+      while (j < n && (mathChar.test(text[j]) || /\s/.test(text[j]))) {
+        // 允许公式内部含单个空格（如 a \sim b），但遇到两个连续空格或换行就停
+        if (/\s/.test(text[j])) {
+          // 向前看：空白后紧跟数学字符才并入，否则断开
+          const k = j + 1;
+          if (k < n && mathChar.test(text[k])) {
+            buf += text[j];
+            j++;
+            continue;
+          }
+          break;
+        }
+        buf += text[j];
+        j++;
+      }
+      const trimmed = buf.replace(/\s+$/, '');
+      if (looksLikeMath(trimmed) && trimmed.length >= 2) {
+        // 保留尾随空白到外面
+        const tail = buf.slice(trimmed.length);
+        res += `$${trimmed}$${tail}`;
+      } else {
+        res += buf;
+      }
+      i = j;
+    } else {
+      res += text[i];
+      i++;
+    }
+  }
+  return res;
+}
+
 /** 创建配置好的 markdown-it 实例（含公式插件）。 */
 export function createEngine(): MD {
   const md = new MarkdownIt({
@@ -187,14 +300,20 @@ export function createEngine(): MD {
   return md;
 }
 
+export interface RenderOptions {
+  /** 猜测渲染：把无分界符但明显是数学的片段自动当公式渲染（M4，用户设置） */
+  guessMath?: boolean;
+}
+
 /**
  * 渲染 Markdown → { html, toc }。
  * 解析期一次遍历给标题打去重 slug 并收集目录，再渲染为 HTML。
  */
-export function renderMarkdown(src: string, engine?: MD): RenderResult {
+export function renderMarkdown(src: string, engine?: MD, opts?: RenderOptions): RenderResult {
   const md = engine ?? createEngine();
+  const source = opts?.guessMath ? preprocessGuessMath(src) : src;
   const env = {};
-  const tokens = md.parse(src, env);
+  const tokens = md.parse(source, env);
   const toc: TocItem[] = [];
   const used = new Map<string, number>();
 
@@ -222,3 +341,4 @@ export function renderMarkdown(src: string, engine?: MD): RenderResult {
   const html = md.renderer.render(tokens, md.options, env);
   return { html, toc };
 }
+

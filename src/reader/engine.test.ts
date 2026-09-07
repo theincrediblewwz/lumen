@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { renderMarkdown, slugify, createEngine } from './engine';
+import { renderMarkdown, slugify, createEngine, looksLikeMath, preprocessGuessMath } from './engine';
 
 describe('slugify', () => {
   it('英文标题转小写连字符', () => {
@@ -108,5 +108,56 @@ describe('renderMarkdown - 公式两级保护', () => {
     const b = renderMarkdown('## 概述', eng);
     expect(a.toc[0].slug).toBe('概述');
     expect(b.toc[0].slug).toBe('概述'); // 每次 render 独立计数，不跨调用累积
+  });
+});
+
+describe('looksLikeMath', () => {
+  it('识别 LaTeX 命令', () => {
+    expect(looksLikeMath('\\varepsilon')).toBe(true);
+    expect(looksLikeMath('a \\sim b')).toBe(true);
+  });
+  it('识别上下标', () => {
+    expect(looksLikeMath('x^2')).toBe(true);
+    expect(looksLikeMath('a_{ij}')).toBe(true);
+    expect(looksLikeMath('|x|^{1/3}')).toBe(true);
+  });
+  it('普通文本/单词不误判', () => {
+    expect(looksLikeMath('hello')).toBe(false);
+    expect(looksLikeMath('这是一段中文')).toBe(false);
+    expect(looksLikeMath('123')).toBe(false);
+  });
+});
+
+describe('preprocessGuessMath（猜测渲染）', () => {
+  it('把裸数学片段包成 $…$', () => {
+    const out = preprocessGuessMath('标度关系 |\\varepsilon|^{1/3}\\sim\\delta 很关键');
+    expect(out).toContain('$|\\varepsilon|^{1/3}\\sim\\delta$');
+  });
+  it('不动已有 $ 公式', () => {
+    const out = preprocessGuessMath('已有 $E=mc^2$ 公式');
+    expect(out).toBe('已有 $E=mc^2$ 公式');
+  });
+  it('跳过行内代码', () => {
+    const out = preprocessGuessMath('代码 `x^2` 不渲染');
+    expect(out).toBe('代码 `x^2` 不渲染');
+  });
+  it('跳过代码围栏', () => {
+    const src = '```\nx^2 = y\n```';
+    expect(preprocessGuessMath(src)).toBe(src);
+  });
+  it('普通句子不被包裹', () => {
+    const out = preprocessGuessMath('这是一段普通的中文说明文字');
+    expect(out).not.toContain('$');
+  });
+});
+
+describe('renderMarkdown - guessMath 选项', () => {
+  it('开启后裸数学被渲染为公式占位', () => {
+    const { html } = renderMarkdown('标度 |\\varepsilon|^{1/3}\\sim\\delta 明显', undefined, { guessMath: true });
+    expect(html).toContain('class="math math-inline"');
+  });
+  it('关闭时裸数学按普通文本', () => {
+    const { html } = renderMarkdown('标度 x^2 明显', undefined, { guessMath: false });
+    expect(html).not.toContain('math-inline');
   });
 });

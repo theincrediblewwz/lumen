@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import type { BoardNode } from '../api';
+import { DocPreview } from './DocPreview';
 
 /** 可选的节点颜色标记（左边框色条），null = 默认（用主题强调色） */
 const COLOR_SWATCHES: { id: string | null; label: string; color: string }[] = [
@@ -67,6 +68,9 @@ export function NodePanel({
   onOpenDoc,
   onImportDocs,
   onRemoveDoc,
+  projectId,
+  boardId,
+  guessMath = false,
 }: {
   node: BoardNode;
   onCommit: (id: string, patch: { title?: string; summary?: string }) => void;
@@ -79,6 +83,10 @@ export function NodePanel({
   onImportDocs: (nodeId: string) => void;
   /** 从此节点解除某文档关联并删除文件 */
   onRemoveDoc: (nodeId: string, path: string) => void;
+  /** 用于文档预览拉取内容 */
+  projectId: string;
+  boardId: string;
+  guessMath?: boolean;
 }) {
   const [confirmDel, setConfirmDel] = useState(false);
   const [importing, setImporting] = useState(false);
@@ -171,33 +179,19 @@ export function NodePanel({
         {docCount === 0 ? (
           <p className="np-empty">暂无关联文档。点「＋ 导入」选择 GPT 导出的 .md，或拖到节点上。</p>
         ) : (
-          <ul className="np-docs">
+          <div className="np-doc-grid">
             {node.docs.map((d) => (
-              <li key={d.path} className="np-doc" title={`${d.path}\n点击打开阅读`}>
-                <button
-                  type="button"
-                  className="np-doc-open"
-                  onClick={() => onOpenDoc(node.id, d.path, d.title || d.path)}
-                >
-                  <svg width="14" height="14" viewBox="0 0 16 16" aria-hidden="true">
-                    <path d="M4 2h5l3 3v9H4z" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinejoin="round" />
-                  </svg>
-                  <span className="np-doc-title">{d.title || d.path}</span>
-                  {typeof d.bytes === 'number' && <span className="np-doc-bytes">{(d.bytes / 1024).toFixed(1)} KB</span>}
-                </button>
-                <button
-                  type="button"
-                  className="np-doc-remove"
-                  title="移除此文档"
-                  onClick={() => onRemoveDoc(node.id, d.path)}
-                >
-                  <svg width="13" height="13" viewBox="0 0 16 16" aria-hidden="true">
-                    <path d="M3 3l10 10M13 3L3 13" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
-                  </svg>
-                </button>
-              </li>
+              <DocPreview
+                key={d.path}
+                doc={d}
+                projectId={projectId}
+                boardId={boardId}
+                guessMath={guessMath}
+                onOpen={() => onOpenDoc(node.id, d.path, d.title || d.path)}
+                onRemove={() => onRemoveDoc(node.id, d.path)}
+              />
             ))}
-          </ul>
+          </div>
         )}
       </div>
 
@@ -218,4 +212,5 @@ export function NodePanel({
     </aside>
   );
 }
+
 

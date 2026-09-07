@@ -153,6 +153,25 @@ export function SettingsPanel({
 
         <section className="settings-section">
           <div className="settings-row">
+            <label className="settings-label">数学公式猜测渲染</label>
+            <button
+              type="button"
+              className={`switch${settings.guessMath ? ' is-on' : ''}`}
+              role="switch"
+              aria-checked={settings.guessMath}
+              onClick={() => onChange({ guessMath: !settings.guessMath })}
+            >
+              <span className="switch-knob" />
+            </button>
+          </div>
+          <p className="settings-hint">
+            开启后，阅读器会把「明显是数学、但没用 $ 包起来」的内容（如 |\varepsilon|^&#123;1/3&#125;\sim\delta）
+            自动识别并渲染成公式。适合读 GPT 导出、公式没加分界符的文档。
+          </p>
+        </section>
+
+        <section className="settings-section">
+          <div className="settings-row">
             <label className="settings-label">动画特效</label>
             <button
               type="button"
@@ -171,4 +190,5 @@ export function SettingsPanel({
     document.body,
   );
 }
+
 

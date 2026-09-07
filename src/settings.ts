@@ -27,6 +27,8 @@ export interface Settings {
   motion: boolean;
   /** 连线样式：曲线 / 直线 / 折线 */
   edgeStyle: EdgeStyle;
+  /** 阅读器：对无分界符但明显是数学的内容进行猜测渲染（M4） */
+  guessMath: boolean;
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -37,6 +39,7 @@ export const DEFAULT_SETTINGS: Settings = {
   glassBlur: 60,
   motion: true,
   edgeStyle: 'curved',
+  guessMath: false,
 };
 
 const KEY = 'lumen.settings.v1';
@@ -82,4 +85,5 @@ export function applySettings(s: Settings, platform = ''): void {
   root.style.setProperty('--glass-alpha', alpha.toFixed(3));
   root.style.setProperty('--glass-blur', `${blur.toFixed(1)}px`);
 }
+
 

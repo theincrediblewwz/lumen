@@ -9,7 +9,7 @@ import { OPEN_READER_EVENT, type OpenReaderArgs } from '../reader/windowManager'
  * 监听 windowManager 派发的 open-reader 事件（当不在 Tauri、或开独立窗口失败时触发），
  * 拉取文档内容并以浮层呈现 ReaderView。真机 Tauri 下正常路径走独立窗口，不经这里。
  */
-export function ReaderOverlay() {
+export function ReaderOverlay({ guessMath = false }: { guessMath?: boolean }) {
   const [args, setArgs] = useState<OpenReaderArgs | null>(null);
   const [state, setState] = useState<
     { kind: 'loading' } | { kind: 'ok'; md: string } | { kind: 'error'; msg: string }
@@ -54,9 +54,10 @@ export function ReaderOverlay() {
           markdown={state.md}
           docKey={`${args.projectId}/${args.boardId}/${args.path}`}
           onClose={() => setArgs(null)}
+          guessMath={guessMath}
         />
       ) : (
-        <div className="reader" data-reader-theme="light">
+        <div className="reader">
           <div className="reader-splash">
             {state.kind === 'error' ? `无法打开文档：${state.msg}` : `正在打开《${args.title}》…`}
           </div>
@@ -66,3 +67,4 @@ export function ReaderOverlay() {
     document.body,
   );
 }
+

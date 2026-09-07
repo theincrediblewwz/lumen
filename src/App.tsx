@@ -444,7 +444,7 @@ export default function App() {
 
         {/* 画布区：挂 CanvasEngine（M2-2 / M2-3） */}
         {activeBoard ? (
-          <BoardCanvas key={activeBoard.id} board={activeBoard} onChange={onCanvasChange} edgeStyle={settings.edgeStyle ?? 'curved'} />
+          <BoardCanvas key={activeBoard.id} board={activeBoard} onChange={onCanvasChange} edgeStyle={settings.edgeStyle ?? 'curved'} guessMath={settings.guessMath} />
         ) : (
           <main className="board-canvas canvas-placeholder">
             <p className="placeholder-hint">
@@ -464,9 +464,10 @@ export default function App() {
       )}
 
       {/* 应用内浮层阅读器（浏览器预览 / 开独立窗口失败时的回退） */}
-      <ReaderOverlay />
+      <ReaderOverlay guessMath={settings.guessMath} />
     </div>
   );
 }
+
 
 

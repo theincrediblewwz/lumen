@@ -45,10 +45,12 @@ export function BoardCanvas({
   board,
   onChange,
   edgeStyle = 'curved',
+  guessMath = false,
 }: {
   board: BoardFile;
   onChange: (nodes: BoardNode[], edges: BoardEdge[], viewport: Viewport) => void;
   edgeStyle?: EdgeStyle;
+  guessMath?: boolean;
 }) {
   const wrapRef = useRef<HTMLDivElement>(null);
   const engineRef = useRef<CanvasEngine>(
@@ -835,6 +837,9 @@ export function BoardCanvas({
             onOpenDoc={openDoc}
             onImportDocs={importDocs}
             onRemoveDoc={removeDoc}
+            projectId={board.projectId}
+            boardId={board.id}
+            guessMath={guessMath}
           />
         ) : null;
       })()}
@@ -843,6 +848,7 @@ export function BoardCanvas({
     </div>
   );
 }
+
 
 
 

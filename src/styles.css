@@ -97,6 +97,10 @@
   --ambient-c: rgba(120, 140, 80, 0.12);
   --edge-color: #cdbfa3;
   --edge-label-bg: #fdfbf6;
+  /* chrome 分栏第二色 / 顶部渐变（覆盖 :root 里的浅色默认，避免泄漏到纸感主题） */
+  --bg-chrome-2: #f6f1e6;
+  --chrome-grad-a: rgba(138, 90, 43, 0.05);
+  --chrome-grad-b: rgba(138, 90, 43, 0);
 }
 
 /* 深色 */
@@ -120,6 +124,10 @@
   --ambient-c: rgba(150, 110, 70, 0.16);
   --edge-color: #454b53;
   --edge-label-bg: #1f2126;
+  /* chrome 分栏第二色 / 顶部渐变（覆盖 :root 里的浅色默认，修复深色下侧栏发白） */
+  --bg-chrome-2: #202228;
+  --chrome-grad-a: rgba(111, 179, 160, 0.06);
+  --chrome-grad-b: rgba(111, 179, 160, 0);
 }
 
 * {
@@ -1657,6 +1665,111 @@ html.native-glass .node-card {
 .np-doc-add:hover:not(:disabled) { background: color-mix(in srgb, var(--accent) 20%, transparent); }
 .np-doc-add:disabled { opacity: 0.5; cursor: default; }
 
+/* ── 关联文档预览卡（NodePanel 内，缩略渲染方框） ── */
+.np-doc-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 10px;
+  margin-top: 4px;
+}
+.doc-card {
+  position: relative;
+  border: var(--border-node) solid var(--border-color);
+  border-radius: 12px;
+  overflow: hidden;
+  background: var(--bg-canvas);
+  transition: border-color var(--dur-fast) var(--ease-standard), box-shadow var(--dur-fast) var(--ease-standard);
+}
+.doc-card:hover {
+  border-color: var(--node-accent, var(--accent));
+  box-shadow: var(--shadow-node);
+}
+.doc-card-open {
+  display: block;
+  width: 100%;
+  padding: 0;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  text-align: left;
+}
+.doc-card-thumb {
+  position: relative;
+  height: 116px;
+  overflow: hidden;
+  background: var(--bg-node);
+  border-bottom: var(--border-node) solid var(--border-color);
+}
+.doc-card-scaled {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 250%;          /* 缩放 0.4 → 逻辑宽度放大补偿 */
+  padding: 10px 12px;
+  transform: scale(0.4);
+  transform-origin: top left;
+  font-size: 15px;
+  pointer-events: none;
+}
+.doc-card-scaled h1 { font-size: 1.5em; margin: 0.3em 0; }
+.doc-card-scaled h2 { font-size: 1.25em; border: none; padding: 0; margin: 0.3em 0; }
+.doc-card-scaled p { margin: 0.35em 0; }
+.doc-card-scaled pre { padding: 6px 8px; }
+.doc-card-fade {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 46px;
+  background: linear-gradient(to bottom, transparent, var(--bg-node));
+  pointer-events: none;
+}
+.doc-card-fallback {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+.doc-card-foot {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 9px;
+}
+.doc-card-foot svg { color: var(--text-secondary); flex-shrink: 0; }
+.doc-card-title {
+  flex: 1;
+  min-width: 0;
+  font-size: 12.5px;
+  color: var(--text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.doc-card-bytes { font-size: 10.5px; color: var(--text-secondary); flex-shrink: 0; }
+.doc-card-remove {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  z-index: 2;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  color: #fff;
+  background: rgba(20, 24, 22, 0.55);
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity var(--dur-fast) var(--ease-standard), background var(--dur-fast) var(--ease-standard);
+}
+.doc-card:hover .doc-card-remove { opacity: 1; }
+.doc-card-remove:hover { background: #e0503a; }
+
 .np-empty {
   font-size: 12.5px;
   line-height: 1.6;
@@ -1728,6 +1841,8 @@ html.native-glass .node-card {
 }
 .tt-empty { margin-top: 5px; font-size: 12px; color: var(--text-secondary); font-style: italic; }
 .tt-docs { margin-top: 6px; font-size: 11.5px; color: var(--accent); }
+
+
 
 
 

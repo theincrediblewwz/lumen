@@ -1,10 +1,14 @@
 import { useEffect, useState } from 'react';
 import { api } from './api';
 import { ReaderView } from './components/ReaderView';
+import { loadSettings, applySettings } from './settings';
 
 /**
  * 独立阅读窗口的根组件（M4-4）。从 URL query 读取 project/board/path，
  * 通过 Tauri 命令拉取文档内容（后端做编码探测），再交给 ReaderView 渲染。
+ *
+ * 主题跟随软件主体（读取同一 localStorage 设置并 applySettings），保证阅读
+ * 窗口与主窗口外观一致（ADR-027）。
  */
 export function ReaderApp() {
   const params = new URLSearchParams(window.location.search);
@@ -13,12 +17,18 @@ export function ReaderApp() {
   const path = params.get('path') ?? '';
   const title = params.get('title') ?? path.replace(/^docs\//, '').replace(/\.(md|markdown)$/i, '');
 
+  const settings = loadSettings();
   const [state, setState] = useState<
     { kind: 'loading' } | { kind: 'ok'; md: string } | { kind: 'error'; msg: string }
   >({ kind: 'loading' });
 
+  // 应用软件主体的主题到本窗口（不启用原生玻璃：阅读窗用系统装饰、纯实色更稳）
   useEffect(() => {
-    document.title = `${title} — 脉络阅读`;
+    applySettings({ ...settings, glass: false });
+  }, [settings]);
+
+  useEffect(() => {
+    document.title = `${title} — 脉络 Lumen`;
     let alive = true;
     api
       .docRead(projectId, boardId, path)
@@ -41,6 +51,7 @@ export function ReaderApp() {
       title={title}
       markdown={state.md}
       docKey={`${projectId}/${boardId}/${path}`}
+      guessMath={settings.guessMath}
     />
   );
 }

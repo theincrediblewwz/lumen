@@ -1,24 +1,27 @@
 /**
- * 阅读器偏好与进度（M4-6）：字号、主题、每篇文档的阅读进度记忆。
+ * 阅读器偏好与进度（M4-6）：字号、阅读模式、每篇文档的阅读进度记忆。
  * 全部持久化到 localStorage，key 与白板设置分开命名空间。
+ *
+ * 主题不再由阅读器单独管理——阅读器跟随软件主体主题（ADR-027）。
  */
 
-export type ReaderTheme = 'light' | 'paper' | 'dark';
+/** 阅读模式：continuous=连续滚动；paged=双页翻页（连续排布、页间无缝） */
+export type ReaderMode = 'continuous' | 'paged';
 
 export interface ReaderPrefs {
   /** 字号缩放百分比，60–150 */
   fontScale: number;
-  theme: ReaderTheme;
+  mode: ReaderMode;
 }
 
-const PREFS_KEY = 'lumen.reader.prefs.v1';
+const PREFS_KEY = 'lumen.reader.prefs.v2';
 const PROGRESS_KEY = 'lumen.reader.progress.v1';
 
 export const FONT_MIN = 60;
 export const FONT_MAX = 150;
 export const FONT_STEP = 10;
 
-const DEFAULT_PREFS: ReaderPrefs = { fontScale: 100, theme: 'light' };
+const DEFAULT_PREFS: ReaderPrefs = { fontScale: 100, mode: 'continuous' };
 
 export function loadPrefs(): ReaderPrefs {
   try {
@@ -27,7 +30,7 @@ export function loadPrefs(): ReaderPrefs {
     const p = JSON.parse(raw) as Partial<ReaderPrefs>;
     return {
       fontScale: clampFont(typeof p.fontScale === 'number' ? p.fontScale : 100),
-      theme: p.theme === 'paper' || p.theme === 'dark' ? p.theme : 'light',
+      mode: p.mode === 'paged' ? 'paged' : 'continuous',
     };
   } catch {
     return { ...DEFAULT_PREFS };
