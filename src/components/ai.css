@@ -226,6 +226,31 @@
   font-size: 12.5px;
 }
 
+/* 工具调用状态提示（agentic 查阅白板） */
+.ai-tool-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--text-secondary, #52685f);
+  background: var(--bg-hover, rgba(47, 158, 119, 0.1));
+  border-radius: 8px;
+  padding: 4px 10px;
+  margin-bottom: 4px;
+  align-self: flex-start;
+}
+.ai-tool-spinner {
+  width: 11px;
+  height: 11px;
+  border: 2px solid var(--accent, #2f9e77);
+  border-top-color: transparent;
+  border-radius: 50%;
+  animation: ai-spin 0.7s linear infinite;
+}
+@keyframes ai-spin {
+  to { transform: rotate(360deg); }
+}
+
 /* 打字动画 */
 .ai-typing {
   display: inline-flex;

@@ -8,7 +8,8 @@ import {
   isAiConfigured,
   type AiSettings,
 } from '../ai/aiSettings';
-import { streamChat, type StreamHandle } from '../ai/aiClient';
+import { streamChatAgentic, type StreamHandle } from '../ai/aiClient';
+import type { ToolContext } from '../ai/tools';
 import { buildBoardOutline, buildSystemPrompt } from '../ai/boardContext';
 import type { ChatMessage } from '../ai/provider';
 
@@ -28,7 +29,16 @@ interface UiMessage {
   /** 正在流式生成中 */
   streaming?: boolean;
   error?: boolean;
+  /** 正在调用的工具名（agentic 查阅白板时显示） */
+  tool?: string;
 }
+
+const TOOL_LABELS: Record<string, string> = {
+  read_board_outline: '查看白板结构',
+  list_nodes: '浏览节点列表',
+  read_node_doc: '阅读节点文档',
+  search_board: '检索白板内容',
+};
 
 /** 渲染 AI/用户消息的 Markdown（复用 M4 引擎 + KaTeX 排版）。 */
 function MessageBody({ content }: { content: string }) {
@@ -130,25 +140,40 @@ export function AiChat({ projectId, boardId, boardName, standalone, platform, on
         return copy;
       });
 
-    handleRef.current = streamChat(settings, history, {
-      onDelta: (d) => patchLast((m) => ({ ...m, content: m.content + d })),
-      onDone: () => {
-        patchLast((m) => ({ ...m, streaming: false }));
-        setBusy(false);
-        handleRef.current = null;
+    // 白板共享开启且已加载白板时，注入工具上下文让 AI 主动查阅（M5-3）
+    const toolCtx: ToolContext | undefined =
+      settings.shareBoard && board
+        ? { board, readDoc: (p) => api.docRead(projectId, boardId, p) }
+        : undefined;
+
+    handleRef.current = streamChatAgentic(
+      settings,
+      history,
+      {
+        onDelta: (d) =>
+          patchLast((m) => ({ ...m, content: m.content + d, tool: undefined })),
+        onToolStart: (name) =>
+          patchLast((m) => ({ ...m, tool: TOOL_LABELS[name] ?? name })),
+        onDone: () => {
+          patchLast((m) => ({ ...m, streaming: false, tool: undefined }));
+          setBusy(false);
+          handleRef.current = null;
+        },
+        onError: (msg) => {
+          patchLast((m) => ({
+            ...m,
+            streaming: false,
+            tool: undefined,
+            error: true,
+            content: m.content || `⚠️ ${msg}`,
+          }));
+          setBusy(false);
+          handleRef.current = null;
+        },
       },
-      onError: (msg) => {
-        patchLast((m) => ({
-          ...m,
-          streaming: false,
-          error: true,
-          content: m.content || `⚠️ ${msg}`,
-        }));
-        setBusy(false);
-        handleRef.current = null;
-      },
-    });
-  }, [input, busy, configured, messages, settings, systemPrompt]);
+      toolCtx,
+    );
+  }, [input, busy, configured, messages, settings, systemPrompt, board, projectId, boardId]);
 
   const stop = useCallback(() => {
     handleRef.current?.cancel();
@@ -265,9 +290,14 @@ export function AiChat({ projectId, boardId, boardName, standalone, platform, on
             {messages.map((m, i) => (
               <div key={i} className={`ai-msg ai-msg-${m.role}${m.error ? ' is-error' : ''}`}>
                 <div className="ai-msg-role">{m.role === 'user' ? '你' : 'AI'}</div>
+                {m.tool && (
+                  <div className="ai-tool-status">
+                    <span className="ai-tool-spinner" /> 正在{m.tool}…
+                  </div>
+                )}
                 {m.content ? (
                   <MessageBody content={m.content} />
-                ) : (
+                ) : m.tool ? null : (
                   <div className="ai-typing"><span></span><span></span><span></span></div>
                 )}
               </div>

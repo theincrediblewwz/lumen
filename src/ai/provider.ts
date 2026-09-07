@@ -11,9 +11,20 @@
 
 export type ProviderKind = 'openai' | 'anthropic' | 'ollama';
 
+/** OpenAI 兼容的工具调用（function calling）片段 */
+export interface ToolCall {
+  id: string;
+  type: 'function';
+  function: { name: string; arguments: string };
+}
+
 export interface ChatMessage {
-  role: 'system' | 'user' | 'assistant';
+  role: 'system' | 'user' | 'assistant' | 'tool';
   content: string;
+  /** assistant 发起的工具调用 */
+  tool_calls?: ToolCall[];
+  /** tool 角色回执对应的调用 id */
+  tool_call_id?: string;
 }
 
 export interface ChatRequestConfig {
@@ -48,6 +59,7 @@ export function chatCompletionsUrl(baseUrl: string): string {
 export function buildChatRequest(
   cfg: ChatRequestConfig,
   messages: ChatMessage[],
+  tools?: unknown[],
 ): HttpRequestSpec {
   if (cfg.kind !== 'openai') {
     throw new Error(`暂不支持的 provider: ${cfg.kind}（当前仅 openai 兼容）`);
@@ -58,6 +70,10 @@ export function buildChatRequest(
     stream: true,
     temperature: cfg.temperature ?? 0.7,
   };
+  if (tools && tools.length > 0) {
+    body.tools = tools;
+    body.tool_choice = 'auto';
+  }
   if (cfg.maxTokens != null) body.max_tokens = cfg.maxTokens;
 
   return {
@@ -125,4 +141,94 @@ export function collectSseText(fullSse: string): string {
   let buffer = fullSse.endsWith('\n\n') ? fullSse : fullSse + '\n\n';
   const { deltas } = parseSseChunk(buffer);
   return deltas.join('');
+}
+
+/** 工具调用的流式增量（可能只带部分字段） */
+export interface ToolCallDelta {
+  index: number;
+  id?: string;
+  name?: string;
+  /** arguments 的片段（需按 index 累加拼接） */
+  argsFragment?: string;
+}
+
+export interface SseRichResult {
+  contentDeltas: string[];
+  toolCallDeltas: ToolCallDelta[];
+  /** 收到的 finish_reason（如 'stop' / 'tool_calls'） */
+  finishReason: string | null;
+  done: boolean;
+  rest: string;
+}
+
+/**
+ * 增强版 SSE 解析：同时抽取 content 增量、tool_calls 增量与 finish_reason。
+ * 与 parseSseChunk 一样是纯函数、维护 rest。
+ */
+export function parseSseChunkRich(buffer: string): SseRichResult {
+  const contentDeltas: string[] = [];
+  const toolCallDeltas: ToolCallDelta[] = [];
+  let finishReason: string | null = null;
+  let done = false;
+
+  const lastSep = buffer.lastIndexOf('\n\n');
+  if (lastSep === -1) {
+    return { contentDeltas, toolCallDeltas, finishReason, done, rest: buffer };
+  }
+  const complete = buffer.slice(0, lastSep);
+  const rest = buffer.slice(lastSep + 2);
+
+  for (const rawEvent of complete.split('\n\n')) {
+    const dataLines = rawEvent
+      .split('\n')
+      .map((l) => l.trimEnd())
+      .filter((l) => l.startsWith('data:'))
+      .map((l) => l.slice(5).trimStart());
+    if (dataLines.length === 0) continue;
+    const payload = dataLines.join('\n');
+    if (payload === '[DONE]') {
+      done = true;
+      continue;
+    }
+    try {
+      const json = JSON.parse(payload);
+      const choice = json?.choices?.[0];
+      const delta = choice?.delta;
+      if (typeof delta?.content === 'string' && delta.content.length > 0) {
+        contentDeltas.push(delta.content);
+      }
+      if (Array.isArray(delta?.tool_calls)) {
+        for (const tc of delta.tool_calls) {
+          toolCallDeltas.push({
+            index: typeof tc.index === 'number' ? tc.index : 0,
+            id: tc.id,
+            name: tc.function?.name,
+            argsFragment: tc.function?.arguments,
+          });
+        }
+      }
+      if (choice?.finish_reason) finishReason = choice.finish_reason;
+    } catch {
+      /* 忽略半个 JSON */
+    }
+  }
+  return { contentDeltas, toolCallDeltas, finishReason, done, rest };
+}
+
+/** 把一串 tool_call 增量按 index 合并成完整的 ToolCall[]。 */
+export function accumulateToolCalls(deltas: ToolCallDelta[]): ToolCall[] {
+  const byIndex = new Map<number, ToolCall>();
+  for (const d of deltas) {
+    let tc = byIndex.get(d.index);
+    if (!tc) {
+      tc = { id: '', type: 'function', function: { name: '', arguments: '' } };
+      byIndex.set(d.index, tc);
+    }
+    if (d.id) tc.id = d.id;
+    if (d.name) tc.function.name = d.name;
+    if (d.argsFragment) tc.function.arguments += d.argsFragment;
+  }
+  return Array.from(byIndex.entries())
+    .sort((a, b) => a[0] - b[0])
+    .map(([, tc]) => tc);
 }
