@@ -1,4 +1,5 @@
 mod commands;
+mod ai;
 mod config;
 mod storage;
 
@@ -59,6 +60,8 @@ pub fn run() {
             commands::doc_read,
             commands::doc_delete,
             commands::open_doc_external,
+            ai::ai_chat_stream,
+            ai::ai_cancel,
         ])
         .run(tauri::generate_context!())
         .expect("failed to launch Lumen");

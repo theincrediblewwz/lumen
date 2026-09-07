@@ -4,6 +4,7 @@ import { ContextMenu, type ContextMenuState } from './components/ContextMenu';
 import { TitleBar } from './components/TitleBar';
 import { BoardCanvas } from './components/BoardCanvas';
 import { ReaderOverlay } from './components/ReaderOverlay';
+import { AiFab } from './components/AiFab';
 import type { Viewport } from './canvas/CanvasEngine';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { SettingsPanel } from './components/SettingsPanel';
@@ -465,6 +466,13 @@ export default function App() {
 
       {/* 应用内浮层阅读器（浏览器预览 / 开独立窗口失败时的回退） */}
       <ReaderOverlay guessMath={settings.guessMath} />
+
+      {/* AI 助手悬浮按钮（M5-1）：绑定当前白板 */}
+      <AiFab
+        projectId={activeProject?.id ?? null}
+        boardId={activeBoard?.id ?? null}
+        boardName={activeBoard?.name ?? null}
+      />
     </div>
   );
 }
