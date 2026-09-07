@@ -125,6 +125,7 @@ export function NodePanel({
       </div>
 
       <div className="np-body">
+        <div className="np-top">
         <label className="np-label">概括标题</label>
         <GrowArea
           className="np-title"
@@ -163,7 +164,9 @@ export function NodePanel({
             );
           })}
         </div>
+        </div>
 
+        <div className="np-docs-section">
         <label className="np-label">
           关联文档 {docCount > 0 && <span className="np-count">{docCount}</span>}
           <button
@@ -193,6 +196,7 @@ export function NodePanel({
             ))}
           </div>
         )}
+        </div>
       </div>
 
       <div className="np-foot">
@@ -212,6 +216,7 @@ export function NodePanel({
     </aside>
   );
 }
+
 
 
 

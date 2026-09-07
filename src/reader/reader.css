@@ -176,10 +176,7 @@
 .reader-toc-item.lvl-5 button,
 .reader-toc-item.lvl-6 button { padding-left: 44px; font-size: 12px; }
 
-/* 双页时舞台裁掉平移出去的列，避免出现横向滚动条 */
-.reader.is-paged .reader-stage { overflow: hidden; }
-
-/* 舞台：包住滚动体，用于叠加页码/翻页控件 */
+/* 舞台：包住滚动体，用于叠加翻页控件/页码条 */
 .reader-stage {
   position: relative;
   flex: 1;
@@ -195,57 +192,82 @@
   scroll-behavior: smooth;
 }
 
-/* 连续滚动：正文居中一列 */
-.reader-pageflow {
-  padding: 32px 48px 120px;
-}
+/* 连续滚动：正文一列（宽度限制在 .markdown-body 上） */
+.reader-content { padding: 32px 48px 120px; }
+.reader-pages { display: none; }
 
-/* ── 双页模式：像 PDF——左右两页铺满整屏，向下翻跨页 ── */
-/* 视口本身不滚动，不出现横向滚动条；靠 flow 的 transform 平移切换跨页 */
-.reader.is-paged .reader-body {
-  overflow: hidden;
-  scroll-behavior: auto;
-}
-.reader.is-paged .reader-pageflow {
-  /* height / column-width / column-gap 由 JS 按视口设置 */
-  padding: 44px 52px 52px;
-  margin: 0;
-  max-width: none;
-  column-fill: auto;
-  box-sizing: border-box;
-  transition: transform 320ms cubic-bezier(0.22, 0.61, 0.36, 1);
-  will-change: transform;
-}
-/* 每一列（页）内部图片/公式不溢出到相邻页 */
-.reader.is-paged .reader-pageflow > * { break-inside: avoid-column; }
-
-/* 左右两页中缝分隔线 */
-.reader-gutter {
+/* ── 双页模式：竖向连续滚动的一张张“纸”，每张纸中缝分左右两栏 ── */
+/* 双页时测量源隐藏（仅用于 JS 量块高），显示堆叠的纸页 */
+.reader.is-paged .reader-content {
   position: absolute;
-  top: 40px;
-  bottom: 40px;
+  visibility: hidden;
+  pointer-events: none;
+  left: -9999px;
+  top: 0;
+  padding: 0;
+  max-width: none;
+  margin: 0;
+}
+.reader.is-paged .reader-pages {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0;
+  padding: 22px 0 60px;
+  max-width: none;
+  margin: 0;
+}
+
+/* 单张纸：白色/主体卡片，左右两栏 + 中缝，阴影像 PDF 页 */
+.reader-sheet {
+  position: relative;
+  box-sizing: border-box;
+  display: flex;
+  align-items: stretch;
+  width: min(96%, 1180px);
+  margin-bottom: 22px;
+  background: var(--bg-node);
+  border: 1px solid var(--border-color);
+  border-radius: 10px;
+  box-shadow: 0 4px 18px rgba(0, 0, 0, 0.10);
+  overflow: hidden;
+}
+.reader-sheet-col {
+  flex: 0 0 auto;
+  overflow: hidden;
+}
+.reader-sheet-col > *:first-child { margin-top: 0; }
+/* 中缝分隔线 */
+.reader-sheet-gutter {
+  flex: 1 1 auto;
+  align-self: stretch;
+  position: relative;
+}
+.reader-sheet-gutter::before {
+  content: '';
+  position: absolute;
+  top: 6%;
+  bottom: 6%;
   left: 50%;
   width: 1px;
   transform: translateX(-0.5px);
   background: var(--border-color);
   opacity: 0.7;
-  pointer-events: none;
 }
-
-/* 页码：固定在左右两页的下角 */
-.reader-pagenum {
+/* 每页页码 */
+.reader-sheet-pn {
   position: absolute;
-  bottom: 16px;
+  bottom: 14px;
   font-size: 12px;
   color: var(--text-secondary);
   font-variant-numeric: tabular-nums;
-  opacity: 0.75;
+  opacity: 0.7;
   pointer-events: none;
 }
-.reader-pagenum-left { left: 56px; }
-.reader-pagenum-right { right: 56px; }
+.reader-sheet-pn-left { left: 24px; }
+.reader-sheet-pn-right { right: 24px; }
 
-/* 翻页按钮（双页） */
+/* 翻页按钮（双页）：上一张/下一张，竖直翻 */
 .reader-flip {
   position: absolute;
   top: 50%;
@@ -255,7 +277,7 @@
   font-size: 26px;
   line-height: 1;
   color: var(--text-secondary);
-  background: color-mix(in srgb, var(--bg-node) 80%, transparent);
+  background: color-mix(in srgb, var(--bg-node) 85%, transparent);
   border: 1px solid var(--border-color);
   border-radius: 12px;
   cursor: pointer;
@@ -264,8 +286,8 @@
 }
 .reader-flip:hover:not(:disabled) { color: var(--accent); background: var(--bg-node); }
 .reader-flip:disabled { opacity: 0.25; cursor: default; }
-.reader-flip-prev { left: 8px; }
-.reader-flip-next { right: 8px; }
+.reader-flip-prev { left: 10px; }
+.reader-flip-next { right: 10px; }
 
 .reader-pagebar {
   position: absolute;
@@ -274,14 +296,16 @@
   transform: translateX(-50%);
   font-size: 12px;
   color: var(--text-secondary);
-  background: color-mix(in srgb, var(--bg-node) 80%, transparent);
+  background: color-mix(in srgb, var(--bg-node) 88%, transparent);
+  border: 1px solid var(--border-color);
   padding: 4px 12px;
   border-radius: 8px;
   pointer-events: none;
+  z-index: 3;
 }
 
-/* 全屏时隐藏 TOC，正文更宽 */
-.reader.is-fullscreen .reader-pageflow { padding-left: 8%; padding-right: 8%; }
+/* 全屏时正文更宽 */
+.reader.is-fullscreen .reader-content { padding-left: 8%; padding-right: 8%; }
 
 /* ── Markdown 排版（字号随 --reader-font-scale 缩放） ── */
 .markdown-body {
@@ -290,7 +314,7 @@
   color: var(--text-primary);
 }
 /* 连续模式下限制阅读宽度并居中 */
-.reader:not(.is-paged) .markdown-body {
+.reader:not(.is-paged) .reader-content {
   max-width: 820px;
   margin: 0 auto;
 }
@@ -403,7 +427,8 @@
 
 @media (max-width: 720px) {
   .reader-toc { display: none; }
-  .reader-pageflow { padding: 24px 20px 100px; }
+  .reader-content { padding: 24px 20px 100px; }
 }
+
 
 
