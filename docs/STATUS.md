@@ -3,7 +3,7 @@
 > **开工前先读本文件；每完成一件事就更新本文件。**
 > 本文件只记录「进度」。计划与任务清单见 [PLAN.md](./PLAN.md)，设计与决策见 [DESIGN.md](./DESIGN.md)。
 
-**最后更新**：2026-09-07 12:55 (Asia/Shanghai)
+**最后更新**：2026-09-07 13:40 (Asia/Shanghai)
 
 ---
 
@@ -67,6 +67,8 @@
 | **精简右键菜单** | 节点右键去掉「编辑」（已由面板覆盖），右键即开面板、仅留「删除节点」 |
 | **颜色标记联动** | 节点色驱动 选中框/outline/光晕/连线锚点 同色；左侧色条加粗 3→6px |
 | **chrome 调清新明亮** | 侧栏/标题栏改薄荷白+顶部冷绿高光渐变，白板栏亮一档做纵深（仅 light，paper/dark 未动） |
+| **M4 阅读内核（M4-1~8 全）** | markdown-it+KaTeX 引擎、公式两级保护、TOC 跳转、字号/主题/进度、编码探测、分批排版 |
+| **M4 文档导入 + 独立阅读窗口** | NodePanel 导入/打开/移除 md；Tauri 独立窗口(reader-*) + 浏览器浮层回退 |
 
 ## 三、进行中
 
@@ -89,7 +91,7 @@
 ## 五、下一步（接下来我做的）
 
 1. **等用户验收画布 v1** 手感与持久化
-3. **M4** 阅读窗口：md 导入 + mdread 内核移植（点节点文档打开阅读器）
+3. **M5** AI 辅助（问题拆解 / 回答渲染复用 M4 管线）
 4. 节点配色/连线标签的更多样式微调（按需）
 
 
@@ -120,6 +122,7 @@
 | MCP `apply_patch` 对 JSON 上下文不稳 | 给 `package.json` 打小补丁时报「patched」却未生效（同尺寸）；改用 `write_file` 全量覆盖更可靠 |
 | **在 Windows 上跑出 GUI 不代表平台错了** | Tauri 用系统 WebView（Win=WebView2 / mac=WKWebView），同一套 React 代码在开发机（本机是 Windows，故产物为 `lumen.exe`）即可调试；「主目标 macOS」指最终发布用 mac 构建。macOS 的 `.app`/`.dmg` 必须在 mac 或 CI mac runner 上 `tauri build` |
 | **自定义标题栏控件必须退出拖拽区** | 整条 titlebar 设 `-webkit-app-region: drag` 后，内部按钮要加 `no-drag`，否则点击被窗口拖拽吞掉 |
+
 
 
 

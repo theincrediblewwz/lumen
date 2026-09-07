@@ -1515,6 +1515,9 @@ html.native-glass .node-card {
 }
 
 .np-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
   font-size: 11.5px;
   font-weight: 600;
   color: var(--text-secondary);
@@ -1594,18 +1597,65 @@ html.native-glass .node-card {
 .np-doc {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 8px 10px;
-  font-size: 13px;
-  color: var(--text-primary);
+  gap: 4px;
   background: var(--bg-canvas);
   border: var(--border-node) solid var(--border-color);
   border-radius: 10px;
-  cursor: default;
+  overflow: hidden;
+  transition: border-color var(--dur-fast) var(--ease-standard);
 }
-.np-doc svg { color: var(--text-secondary); flex-shrink: 0; }
+.np-doc:hover { border-color: var(--node-accent, var(--accent)); }
+.np-doc-open {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  padding: 8px 4px 8px 10px;
+  font-family: inherit;
+  font-size: 13px;
+  color: var(--text-primary);
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  text-align: left;
+}
+.np-doc-open svg { color: var(--text-secondary); flex-shrink: 0; }
 .np-doc-title { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .np-doc-bytes { font-size: 11px; color: var(--text-secondary); flex-shrink: 0; }
+.np-doc-remove {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  margin-right: 4px;
+  flex-shrink: 0;
+  color: var(--text-secondary);
+  background: transparent;
+  border: none;
+  border-radius: 7px;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity var(--dur-fast) var(--ease-standard), background var(--dur-fast) var(--ease-standard), color var(--dur-fast) var(--ease-standard);
+}
+.np-doc:hover .np-doc-remove { opacity: 1; }
+.np-doc-remove:hover { background: rgba(224, 80, 58, 0.12); color: #e0503a; }
+
+.np-doc-add {
+  margin-left: auto;
+  font-family: inherit;
+  font-size: 11.5px;
+  color: var(--accent);
+  background: var(--accent-soft);
+  border: none;
+  border-radius: 7px;
+  padding: 3px 9px;
+  cursor: pointer;
+  transition: background var(--dur-fast) var(--ease-standard);
+}
+.np-doc-add:hover:not(:disabled) { background: color-mix(in srgb, var(--accent) 20%, transparent); }
+.np-doc-add:disabled { opacity: 0.5; cursor: default; }
 
 .np-empty {
   font-size: 12.5px;
@@ -1678,5 +1728,6 @@ html.native-glass .node-card {
 }
 .tt-empty { margin-top: 5px; font-size: 12px; color: var(--text-secondary); font-style: italic; }
 .tt-docs { margin-top: 6px; font-size: 11.5px; color: var(--accent); }
+
 
 

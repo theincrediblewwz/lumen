@@ -12,7 +12,8 @@ import {
   type History,
 } from '../canvas/history';
 import { edgeGeometry, straightPath, boxContains, type Box, type EdgeStyle } from '../canvas/geometry';
-import type { BoardFile, BoardNode, BoardEdge } from '../api';
+import { api, pickMarkdownFiles, type BoardFile, type BoardNode, type BoardEdge, type DocRef } from '../api';
+import { openReaderWindow } from '../reader/windowManager';
 import { NodeCard } from './NodeCard';
 import { NodePanel } from './NodePanel';
 import { NodeTooltip } from './NodeTooltip';
@@ -500,6 +501,61 @@ export function BoardCanvas({
     });
   };
 
+  /* ── 文档：导入 / 打开阅读 / 移除（M4-3 / M4-4） ── */
+  const attachDocs = (nodeId: string, refs: DocRef[]) => {
+    if (refs.length === 0) return;
+    const g = graphRef.current;
+    apply({
+      nodes: g.nodes.map((n) =>
+        n.id === nodeId
+          ? {
+              ...n,
+              // 去重（按 path），追加新导入的文档
+              docs: [...n.docs.filter((d) => !refs.some((r) => r.path === d.path)), ...refs],
+              updated_at: new Date().toISOString(),
+            }
+          : n,
+      ),
+      edges: g.edges,
+    });
+  };
+
+  const importDocs = async (nodeId: string) => {
+    try {
+      const paths = await pickMarkdownFiles();
+      if (paths.length === 0) return;
+      const refs: DocRef[] = [];
+      for (const p of paths) {
+        refs.push(await api.docImport(board.projectId, board.id, p));
+      }
+      attachDocs(nodeId, refs);
+    } catch (err) {
+      console.error('导入文档失败：', err);
+      alert(`导入文档失败：${String(err)}`);
+    }
+  };
+
+  const openDoc = (_nodeId: string, path: string, title: string) => {
+    void openReaderWindow({ projectId: board.projectId, boardId: board.id, path, title });
+  };
+
+  const removeDoc = async (nodeId: string, path: string) => {
+    try {
+      await api.docDelete(board.projectId, board.id, path);
+    } catch (err) {
+      console.error('删除文档文件失败（仍从节点解除关联）：', err);
+    }
+    const g = graphRef.current;
+    apply({
+      nodes: g.nodes.map((n) =>
+        n.id === nodeId
+          ? { ...n, docs: n.docs.filter((d) => d.path !== path), updated_at: new Date().toISOString() }
+          : n,
+      ),
+      edges: g.edges,
+    });
+  };
+
   const addNodeAtScreen = (clientX: number, clientY: number) => {
     const r = rect();
     const world = engine.toWorld({ x: clientX - r.left, y: clientY - r.top });
@@ -776,6 +832,9 @@ export function BoardCanvas({
             onColor={setNodeColor}
             onDelete={removeNode}
             onClose={() => setPanelId(null)}
+            onOpenDoc={openDoc}
+            onImportDocs={importDocs}
+            onRemoveDoc={removeDoc}
           />
         ) : null;
       })()}
@@ -784,6 +843,7 @@ export function BoardCanvas({
     </div>
   );
 }
+
 
 
 

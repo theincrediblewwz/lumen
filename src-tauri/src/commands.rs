@@ -106,3 +106,40 @@ pub fn board_rename(
 ) -> Result<storage::BoardMeta, String> {
     storage::rename_board(&root()?, &project_id, &board_id, &name)
 }
+
+
+// ───────────────── 文档（M4） ─────────────────
+
+#[tauri::command]
+pub fn docs_list(project_id: String, board_id: String) -> Result<Vec<storage::DocRef>, String> {
+    storage::list_docs(&root()?, &project_id, &board_id)
+}
+
+#[tauri::command]
+pub fn doc_import(
+    project_id: String,
+    board_id: String,
+    src_path: String,
+) -> Result<storage::DocRef, String> {
+    storage::import_doc(&root()?, &project_id, &board_id, &src_path)
+}
+
+#[tauri::command]
+pub fn doc_write(
+    project_id: String,
+    board_id: String,
+    title: String,
+    content: String,
+) -> Result<storage::DocRef, String> {
+    storage::write_doc(&root()?, &project_id, &board_id, &title, &content)
+}
+
+#[tauri::command]
+pub fn doc_read(project_id: String, board_id: String, path: String) -> Result<String, String> {
+    storage::read_doc(&root()?, &project_id, &board_id, &path)
+}
+
+#[tauri::command]
+pub fn doc_delete(project_id: String, board_id: String, path: String) -> Result<(), String> {
+    storage::delete_doc(&root()?, &project_id, &board_id, &path)
+}

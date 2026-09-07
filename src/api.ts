@@ -89,4 +89,28 @@ export const api = {
     invoke<void>('board_delete', { projectId, boardId }),
   boardRename: (projectId: string, boardId: string, name: string) =>
     invoke<BoardMeta>('board_rename', { projectId, boardId, name }),
+
+  /* ── 文档（M4） ── */
+  docsList: (projectId: string, boardId: string) =>
+    invoke<DocRef[]>('docs_list', { projectId, boardId }),
+  docImport: (projectId: string, boardId: string, srcPath: string) =>
+    invoke<DocRef>('doc_import', { projectId, boardId, srcPath }),
+  docWrite: (projectId: string, boardId: string, title: string, content: string) =>
+    invoke<DocRef>('doc_write', { projectId, boardId, title, content }),
+  docRead: (projectId: string, boardId: string, path: string) =>
+    invoke<string>('doc_read', { projectId, boardId, path }),
+  docDelete: (projectId: string, boardId: string, path: string) =>
+    invoke<void>('doc_delete', { projectId, boardId, path }),
 };
+
+/** 打开系统文件选择框，返回选中的 .md 文件绝对路径（可多选）。 */
+export async function pickMarkdownFiles(): Promise<string[]> {
+  const picked = await open({
+    multiple: true,
+    title: '选择 Markdown 文档',
+    filters: [{ name: 'Markdown', extensions: ['md', 'markdown'] }],
+  });
+  if (picked == null) return [];
+  return Array.isArray(picked) ? picked : [picked];
+}
+

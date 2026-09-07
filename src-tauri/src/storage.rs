@@ -402,6 +402,210 @@ pub fn rename_board(
     Ok(updated)
 }
 
+// ─────────────────────────── 文档（M4） ───────────────────────────
+
+pub fn docs_dir(root: &Path, project_id: &str, board_id: &str) -> PathBuf {
+    board_dir(root, project_id, board_id).join("docs")
+}
+
+/// 校验文档相对路径：只允许 docs/ 下的单层 .md 文件名，挡住穿越。
+fn safe_doc_name(name: &str) -> Result<String, String> {
+    let name = name.trim();
+    if name.is_empty() || name.len() > 200 {
+        return Err("非法的文档名".into());
+    }
+    if name.contains('/') || name.contains('\\') || name.contains("..") {
+        return Err("文档名不能包含路径分隔符".into());
+    }
+    Ok(name.to_string())
+}
+
+/// 探测字节序列的编码并解码为 UTF-8 字符串（M4-7）。
+/// 顺序：BOM(UTF-8/UTF-16) → 严格 UTF-8 → chardetng 猜测（GB18030 等回退）。
+pub fn decode_text(bytes: &[u8]) -> String {
+    // UTF-8 BOM
+    if bytes.len() >= 3 && bytes[0] == 0xEF && bytes[1] == 0xBB && bytes[2] == 0xBF {
+        return String::from_utf8_lossy(&bytes[3..]).into_owned();
+    }
+    // UTF-16 LE / BE BOM
+    if bytes.len() >= 2 && bytes[0] == 0xFF && bytes[1] == 0xFE {
+        let (cow, _, _) = encoding_rs::UTF_16LE.decode(&bytes[2..]);
+        return cow.into_owned();
+    }
+    if bytes.len() >= 2 && bytes[0] == 0xFE && bytes[1] == 0xFF {
+        let (cow, _, _) = encoding_rs::UTF_16BE.decode(&bytes[2..]);
+        return cow.into_owned();
+    }
+    // 严格 UTF-8：无损即直接返回
+    if let Ok(s) = std::str::from_utf8(bytes) {
+        return s.to_string();
+    }
+    // 回退：用 chardetng 猜测（中文文档多为 GB18030），解码用猜到的编码
+    let mut det = chardetng::EncodingDetector::new();
+    det.feed(bytes, true);
+    let enc = det.guess(None, true);
+    let (cow, _, _) = enc.decode(bytes);
+    cow.into_owned()
+}
+
+/// 列出白板 docs/ 目录下的 .md 文档（返回 DocRef，path 相对白板文件夹）。
+pub fn list_docs(root: &Path, project_id: &str, board_id: &str) -> Result<Vec<DocRef>, String> {
+    let pid = safe_id(project_id)?;
+    let bid = safe_id(board_id)?;
+    let dir = docs_dir(root, pid, bid);
+    if !dir.exists() {
+        return Ok(vec![]);
+    }
+    let mut out = vec![];
+    for entry in fs::read_dir(&dir).map_err(|e| format!("读取 docs 目录失败: {e}"))? {
+        let entry = entry.map_err(|e| format!("遍历 docs 失败: {e}"))?;
+        let path = entry.path();
+        if !path.is_file() {
+            continue;
+        }
+        let ext = path.extension().and_then(|s| s.to_str()).unwrap_or("");
+        if !ext.eq_ignore_ascii_case("md") && !ext.eq_ignore_ascii_case("markdown") {
+            continue;
+        }
+        let fname = match path.file_name().and_then(|s| s.to_str()) {
+            Some(n) => n.to_string(),
+            None => continue,
+        };
+        let bytes = entry.metadata().ok().map(|m| m.len());
+        let title = path
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or(&fname)
+            .to_string();
+        out.push(DocRef {
+            path: format!("docs/{fname}"),
+            title,
+            bytes,
+        });
+    }
+    out.sort_by(|a, b| a.title.to_lowercase().cmp(&b.title.to_lowercase()));
+    Ok(out)
+}
+
+/// 导入一个文档：把源文件内容（已由前端读取为字节 / 或此处从磁盘读）复制进
+/// 白板 docs/ 目录，重名时自动追加 -2 / -3。返回新建的 DocRef。
+pub fn import_doc(
+    root: &Path,
+    project_id: &str,
+    board_id: &str,
+    src_path: &str,
+) -> Result<DocRef, String> {
+    let pid = safe_id(project_id)?;
+    let bid = safe_id(board_id)?;
+    let src = Path::new(src_path);
+    let raw = fs::read(src).map_err(|e| format!("读取源文件失败: {e}"))?;
+    let stem = src
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("文档")
+        .to_string();
+    let ext = src
+        .extension()
+        .and_then(|s| s.to_str())
+        .filter(|e| e.eq_ignore_ascii_case("md") || e.eq_ignore_ascii_case("markdown"))
+        .unwrap_or("md")
+        .to_string();
+
+    let dir = docs_dir(root, pid, bid);
+    fs::create_dir_all(&dir).map_err(|e| format!("创建 docs 目录失败: {e}"))?;
+
+    // 重名处理
+    let mut fname = format!("{stem}.{ext}");
+    let mut n = 2;
+    while dir.join(&fname).exists() {
+        fname = format!("{stem}-{n}.{ext}");
+        n += 1;
+    }
+
+    // 统一以 UTF-8（无 BOM）落盘，避免后续再探测
+    let text = decode_text(&raw);
+    let dst = dir.join(&fname);
+    atomic_write(&dst, &text)?;
+    let bytes = fs::metadata(&dst).ok().map(|m| m.len());
+
+    Ok(DocRef {
+        path: format!("docs/{fname}"),
+        title: stem,
+        bytes,
+    })
+}
+
+/// 从字节内容创建一个文档（拖放场景：前端读到内容/或粘贴）。
+pub fn write_doc(
+    root: &Path,
+    project_id: &str,
+    board_id: &str,
+    title: &str,
+    content: &str,
+) -> Result<DocRef, String> {
+    let pid = safe_id(project_id)?;
+    let bid = safe_id(board_id)?;
+    let stem = title.trim();
+    let stem = if stem.is_empty() { "未命名" } else { stem };
+    // 文件名安全化：去掉分隔符
+    let safe_stem: String = stem
+        .chars()
+        .map(|c| if c == '/' || c == '\\' || c == ':' { '_' } else { c })
+        .collect();
+
+    let dir = docs_dir(root, pid, bid);
+    fs::create_dir_all(&dir).map_err(|e| format!("创建 docs 目录失败: {e}"))?;
+
+    let mut fname = format!("{safe_stem}.md");
+    let mut n = 2;
+    while dir.join(&fname).exists() {
+        fname = format!("{safe_stem}-{n}.md");
+        n += 1;
+    }
+    let dst = dir.join(&fname);
+    atomic_write(&dst, content)?;
+    let bytes = fs::metadata(&dst).ok().map(|m| m.len());
+    Ok(DocRef {
+        path: format!("docs/{fname}"),
+        title: safe_stem,
+        bytes,
+    })
+}
+
+/// 读取白板 docs/ 下某文档，返回 UTF-8 文本（自动编码探测）。
+pub fn read_doc(
+    root: &Path,
+    project_id: &str,
+    board_id: &str,
+    rel_path: &str,
+) -> Result<String, String> {
+    let pid = safe_id(project_id)?;
+    let bid = safe_id(board_id)?;
+    let name = rel_path.strip_prefix("docs/").unwrap_or(rel_path);
+    let name = safe_doc_name(name)?;
+    let p = docs_dir(root, pid, bid).join(&name);
+    let raw = fs::read(&p).map_err(|e| format!("读取文档失败: {e}"))?;
+    Ok(decode_text(&raw))
+}
+
+/// 删除白板 docs/ 下某文档。
+pub fn delete_doc(
+    root: &Path,
+    project_id: &str,
+    board_id: &str,
+    rel_path: &str,
+) -> Result<(), String> {
+    let pid = safe_id(project_id)?;
+    let bid = safe_id(board_id)?;
+    let name = rel_path.strip_prefix("docs/").unwrap_or(rel_path);
+    let name = safe_doc_name(name)?;
+    let p = docs_dir(root, pid, bid).join(&name);
+    if p.exists() {
+        fs::remove_file(&p).map_err(|e| format!("删除文档失败: {e}"))?;
+    }
+    Ok(())
+}
+
 // ─────────────────────────── 单元测试 ───────────────────────────
 
 #[cfg(test)]
@@ -556,4 +760,54 @@ mod tests {
         assert!(rename_board(&root, &p.id, "../x", "y").is_err(), "非法 id 应被拒绝");
         fs::remove_dir_all(&root).ok();
     }
+
+    #[test]
+    fn decode_utf8_and_bom() {
+        // 纯 UTF-8
+        assert_eq!(decode_text("你好 world".as_bytes()), "你好 world");
+        // 带 UTF-8 BOM
+        let mut with_bom = vec![0xEF, 0xBB, 0xBF];
+        with_bom.extend_from_slice("标题".as_bytes());
+        assert_eq!(decode_text(&with_bom), "标题");
+    }
+
+    #[test]
+    fn decode_gb18030_fallback() {
+        // “中文” 的 GB18030 编码字节
+        let (bytes, _, _) = encoding_rs::GB18030.encode("中文测试");
+        let decoded = decode_text(&bytes);
+        assert_eq!(decoded, "中文测试");
+    }
+
+    #[test]
+    fn import_read_list_delete_doc() {
+        let root = tmpdir("docs");
+        ensure_storage(&root).unwrap();
+        let p = create_project(&root, "P").unwrap();
+        let b = create_board(&root, &p.id, "B").unwrap();
+
+        // 从字节写入两篇同名文档，验证重名处理
+        let d1 = write_doc(&root, &p.id, &b.id, "笔记", "# 一\n内容").unwrap();
+        let d2 = write_doc(&root, &p.id, &b.id, "笔记", "# 二\n内容").unwrap();
+        assert_eq!(d1.path, "docs/笔记.md");
+        assert_eq!(d2.path, "docs/笔记-2.md");
+
+        // 列出
+        let list = list_docs(&root, &p.id, &b.id).unwrap();
+        assert_eq!(list.len(), 2);
+
+        // 读取内容
+        let content = read_doc(&root, &p.id, &b.id, "docs/笔记.md").unwrap();
+        assert!(content.contains("# 一"));
+
+        // 路径穿越应被拒绝
+        assert!(read_doc(&root, &p.id, &b.id, "../../etc/passwd").is_err());
+
+        // 删除
+        delete_doc(&root, &p.id, &b.id, "docs/笔记.md").unwrap();
+        assert_eq!(list_docs(&root, &p.id, &b.id).unwrap().len(), 1);
+
+        fs::remove_dir_all(&root).ok();
+    }
 }
+

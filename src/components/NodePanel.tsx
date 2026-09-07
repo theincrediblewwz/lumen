@@ -64,15 +64,34 @@ export function NodePanel({
   onColor,
   onDelete,
   onClose,
+  onOpenDoc,
+  onImportDocs,
+  onRemoveDoc,
 }: {
   node: BoardNode;
   onCommit: (id: string, patch: { title?: string; summary?: string }) => void;
   onColor: (id: string, color: string | null) => void;
   onDelete: (id: string) => void;
   onClose: () => void;
+  /** 打开某关联文档进入阅读器（M4-4） */
+  onOpenDoc: (nodeId: string, path: string, title: string) => void;
+  /** 导入 md 文档并关联到此节点（M4-3） */
+  onImportDocs: (nodeId: string) => void;
+  /** 从此节点解除某文档关联并删除文件 */
+  onRemoveDoc: (nodeId: string, path: string) => void;
 }) {
   const [confirmDel, setConfirmDel] = useState(false);
+  const [importing, setImporting] = useState(false);
   useEffect(() => setConfirmDel(false), [node.id]);
+
+  const doImport = async () => {
+    setImporting(true);
+    try {
+      await onImportDocs(node.id);
+    } finally {
+      setImporting(false);
+    }
+  };
 
   const docCount = node.docs.length;
   const updated = new Date(node.updated_at);
@@ -139,18 +158,43 @@ export function NodePanel({
 
         <label className="np-label">
           关联文档 {docCount > 0 && <span className="np-count">{docCount}</span>}
+          <button
+            type="button"
+            className="np-doc-add"
+            title="导入 Markdown 文档"
+            disabled={importing}
+            onClick={doImport}
+          >
+            {importing ? '导入中…' : '＋ 导入'}
+          </button>
         </label>
         {docCount === 0 ? (
-          <p className="np-empty">暂无关联文档。（M4 将支持从 GPT 导出的 .md 拖入并打开阅读）</p>
+          <p className="np-empty">暂无关联文档。点「＋ 导入」选择 GPT 导出的 .md，或拖到节点上。</p>
         ) : (
           <ul className="np-docs">
             {node.docs.map((d) => (
-              <li key={d.path} className="np-doc" title={d.path}>
-                <svg width="14" height="14" viewBox="0 0 16 16" aria-hidden="true">
-                  <path d="M4 2h5l3 3v9H4z" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinejoin="round" />
-                </svg>
-                <span className="np-doc-title">{d.title || d.path}</span>
-                {typeof d.bytes === 'number' && <span className="np-doc-bytes">{(d.bytes / 1024).toFixed(1)} KB</span>}
+              <li key={d.path} className="np-doc" title={`${d.path}\n点击打开阅读`}>
+                <button
+                  type="button"
+                  className="np-doc-open"
+                  onClick={() => onOpenDoc(node.id, d.path, d.title || d.path)}
+                >
+                  <svg width="14" height="14" viewBox="0 0 16 16" aria-hidden="true">
+                    <path d="M4 2h5l3 3v9H4z" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinejoin="round" />
+                  </svg>
+                  <span className="np-doc-title">{d.title || d.path}</span>
+                  {typeof d.bytes === 'number' && <span className="np-doc-bytes">{(d.bytes / 1024).toFixed(1)} KB</span>}
+                </button>
+                <button
+                  type="button"
+                  className="np-doc-remove"
+                  title="移除此文档"
+                  onClick={() => onRemoveDoc(node.id, d.path)}
+                >
+                  <svg width="13" height="13" viewBox="0 0 16 16" aria-hidden="true">
+                    <path d="M3 3l10 10M13 3L3 13" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+                  </svg>
+                </button>
               </li>
             ))}
           </ul>
@@ -174,3 +218,4 @@ export function NodePanel({
     </aside>
   );
 }
+

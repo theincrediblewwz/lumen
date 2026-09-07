@@ -20,8 +20,12 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
 dirs = "5"
+# 文档编码探测：BOM / UTF-8 / GB18030 回退（M4-7）
+encoding_rs = "0.8"
+chardetng = "0.1"
 
 # 原生窗口材质（液态玻璃 / 毛玻璃）。apply_liquid_glass(macOS 26+) 目前仅在
 # dev 分支，故用 git 依赖；稳定后可切回 crates.io 版本。
 [target."cfg(target_os = \"macos\")".dependencies]
 window-vibrancy = { git = "https://github.com/tauri-apps/window-vibrancy", branch = "dev" }
+
