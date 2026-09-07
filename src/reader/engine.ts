@@ -224,8 +224,10 @@ export function looksLikeMath(s: string): boolean {
   if (/^[A-Za-z]+$/.test(t)) return false;
   // 1) 含 LaTeX 反斜杠命令：\varepsilon \sim \frac \alpha 等
   if (/\\[a-zA-Z]+/.test(t)) return true;
-  // 2) 含上标/下标：x^2, a_{ij}, |x|^{1/3}, 10^{-3}
-  if (/[\^_]/.test(t) && /[A-Za-z0-9|)\]}]/.test(t)) return true;
+  // 2) 真正的上标/下标：必须「有底数 + ^/_ + 花括号或单个字母数字（其后不接字母）」，
+  //    这样能命中 x^2 / a_{ij} / |x|^{1/3} / 10^{-3}，但排除 _TS_（前导下划线强调）、
+  //    snake_case_name（下划线连接的单词）这类非公式。
+  if (/[A-Za-z0-9)\]}|]\s*[\^_]\s*(\{|[A-Za-z0-9](?![A-Za-z]))/.test(t)) return true;
   // 3) 绝对值/范数：|x|, \|v\|, |a-b|（成对竖线且内部有内容）
   if (/\|[^|]+\|/.test(t)) return true;
   // 4) 比较/关系链：a<b, x>=0, m != n, p \le q（含关系符且两侧有变量/数字）
@@ -412,6 +414,7 @@ export function renderMarkdown(src: string, engine?: MD, opts?: RenderOptions): 
   const html = md.renderer.render(tokens, md.options, env);
   return { html, toc };
 }
+
 
 
 

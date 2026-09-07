@@ -204,6 +204,20 @@ describe('looksLikeMath 扩展模式', () => {
     expect(looksLikeMath('well-known')).toBe(false);
     expect(looksLikeMath('ChatGPT')).toBe(false);
   });
+  it('下划线强调/snake_case 不当成公式（下标误判修复）', () => {
+    expect(looksLikeMath('_TS_')).toBe(false);
+    expect(looksLikeMath('斜向_TS_模态')).toBe(false);
+    expect(looksLikeMath('snake_case_name')).toBe(false);
+    expect(looksLikeMath('hello_world')).toBe(false);
+  });
+  it('真正的下标仍识别', () => {
+    expect(looksLikeMath('x_1')).toBe(true);
+    expect(looksLikeMath('a_{ij}')).toBe(true);
+    expect(looksLikeMath('10^{-3}')).toBe(true);
+  });
+  it('guessMath 不再把 _TS_ 包成公式', () => {
+    expect(preprocessGuessMath('斜向_TS_模态很重要')).not.toContain('$');
+  });
 });
 
 describe('renderMarkdown - guessMath 选项', () => {
@@ -216,5 +230,6 @@ describe('renderMarkdown - guessMath 选项', () => {
     expect(html).not.toContain('math-inline');
   });
 });
+
 
 

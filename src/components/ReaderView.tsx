@@ -10,15 +10,20 @@ import {
   FONT_MIN,
   FONT_MAX,
   FONT_STEP,
+  PAGE_MIN,
+  PAGE_MAX,
+  PAGE_STEP,
+  clampPage,
   type ReaderPrefs,
   type ReaderMode,
 } from '../reader/readerPrefs';
 
-// 双页排版几何
-const GAP = 40; // 左右两页之间的中缝
-const PAGE_PAD_X = 40; // 每页左右内边距
-const PAGE_PAD_Y = 40; // 每页上下内边距
-const SHEET_GAP = 24; // 相邻纸行之间的竖直间距
+// 双页排版几何（默认紧凑、铺满）
+const GAP = 16; // 左右两页之间的中缝
+const PAGE_PAD_X = 32; // 每页左右内边距
+const PAGE_PAD_Y = 30; // 每页上下内边距
+const SHEET_GAP = 12; // 相邻纸行之间的竖直间距
+const OUTER_PAD = 16; // 纸行两侧留白（.reader-pages 的左右 padding）
 
 /**
  * 阅读器视图（M4 + 阅读体验增强）。既用于应用内浮层，也用于独立窗口。
@@ -82,14 +87,20 @@ export function ReaderView({
     const pages = pagesRef.current;
     if (!body || !content || !pages) return;
 
-    const bodyW = body.clientWidth;
-    // 两页并排：每页宽 = (可用宽 - 中缝 - 四个内边距) / 2
-    const colW = Math.max(240, Math.floor((bodyW - GAP - 4 * PAGE_PAD_X) / 2));
+    // 跨页目标总宽 = 可用宽 × pageScale（默认 100% 铺满）
+    const scale = (prefs.pageScale ?? 100) / 100;
+    const avail = body.clientWidth - 2 * OUTER_PAD;
+    const spreadW = Math.max(360, Math.floor(avail * scale));
+    // 每页内容宽 colW = (跨页宽 - 中缝 - 两页各自左右内边距) / 2
+    const colW = Math.max(200, Math.floor((spreadW - GAP - 4 * PAGE_PAD_X) / 2));
     const colH = Math.max(320, body.clientHeight - 2 * PAGE_PAD_Y - SHEET_GAP);
+    // 供 CSS 用：跨页宽度（保证显示宽度==测量宽度，放大字号也不溢出框）
+    pages.style.setProperty('--spread-w', `${spreadW}px`);
+    pages.style.setProperty('--col-w', `${colW}px`);
 
     const blocks = Array.from(content.children) as HTMLElement[];
 
-    // 离屏测量宿主：一列列真实布局，量 scrollHeight
+    // 离屏测量宿主：一列列真实布局，量 scrollHeight（宽度严格等于 colW）
     const host = document.createElement('div');
     host.style.cssText = `position:absolute;visibility:hidden;left:-9999px;top:0;width:${colW}px;`;
     host.className = 'markdown-body';
@@ -118,46 +129,37 @@ export function ReaderView({
       }
     }
 
+    const pageW = colW + 2 * PAGE_PAD_X; // 单页外框宽 = 内容宽 + 内边距
+    const mkPageBox = (col: HTMLElement | null, n: number, placeholder = false) => {
+      const box = document.createElement('div');
+      box.className = 'reader-page' + (placeholder ? ' is-placeholder' : '');
+      box.style.width = `${pageW}px`;
+      box.style.minHeight = `${colH + 2 * PAGE_PAD_Y}px`;
+      if (!placeholder) {
+        box.style.padding = `${PAGE_PAD_Y}px ${PAGE_PAD_X}px`;
+        if (col) {
+          col.style.minHeight = '';
+          col.style.width = `${colW}px`;
+          box.appendChild(col);
+        }
+        const pn = document.createElement('span');
+        pn.className = 'reader-page-pn';
+        pn.textContent = String(n);
+        box.appendChild(pn);
+      }
+      return box;
+    };
+
     // 组装纸行（每两页一行：左页 + 中缝 + 右页）
     pages.innerHTML = '';
     for (let i = 0; i < pageCols.length; i += 2) {
       const sheet = document.createElement('div');
       sheet.className = 'reader-sheet';
-      sheet.style.columnGap = `${GAP}px`;
-
-      const leftPage = document.createElement('div');
-      leftPage.className = 'reader-page';
-      leftPage.style.padding = `${PAGE_PAD_Y}px ${PAGE_PAD_X}px`;
-      leftPage.style.minHeight = `${colH}px`;
-      const leftCol = pageCols[i];
-      leftCol.style.minHeight = '';
-      leftPage.appendChild(leftCol);
-      const pnL = document.createElement('span');
-      pnL.className = 'reader-page-pn';
-      pnL.textContent = String(i + 1);
-      leftPage.appendChild(pnL);
-      sheet.appendChild(leftPage);
-
-      if (pageCols[i + 1]) {
-        const rightPage = document.createElement('div');
-        rightPage.className = 'reader-page';
-        rightPage.style.padding = `${PAGE_PAD_Y}px ${PAGE_PAD_X}px`;
-        rightPage.style.minHeight = `${colH}px`;
-        const rightCol = pageCols[i + 1];
-        rightCol.style.minHeight = '';
-        rightPage.appendChild(rightCol);
-        const pnR = document.createElement('span');
-        pnR.className = 'reader-page-pn';
-        pnR.textContent = String(i + 2);
-        rightPage.appendChild(pnR);
-        sheet.appendChild(rightPage);
-      } else {
-        // 落单的最后一页：右侧放个占位空页，保持左右对齐
-        const ph = document.createElement('div');
-        ph.className = 'reader-page is-placeholder';
-        ph.style.minHeight = `${colH}px`;
-        sheet.appendChild(ph);
-      }
+      sheet.style.gap = `${GAP}px`;
+      sheet.style.width = `${spreadW}px`;
+      sheet.appendChild(mkPageBox(pageCols[i], i + 1));
+      if (pageCols[i + 1]) sheet.appendChild(mkPageBox(pageCols[i + 1], i + 2));
+      else sheet.appendChild(mkPageBox(null, i + 2, true));
       pages.appendChild(sheet);
     }
     host.remove();
@@ -165,7 +167,7 @@ export function ReaderView({
     const firstSheet = pages.querySelector<HTMLElement>('.reader-sheet');
     pageStepRef.current = firstSheet ? firstSheet.offsetHeight + SHEET_GAP : body.clientHeight;
     setPageInfo({ pages: pageCols.length, current: 1 });
-  }, [prefs.fontScale]);
+  }, [prefs.fontScale, prefs.pageScale]);
 
   // 把双页纸行里的块搬回测量源（重排前）
   const collectBack = useCallback(() => {
@@ -231,7 +233,7 @@ export function ReaderView({
     };
   }, [double, paginate, collectBack]);
 
-  // 字号变化（双页）重新分页
+  // 字号 / 页宽变化（双页）重新分页
   useEffect(() => {
     if (!double) return;
     const pages = pagesRef.current;
@@ -239,7 +241,7 @@ export function ReaderView({
     collectBack();
     paginate();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [prefs.fontScale]);
+  }, [prefs.fontScale, prefs.pageScale]);
 
   // 全屏状态跟随（全屏后双页需重排）
   useEffect(() => {
@@ -287,6 +289,9 @@ export function ReaderView({
 
   const changeFont = (delta: number) =>
     setPrefs((p) => ({ ...p, fontScale: clampFont(p.fontScale + delta) }));
+
+  const changePage = (delta: number) =>
+    setPrefs((p) => ({ ...p, pageScale: clampPage((p.pageScale ?? 100) + delta) }));
 
   const setMode = (mode: ReaderMode) => setPrefs((p) => ({ ...p, mode }));
   const toggleToc = () => setPrefs((p) => ({ ...p, tocCollapsed: !p.tocCollapsed }));
@@ -391,6 +396,29 @@ export function ReaderView({
               A+
             </button>
           </div>
+          {double && (
+            <div className="reader-seg" title="页面大小">
+              <button
+                type="button"
+                className="reader-btn"
+                title="页面缩小"
+                disabled={(prefs.pageScale ?? 100) <= PAGE_MIN}
+                onClick={() => changePage(-PAGE_STEP)}
+              >
+                –
+              </button>
+              <span className="reader-font-val">{prefs.pageScale ?? 100}%</span>
+              <button
+                type="button"
+                className="reader-btn"
+                title="页面放大"
+                disabled={(prefs.pageScale ?? 100) >= PAGE_MAX}
+                onClick={() => changePage(PAGE_STEP)}
+              >
+                ＋
+              </button>
+            </div>
+          )}
           <button
             type="button"
             className="reader-btn reader-icon"
@@ -499,3 +527,4 @@ function cssEscape(s: string): string {
   if (typeof CSS !== 'undefined' && typeof CSS.escape === 'function') return CSS.escape(s);
   return s.replace(/[^a-zA-Z0-9_\u00a0-\uffff-]/g, (c) => `\\${c}`);
 }
+

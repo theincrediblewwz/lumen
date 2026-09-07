@@ -14,6 +14,8 @@ export interface ReaderPrefs {
   mode: ReaderMode;
   /** 目录是否收起 */
   tocCollapsed?: boolean;
+  /** 双页时整个跨页占可用宽度的百分比（60–100，100=铺满） */
+  pageScale?: number;
 }
 
 const PREFS_KEY = 'lumen.reader.prefs.v3';
@@ -23,7 +25,15 @@ export const FONT_MIN = 60;
 export const FONT_MAX = 150;
 export const FONT_STEP = 10;
 
-const DEFAULT_PREFS: ReaderPrefs = { fontScale: 100, mode: 'single', tocCollapsed: false };
+export const PAGE_MIN = 60;
+export const PAGE_MAX = 100;
+export const PAGE_STEP = 10;
+
+export function clampPage(v: number): number {
+  return Math.max(PAGE_MIN, Math.min(PAGE_MAX, Math.round(v / PAGE_STEP) * PAGE_STEP));
+}
+
+const DEFAULT_PREFS: ReaderPrefs = { fontScale: 100, mode: 'single', tocCollapsed: false, pageScale: 100 };
 
 export function loadPrefs(): ReaderPrefs {
   try {
@@ -36,6 +46,7 @@ export function loadPrefs(): ReaderPrefs {
       fontScale: clampFont(typeof p.fontScale === 'number' ? p.fontScale : 100),
       mode,
       tocCollapsed: !!p.tocCollapsed,
+      pageScale: clampPage(typeof p.pageScale === 'number' ? p.pageScale : 100),
     };
   } catch {
     return { ...DEFAULT_PREFS };
