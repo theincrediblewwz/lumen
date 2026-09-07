@@ -126,6 +126,9 @@ export const NodeCard = memo(function NodeCard({
         left: node.x,
         top: node.y,
         width: node.w,
+        // 节点自定义颜色：既作左侧色条，又作为该卡片的强调色（选中框/锚点/光晕）。
+        // 未设色时回退到主题强调色 var(--accent)。
+        ['--node-accent' as string]: node.color || 'var(--accent)',
         borderLeftColor: node.color || undefined,
       }}
       onPointerDown={(e) => onPointerDown(e, node.id)}
@@ -203,5 +206,6 @@ export const NodeCard = memo(function NodeCard({
     </div>
   );
 });
+
 
 

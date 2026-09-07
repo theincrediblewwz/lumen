@@ -435,7 +435,7 @@ html.glass-on body {
   padding: 12px 14px;
   background: var(--bg-node);
   border: var(--border-node) solid var(--border-color);
-  border-left: 3px solid var(--border-strong);
+  border-left: 6px solid var(--node-accent, var(--border-strong));
   border-radius: var(--radius-node);
   box-shadow: var(--shadow-node);
   cursor: grab;
@@ -456,15 +456,16 @@ html.glass-on body {
   inset: -1px;
   border-radius: inherit;
   pointer-events: none;
-  box-shadow: 0 0 var(--glow-blur, 0px) var(--glow-spread, 0px) var(--accent);
+  box-shadow: 0 0 var(--glow-blur, 0px) var(--glow-spread, 0px) var(--node-accent, var(--accent));
   opacity: var(--glow-alpha, 0);
   transition: opacity var(--dur-normal) var(--ease-standard);
 }
 
 .node-card.is-selected {
-  border-color: var(--accent);
-  border-left-color: var(--accent);
-  box-shadow: var(--shadow-node-hover), 0 0 0 2px var(--accent-soft);
+  border-color: var(--node-accent, var(--accent));
+  border-left-color: var(--node-accent, var(--accent));
+  box-shadow: var(--shadow-node-hover),
+    0 0 0 2px color-mix(in srgb, var(--node-accent, var(--accent)) 22%, transparent);
 }
 
 .node-card.is-editing {
@@ -1102,7 +1103,7 @@ html.glass-on .canvas-toolbar {
 
 /* 玻璃开启时用 outline 表达选中，避免被 .glass-surface 的 border/box-shadow 覆盖 */
 .node-card.is-selected {
-  outline: 2px solid var(--accent);
+  outline: 2px solid var(--node-accent, var(--accent));
   outline-offset: 1px;
 }
 html.glass-on .node-card.is-selected {
@@ -1394,7 +1395,7 @@ html.native-glass .node-card {
   height: 14px;
   transform: translate(-50%, -50%);
   border-radius: 50%;
-  background: var(--accent);
+  background: var(--node-accent, var(--accent));
   border: 2px solid var(--bg-node);
   box-shadow: 0 1px 4px rgba(0, 0, 0, 0.22);
   cursor: crosshair;
@@ -1421,7 +1422,8 @@ html.native-glass .node-card {
 
 .node-anchor:hover {
   transform: translate(-50%, -50%) scale(1.4);
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.28), 0 0 0 4px var(--accent-soft);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.28),
+    0 0 0 4px color-mix(in srgb, var(--node-accent, var(--accent)) 22%, transparent);
 }
 
 /* 拖拽落点悬停高亮目标节点 */
@@ -1664,3 +1666,4 @@ html.native-glass .node-card {
 }
 .tt-empty { margin-top: 5px; font-size: 12px; color: var(--text-secondary); font-style: italic; }
 .tt-docs { margin-top: 6px; font-size: 11.5px; color: var(--accent); }
+

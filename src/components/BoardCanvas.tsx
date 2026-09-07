@@ -388,12 +388,11 @@ export function BoardCanvas({
     e.stopPropagation();
     setSelected(id);
     setSelectedEdge(null);
+    setPanelId(id); // 打开内容面板（编辑在面板里完成，右键不再单列「编辑」）
     setMenu({
       x: e.clientX,
       y: e.clientY,
       items: [
-        { type: 'item', label: '编辑', onClick: () => startEdit(id) },
-        { type: 'separator' },
         { type: 'item', label: '删除节点', danger: true, onClick: () => removeNode(id) },
       ],
     });
@@ -785,6 +784,7 @@ export function BoardCanvas({
     </div>
   );
 }
+
 
 
 

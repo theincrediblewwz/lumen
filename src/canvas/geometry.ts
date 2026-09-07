@@ -101,20 +101,25 @@ export function edgeGeometry(a: Box, b: Box, style: EdgeStyle = 'curved'): EdgeG
     return { d, start, end, mid: waypoints[1] === undefined ? start : waypoints[Math.floor(waypoints.length / 2)] };
   }
 
-  // curved（默认）：控制点沿弦 1/3、2/3 处并朝垂直方向弓出一段，
-  // 保证无论节点如何摆放都有明显且一致的弧度（避免同高并排时退化成直线）。
+  // curved（默认）：一条干净、对称的单拱弧线。
+  // 做法：取弦中点，朝弦的垂直方向抬起一个「拱高」得到拱顶，用一条二次贝塞尔
+  // 穿过该拱顶，再精确升阶成三次贝塞尔输出（保持 SVG 'C' 命令）。
+  // 相比旧的「1/3、2/3 各偏移」画法，中段不再是平顶大肚，弧线更自然；且始终
+  // 有垂直分量，任意摆放都不会退化成直线。
   const dx = end.x - start.x;
   const dy = end.y - start.y;
   const dist = len(dx, dy);
-  // 弦方向单位向量与其垂直向量
-  const ux = dx / dist;
-  const uy = dy / dist;
-  const px = -uy;
-  const py = ux;
-  // 弓高：随距离自适应，短线也有可见弧、长线不过分夸张
-  const bow = Math.max(18, Math.min(dist * 0.22, 90));
-  const c1: Pt = { x: start.x + ux * (dist / 3) + px * bow, y: start.y + uy * (dist / 3) + py * bow };
-  const c2: Pt = { x: start.x + ux * (dist * 2 / 3) + px * bow, y: start.y + uy * (dist * 2 / 3) + py * bow };
+  // 弦的垂直单位向量
+  const px = -dy / dist;
+  const py = dx / dist;
+  // 拱高：随距离自适应，短线含蓄、长线不过分（比旧算法更收敛）
+  const bow = Math.max(14, Math.min(dist * 0.14, 60));
+  const chordMid = { x: (start.x + end.x) / 2, y: (start.y + end.y) / 2 };
+  // 二次贝塞尔控制点：使曲线在 t=0.5 恰好抬起 bow（B(0.5)=chordMid+perp*bow）
+  const q: Pt = { x: chordMid.x + px * bow * 2, y: chordMid.y + py * bow * 2 };
+  // 二次 → 三次 升阶（等价曲线）：C1 = P0 + 2/3(Q-P0)，C2 = P2 + 2/3(Q-P2)
+  const c1: Pt = { x: start.x + (2 / 3) * (q.x - start.x), y: start.y + (2 / 3) * (q.y - start.y) };
+  const c2: Pt = { x: end.x + (2 / 3) * (q.x - end.x), y: end.y + (2 / 3) * (q.y - end.y) };
 
   const mid = bezierMid(start, c1, c2, end);
   const d = `M ${start.x} ${start.y} C ${c1.x} ${c1.y} ${c2.x} ${c2.y} ${end.x} ${end.y}`;
@@ -130,3 +135,4 @@ export function straightPath(from: Pt, to: Pt): string {
 export function boxContains(b: Box, p: Pt): boolean {
   return p.x >= b.x && p.x <= b.x + b.w && p.y >= b.y && p.y <= b.y + b.h;
 }
+

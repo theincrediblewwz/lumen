@@ -712,3 +712,5 @@ lumen/
 | ADR-023 | 连线样式做成可切换设置（曲线/直线/折线），几何在同一 edgeGeometry 里按 style 分支 | 用户希望连线不止一种形状。端点吸附(borderPoint)对三种样式一致，仅路径生成不同：curved=三次贝塞尔(控制柄沿离开节点外法向)、straight=两吸附点直线、stepped=正交折线(按主导轴 H-V-H/V-H-V，中点取拐点放标签)。样式存 Settings.edgeStyle 持久化、经 App 传入 BoardCanvas 并入 laidEdges 的 useMemo 依赖，切换即时重绘；纯函数分支可单测（geometry.test +5） |
 
 | ADR-024 | 节点交互升级为「悬停 Tooltip + 选中停靠 NodePanel」，取代点击浮动气泡 | 点击浮动气泡(NodeBubble)会遮挡画布且定位漂移。改为：悬停 400ms 出只读简介 Tooltip(轻量、pointer-events:none)；点击节点在画布右侧停靠 NodePanel(常驻、可滚动)承载 查看/编辑标题与完整问题、颜色标记(node.color→卡片左边框色条)、关联文档列表(M4 接入导入/打开)、二次确认删除。为防在面板文本域打字时触发画布级快捷键(如 Backspace 删节点)，window keydown 增加"目标为 input/textarea/contenteditable 则跳过"的守卫。NodeBubble 组件废弃删除 |
+
+| ADR-025 | 节点颜色标记升级为「卡片强调色」；右键菜单精简；曲线改单拱弧 | ① 颜色不再只是左边色条：NodeCard 注入 CSS 变量 --node-accent（=node.color，未设回退 var(--accent)），选中边框/outline/热力光晕/连线锚点均引用之，软环用 color-mix 从该色派生；左侧色条 3→6px 更醒目。② NodePanel 已完整覆盖节点编辑，故删除节点右键菜单的「编辑」项，节点右键改为直接打开面板且仅保留「删除节点」。③ curved 连线由「1/3、2/3 双控制点等距偏移」（中段平顶大肚、不好看）改为「弦中点朝垂直方向抬起拱高→二次贝塞尔过拱顶→精确升阶三次贝塞尔」的单拱对称弧，拱高收敛为 clamp(dist*0.14,14,60)，仍输出 SVG 'C' |
