@@ -3,7 +3,7 @@
 > **开工前先读本文件；每完成一件事就更新本文件。**
 > 本文件只记录「进度」。计划与任务清单见 [PLAN.md](./PLAN.md)，设计与决策见 [DESIGN.md](./DESIGN.md)。
 
-**最后更新**：2026-09-07 17:32 (Asia/Shanghai)
+**最后更新**：2026-09-08 (Asia/Shanghai)
 
 ---
 
@@ -108,9 +108,13 @@
 
 ## 五、下一步（接下来我做的）
 
-1. **等用户验收画布 v1** 手感与持久化
-3. **M5** AI 辅助（问题拆解 / 回答渲染复用 M4 管线）
-4. 节点配色/连线标签的更多样式微调（按需）
+**已进入 M5 · AI 对话**（决策：OpenAI 兼容优先 / PDF 调系统程序）。分解：
+1. ✅ M5 地基：Provider 纯逻辑层（OpenAI 兼容请求体 + SSE 流解析，单测）+ AI 设置持久化 + Rust `open_external`（O-4）
+2. M5-1 悬浮 FAB + 独立 AI 对话窗口（绑定当前白板）——GUI，待实机
+3. M5-2 网络传输走 Rust 命令 `ai_chat_stream`（reqwest 流式 + 事件回传，守"前端零网络"边界）+ 可中断
+4. M5-3 白板工具：read_board_outline / list_nodes / read_node_doc / search_board
+5. M5-4 提示词 + token 预算 + 分段 + 历史压缩
+6. M5-5 回答渲染复用 M4 管线；M5-6 引用回链 [[node:xx]]；M5-7 设置(baseURL/模型/Key 加密)+隐私开关
 
 
 ## 六、阻塞项
@@ -122,8 +126,8 @@
 | ID | 问题 | 何时需要定 |
 | --- | --- | --- |
 | ~~O-5~~ | ~~结构自由度~~ | ✅ **已定：图存树显**——允许一个节点有多个父节点（交叉引用），数据结构用图，默认呈现为树 |
-| O-3 | AI 供应商与鉴权方式 | M5 前 |
-| O-4 | 「点击 PDF」的确切语义 | M4 前 |
+| ~~O-3~~ | ~~AI 供应商与鉴权方式~~ | ✅ **已定：OpenAI 兼容优先**（baseURL + API Key，可接官方或任意兼容网关）；Provider 层预留 Anthropic/Ollama 扩展位 |
+| ~~O-4~~ | ~~「点击 PDF」的确切语义~~ | ✅ **已定：调系统默认程序打开**（不在应用内嵌 pdf.js；经 Rust `open_external` 命令） |
 | O-6 | 是否支持直接导入 ChatGPT 导出 JSON | M6 后 |
 
 ## 八、踩过的坑（避免重犯）
@@ -140,6 +144,7 @@
 | MCP `apply_patch` 对 JSON 上下文不稳 | 给 `package.json` 打小补丁时报「patched」却未生效（同尺寸）；改用 `write_file` 全量覆盖更可靠 |
 | **在 Windows 上跑出 GUI 不代表平台错了** | Tauri 用系统 WebView（Win=WebView2 / mac=WKWebView），同一套 React 代码在开发机（本机是 Windows，故产物为 `lumen.exe`）即可调试；「主目标 macOS」指最终发布用 mac 构建。macOS 的 `.app`/`.dmg` 必须在 mac 或 CI mac runner 上 `tauri build` |
 | **自定义标题栏控件必须退出拖拽区** | 整条 titlebar 设 `-webkit-app-region: drag` 后，内部按钮要加 `no-drag`，否则点击被窗口拖拽吞掉 |
+
 
 
 

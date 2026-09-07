@@ -143,3 +143,46 @@ pub fn doc_read(project_id: String, board_id: String, path: String) -> Result<St
 pub fn doc_delete(project_id: String, board_id: String, path: String) -> Result<(), String> {
     storage::delete_doc(&root()?, &project_id, &board_id, &path)
 }
+
+
+// ───────────────── 用系统默认程序打开文档（O-4，M5/M6） ─────────────────
+
+/// 用操作系统默认程序打开白板 docs/ 下的某个文件（如 PDF）。
+/// 路径先经 storage 校验，避免任意路径穿越；不依赖额外插件，用系统命令拉起。
+#[tauri::command]
+pub fn open_doc_external(
+    project_id: String,
+    board_id: String,
+    path: String,
+) -> Result<(), String> {
+    let p = storage::resolve_doc_path(&root()?, &project_id, &board_id, &path)?;
+    open_path_os(&p)
+}
+
+#[cfg(target_os = "windows")]
+fn open_path_os(p: &std::path::Path) -> Result<(), String> {
+    // 用 explorer 打开，避免 cmd start 的引号/转义问题
+    std::process::Command::new("explorer")
+        .arg(p)
+        .spawn()
+        .map(|_| ())
+        .map_err(|e| format!("打开失败: {e}"))
+}
+
+#[cfg(target_os = "macos")]
+fn open_path_os(p: &std::path::Path) -> Result<(), String> {
+    std::process::Command::new("open")
+        .arg(p)
+        .spawn()
+        .map(|_| ())
+        .map_err(|e| format!("打开失败: {e}"))
+}
+
+#[cfg(all(unix, not(target_os = "macos")))]
+fn open_path_os(p: &std::path::Path) -> Result<(), String> {
+    std::process::Command::new("xdg-open")
+        .arg(p)
+        .spawn()
+        .map(|_| ())
+        .map_err(|e| format!("打开失败: {e}"))
+}

@@ -58,8 +58,10 @@ pub fn run() {
             commands::doc_write,
             commands::doc_read,
             commands::doc_delete,
+            commands::open_doc_external,
         ])
         .run(tauri::generate_context!())
         .expect("failed to launch Lumen");
 }
+
 

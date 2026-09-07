@@ -588,6 +588,24 @@ pub fn read_doc(
     Ok(decode_text(&raw))
 }
 
+/// 解析并校验白板 docs/ 下某文档的绝对路径（供"用系统程序打开"等使用）。
+pub fn resolve_doc_path(
+    root: &Path,
+    project_id: &str,
+    board_id: &str,
+    rel_path: &str,
+) -> Result<PathBuf, String> {
+    let pid = safe_id(project_id)?;
+    let bid = safe_id(board_id)?;
+    let name = rel_path.strip_prefix("docs/").unwrap_or(rel_path);
+    let name = safe_doc_name(name)?;
+    let p = docs_dir(root, pid, bid).join(&name);
+    if !p.exists() {
+        return Err(format!("文件不存在：{}", p.display()));
+    }
+    Ok(p)
+}
+
 /// 删除白板 docs/ 下某文档。
 pub fn delete_doc(
     root: &Path,
