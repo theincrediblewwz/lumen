@@ -518,35 +518,59 @@ export function BoardCanvas({
     ['--glow-alpha' as string]: `${0.12 + 0.6 * intensity}`,
   } as React.CSSProperties;
 
-  /* ── 连线几何（世界坐标；随 canvas-world 一起 transform） ── */
+  /* ── 连线几何 ──
+     连线层改为「覆盖整块画布的全尺寸 SVG 覆盖层」，用屏幕坐标绘制。
+     原因：SVG 画在 0×0 的世界层里，Chromium/WebView2 常直接不渲染。
+     屏幕坐标 = 世界坐标经 engine 变换；故几何需随视口平移/缩放重算，
+     用 vpSig 把视口并入 useMemo 依赖。 */
   const nodeById = useMemo(() => {
     const m: Record<string, BoardNode> = {};
     for (const n of nodes) m[n.id] = n;
     return m;
   }, [nodes]);
 
+  /** 节点的屏幕坐标包围盒（相对画布容器左上角） */
+  const screenBoxOf = useCallback(
+    (n: BoardNode): Box => {
+      const s = sizesRef.current[n.id];
+      const w = s?.w ?? n.w ?? DEFAULT_NODE_W;
+      const h = s?.h ?? FALLBACK_NODE_H;
+      const tl = engine.toScreen({ x: n.x, y: n.y });
+      const z = engine.viewport.zoom;
+      return { x: tl.x, y: tl.y, w: w * z, h: h * z };
+    },
+    [engine],
+  );
+
+  const vp = engine.viewport;
+  const vpSig = `${vp.x},${vp.y},${vp.zoom}`;
+
   const laidEdges = useMemo(() => {
-    void sizesVer; // 尺寸变化时重算
+    void sizesVer;
+    void vpSig;
     return edges
       .map((e) => {
         const a = nodeById[e.from];
         const b = nodeById[e.to];
         if (!a || !b) return null;
-        const g = edgeGeometry(boxOf(a), boxOf(b));
+        const g = edgeGeometry(screenBoxOf(a), screenBoxOf(b));
         return { edge: e, geo: g };
       })
       .filter((x): x is { edge: BoardEdge; geo: ReturnType<typeof edgeGeometry> } => x !== null);
-  }, [edges, nodeById, boxOf, sizesVer]);
+  }, [edges, nodeById, screenBoxOf, sizesVer, vpSig]);
 
-  // 连线拖拽预览路径
+  // 连线拖拽预览路径（屏幕坐标）
   const connectPreview = useMemo(() => {
+    void vpSig;
     if (!connect) return null;
     const a = nodeById[connect.fromId];
     if (!a) return null;
-    const from = boxOf(a);
+    const from = screenBoxOf(a);
     const fromCenter = { x: from.x + from.w / 2, y: from.y + from.h / 2 };
-    return straightPath(fromCenter, connect.to);
-  }, [connect, nodeById, boxOf]);
+    const toScreen = engine.toScreen(connect.to);
+    return straightPath(fromCenter, toScreen);
+  }, [connect, nodeById, screenBoxOf, engine, vpSig]);
+
 
   return (
     <div
@@ -574,63 +598,63 @@ export function BoardCanvas({
         </button>
       </div>
 
+      {/* 连线层：覆盖整块画布的全尺寸 SVG，用屏幕坐标绘制（避免 0×0 世界层不渲染）。
+          置于节点层之下（DOM 顺序在前 + CSS 定位），指针默认穿透、仅命中区可点。 */}
+      <svg className="edge-layer">
+        <defs>
+          <marker id="lm-arrow" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M0 0L10 5L0 10z" fill="var(--edge-color)" />
+          </marker>
+          <marker id="lm-arrow-sel" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M0 0L10 5L0 10z" fill="var(--accent)" />
+          </marker>
+        </defs>
+
+        {laidEdges.map(({ edge, geo }) => {
+          const isSel = selectedEdge === edge.id;
+          return (
+            <g key={edge.id} className={`edge${isSel ? ' is-selected' : ''}`}>
+              {/* 加宽透明命中区 */}
+              <path
+                className="edge-hit"
+                d={geo.d}
+                fill="none"
+                stroke="transparent"
+                strokeWidth={18}
+                onClick={(e) => onEdgeClick(e, edge.id)}
+                onDoubleClick={(e) => {
+                  e.stopPropagation();
+                  startEdgeLabel(edge.id);
+                }}
+                onContextMenu={(e) => onEdgeContextMenu(e, edge.id)}
+                onPointerDown={(e) => e.stopPropagation()}
+              />
+              {/* 可见曲线 */}
+              <path
+                className="edge-line"
+                d={geo.d}
+                fill="none"
+                markerEnd={edge.directed ? (isSel ? 'url(#lm-arrow-sel)' : 'url(#lm-arrow)') : undefined}
+              />
+              {edge.label && !editingEdge && (
+                <g transform={`translate(${geo.mid.x} ${geo.mid.y})`}>
+                  <text className="edge-label" textAnchor="middle" dominantBaseline="central" onDoubleClick={(e) => { e.stopPropagation(); startEdgeLabel(edge.id); }} onPointerDown={(e) => e.stopPropagation()}>
+                    {edge.label}
+                  </text>
+                </g>
+              )}
+            </g>
+          );
+        })}
+
+        {/* 拖拽预览 */}
+        {connectPreview && (
+          <path className="edge-preview" d={connectPreview} fill="none" />
+        )}
+      </svg>
+
       {/* 世界层：只改 transform（DESIGN §5.4） */}
       <div className="canvas-world" style={{ transform: engine.transform, transformOrigin: '0 0', ...glowVars }}>
-        {/* 连线层（SVG，世界坐标，位于节点下方） */}
-        <svg className="edge-layer" style={{ overflow: 'visible' }} width="0" height="0">
-          <defs>
-            <marker id="lm-arrow" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
-              <path d="M0 0L10 5L0 10z" fill="var(--edge-color)" />
-            </marker>
-            <marker id="lm-arrow-sel" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
-              <path d="M0 0L10 5L0 10z" fill="var(--accent)" />
-            </marker>
-          </defs>
-
-          {laidEdges.map(({ edge, geo }) => {
-            const isSel = selectedEdge === edge.id;
-            return (
-              <g key={edge.id} className={`edge${isSel ? ' is-selected' : ''}`}>
-                {/* 加宽透明命中区 */}
-                <path
-                  className="edge-hit"
-                  d={geo.d}
-                  fill="none"
-                  stroke="transparent"
-                  strokeWidth={18}
-                  onClick={(e) => onEdgeClick(e, edge.id)}
-                  onDoubleClick={(e) => {
-                    e.stopPropagation();
-                    startEdgeLabel(edge.id);
-                  }}
-                  onContextMenu={(e) => onEdgeContextMenu(e, edge.id)}
-                  onPointerDown={(e) => e.stopPropagation()}
-                />
-                {/* 可见曲线 */}
-                <path
-                  className="edge-line"
-                  d={geo.d}
-                  fill="none"
-                  vectorEffect="non-scaling-stroke"
-                  markerEnd={edge.directed ? (isSel ? 'url(#lm-arrow-sel)' : 'url(#lm-arrow)') : undefined}
-                />
-                {edge.label && !editingEdge && (
-                  <g transform={`translate(${geo.mid.x} ${geo.mid.y})`}>
-                    <text className="edge-label" textAnchor="middle" dominantBaseline="central" onDoubleClick={(e) => { e.stopPropagation(); startEdgeLabel(edge.id); }} onPointerDown={(e) => e.stopPropagation()}>
-                      {edge.label}
-                    </text>
-                  </g>
-                )}
-              </g>
-            );
-          })}
-
-          {/* 拖拽预览 */}
-          {connectPreview && (
-            <path className="edge-preview" d={connectPreview} fill="none" vectorEffect="non-scaling-stroke" />
-          )}
-        </svg>
-
         {nodes.map((n) => (
           <NodeCard
             key={n.id}
@@ -658,14 +682,14 @@ export function BoardCanvas({
         const le = laidEdges.find((x) => x.edge.id === editingEdge);
         if (!le) return null;
         const r = rect();
-        const scr = engine.toScreen(le.geo.mid);
+        // geo.mid 已是相对画布容器的屏幕坐标，加容器左上角得视口坐标
         return (
           <input
             className="edge-label-input"
             autoFocus
             defaultValue={le.edge.label ?? ''}
             placeholder="连线标签（如 追问 / 反例 / 应用于）"
-            style={{ left: r.left + scr.x, top: r.top + scr.y }}
+            style={{ left: r.left + le.geo.mid.x, top: r.top + le.geo.mid.y }}
             onPointerDown={(e) => e.stopPropagation()}
             onKeyDown={(e) => {
               if (e.key === 'Enter') { e.preventDefault(); commitEdgeLabel(editingEdge, (e.target as HTMLInputElement).value); }
@@ -694,3 +718,4 @@ export function BoardCanvas({
     </div>
   );
 }
+

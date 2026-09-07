@@ -1285,11 +1285,13 @@ html.native-glass .node-card {
 /* 连线 SVG 覆盖整个世界层；overflow visible 让 0×0 的画布也能画出全部路径 */
 .edge-layer {
   position: absolute;
-  top: 0;
-  left: 0;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
   pointer-events: none; /* 只有命中区 path 单独开启 */
-  /* 不设 z-index：与节点同为 auto，靠 DOM 顺序——edge-layer 在前、节点在后，
-     故连线自然位于节点卡片下方 */
+  /* 不设 z-index：与世界层同为 auto，靠 DOM 顺序——edge-layer 在前、
+     世界层(节点)在后，故连线自然位于节点卡片下方 */
 }
 
 .edge-line {
@@ -1330,10 +1332,6 @@ html.native-glass .node-card {
   }
 }
 
-/* 连线建立时的描边生长动画（stroke-dashoffset 由起点画到终点，DESIGN 动效表） */
-.edge-line {
-  stroke-dasharray: var(--edge-len, none);
-}
 .edge {
   animation: edge-appear var(--dur-normal) var(--ease-standard);
 }
@@ -1419,3 +1417,4 @@ html.native-glass .node-card {
   border-color: var(--accent);
   box-shadow: var(--shadow-node-hover), 0 0 0 3px var(--accent-soft);
 }
+
