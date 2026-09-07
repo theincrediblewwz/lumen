@@ -1,6 +1,7 @@
 mod commands;
 mod ai;
 mod config;
+mod secrets;
 mod storage;
 
 /// 应用原生窗口材质（仅 macOS）：
@@ -62,6 +63,10 @@ pub fn run() {
             commands::open_doc_external,
             commands::chats_read,
             commands::chats_write,
+            commands::secret_set,
+            commands::secret_get,
+            commands::secret_delete,
+            commands::secret_has,
             ai::ai_chat_stream,
             ai::ai_cancel,
         ])

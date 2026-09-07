@@ -88,6 +88,8 @@
 | **M5-6 节点引用回链** | AI 回答里 [[node:id]] 显示为节点标题胶囊(不再乱码),点击跳白板并居中闪烁高亮(ADR-036) |
 | **修 AI 回答表格/加粗乱码（真落盘）** | AiChat guessMath 真正置 false(此前一次提交因 /tmp 被 rf 覆盖未生效,已回读线上第 80 行确认=false);AI 输出规范 md 不需猜公式,表格/加粗/引用胶囊恢复正常(ADR-037) |
 | **M5 对话历史持久化** | 每块白板对话长期存 `<root>/<project>/<board>/chats.json`(退出不丢),Rust chats_read/chats_write + api.chatsRead/chatsWrite + chatStore.ts(多会话结构);AiChat 打开自动续接最近会话,＋新对话/🕘历史面板切换;浏览器回退 localStorage;chatStore.test.ts 8 测试(ADR-038) |
+| **M5-4 上下文预算/历史压缩** | budget.ts:token 估算+单条超长硬截断+按预算保留最新历史,挤出的最旧历史压成一条 system 摘要保持连贯;system 提示词与本轮问题恒保留;设置加"上下文预算"滑杆(2k-32k);budget.test.ts 11 测试(ADR-039) |
+| **M5-7 API Key 加密+隐私** | 密钥不明文落盘:Tauri 走 OS 原生凭据库(Keychain/凭据管理器/Secret Service,keyring crate),localStorage 只存非敏感字段;secret_set/get/delete/has 命令+api;aiSettings 异步载入/保存密钥,旧明文自动迁移清除;浏览器回退 localStorage;隐私开关 shareBoard 沿用;cargo check✓/aiSettings.test 扩至 6 例(ADR-040) |
 | **O-4 系统打开 PDF** | open_doc_external(Win/mac/linux)+api.docOpenExternal |
 | **目录/块级公式渲染** | TOC 标题公式(TocItem.html)与多行 $$ 块修复(不再变红) |
 | **文档预览卡放大** | 去掉节点标题的另建预览框；关联文档预览卡单列、字号加大到可读 |

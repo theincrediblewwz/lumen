@@ -1,6 +1,7 @@
 //! Tauri 命令层：前端唯一入口，所有路径参数在此校验（DESIGN §5.7）
 
 use crate::config::{self, AppConfig};
+use crate::secrets;
 use crate::storage;
 use serde::Serialize;
 use std::path::PathBuf;
@@ -154,6 +155,33 @@ pub fn chats_read(project_id: String, board_id: String) -> Result<String, String
 #[tauri::command]
 pub fn chats_write(project_id: String, board_id: String, content: String) -> Result<(), String> {
     storage::write_chats(&root()?, &project_id, &board_id, &content)
+}
+
+// ───────────────── API Key 安全存储（M5-7，OS 凭据库加密） ─────────────────
+
+#[tauri::command]
+pub fn secret_set(account: String, secret: String) -> Result<(), String> {
+    if secret.is_empty() {
+        // 空视为清除，避免在凭据库留空条目
+        return secrets::delete_secret(&account);
+    }
+    secrets::set_secret(&account, &secret)
+}
+
+#[tauri::command]
+pub fn secret_get(account: String) -> Result<Option<String>, String> {
+    secrets::get_secret(&account)
+}
+
+#[tauri::command]
+pub fn secret_delete(account: String) -> Result<(), String> {
+    secrets::delete_secret(&account)
+}
+
+/// 只查询是否存在密钥，不回传明文（供 UI 显示「已保存」状态）。
+#[tauri::command]
+pub fn secret_has(account: String) -> Result<bool, String> {
+    Ok(secrets::get_secret(&account)?.is_some())
 }
 
 

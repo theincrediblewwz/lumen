@@ -111,6 +111,13 @@ export const api = {
     invoke<string>('chats_read', { projectId, boardId }),
   chatsWrite: (projectId: string, boardId: string, content: string) =>
     invoke<void>('chats_write', { projectId, boardId, content }),
+
+  /* ── API Key 安全存储（M5-7，走 OS 凭据库，明文不落盘） ── */
+  secretSet: (account: string, secret: string) =>
+    invoke<void>('secret_set', { account, secret }),
+  secretGet: (account: string) => invoke<string | null>('secret_get', { account }),
+  secretDelete: (account: string) => invoke<void>('secret_delete', { account }),
+  secretHas: (account: string) => invoke<boolean>('secret_has', { account }),
 };
 
 /** 打开系统文件选择框，返回选中的 .md 文件绝对路径（可多选）。 */

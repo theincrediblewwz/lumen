@@ -4,6 +4,7 @@ import { renderMarkdown } from '../reader/engine';
 import { typesetMath } from '../reader/reader';
 import {
   loadAiSettings,
+  loadAiSettingsAsync,
   saveAiSettings,
   isAiConfigured,
   type AiSettings,
@@ -131,6 +132,17 @@ export function AiChat({ projectId, boardId, boardName, standalone, platform, on
   const isMac = platform === 'macos';
   // 独立窗口在 Win/Linux 上自绘窗口控制（mac 用系统红绿灯，留白即可）
   const showWinControls = !!standalone && !isMac;
+
+  // 首屏用同步设置即时渲染，随后从 OS 凭据库异步取回 API Key（不明文落盘）
+  useEffect(() => {
+    let alive = true;
+    loadAiSettingsAsync().then((full) => {
+      if (alive) setSettings(full);
+    });
+    return () => {
+      alive = false;
+    };
+  }, []);
 
   // 拉取白板结构做上下文
   useEffect(() => {
@@ -345,7 +357,7 @@ export function AiChat({ projectId, boardId, boardName, standalone, platform, on
 
   const saveAndClose = (s: AiSettings) => {
     setSettings(s);
-    saveAiSettings(s);
+    void saveAiSettings(s); // 异步：密钥进 OS 凭据库，非敏感字段进 localStorage
     setShowSettings(false);
   };
 
@@ -620,7 +632,8 @@ function AiSettingsForm({
         <span>允许 AI 读取本白板内容（关闭则仅普通对话）</span>
       </label>
       <p className="ai-hint">
-        可接 OpenAI、DeepSeek、Kimi 或任意 OpenAI 兼容网关；密钥仅存于本机。
+        可接 OpenAI、DeepSeek、Kimi 或任意 OpenAI 兼容网关。密钥由系统凭据库（Keychain /
+        凭据管理器）加密保管，不会明文写入任何文件；关闭上方「读取白板」即为纯隐私聊天。
       </p>
       <div className="ai-settings-actions">
         <button type="button" className="ai-btn-secondary" onClick={onCancel}>
