@@ -151,6 +151,27 @@ describe('preprocessGuessMath（猜测渲染）', () => {
   });
 });
 
+describe('TOC 公式与多行块级公式', () => {
+  it('标题里的公式进入 toc.html（占位元素）', () => {
+    const { toc } = renderMarkdown('## 标题 $U_s(Y_c)=c_r,$ 后缀');
+    expect(toc[0].text).toContain('$'); // 纯文本保留原样
+    expect(toc[0].html).toContain('class="math math-inline"');
+    expect(toc[0].html).not.toContain('$U_s');
+  });
+  it('guessMath 不破坏多行 $$ 块（不再往块内塞 $）', () => {
+    const src = '前言\n\n$$\nU_s(Y_c)=c_r,\n$$\n\n后记';
+    const out = preprocessGuessMath(src);
+    // 块内那一行保持原样，不应被包成 $…$
+    expect(out).toContain('\nU_s(Y_c)=c_r,\n');
+    expect(out).not.toContain('$U_s(Y_c)=c_r,$');
+  });
+  it('多行 $$ 块渲染为块级公式占位', () => {
+    const { html } = renderMarkdown('$$\nU_s(Y_c)=c_r,\n$$', undefined, { guessMath: true });
+    expect(html).toContain('class="math math-block"');
+    expect(html).not.toContain('math-error');
+  });
+});
+
 describe('normalizeMathDelims（定界符归一化）', () => {
   it('把 \\(…\\) 转成 $…$', () => {
     expect(normalizeMathDelims('误差 \\(x^2\\) 收敛')).toBe('误差 $x^2$ 收敛');
@@ -195,4 +216,5 @@ describe('renderMarkdown - guessMath 选项', () => {
     expect(html).not.toContain('math-inline');
   });
 });
+
 

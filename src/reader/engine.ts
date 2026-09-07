@@ -21,7 +21,9 @@ type PluginSimple = (md: MD) => void;
 
 export interface TocItem {
   level: number; // 1..6
-  text: string;
+  text: string; // 纯文本（tooltip / 无障碍用）
+  /** 标题内联渲染后的 HTML（含公式占位元素），供 TOC 也能显示/排版公式 */
+  html: string;
   slug: string;
 }
 
@@ -251,6 +253,7 @@ export function looksLikeMath(s: string): boolean {
 export function preprocessGuessMath(src: string): string {
   const lines = src.split('\n');
   let inFence = false;
+  let inMathBlock = false; // 处于多行 $$ … $$ 块内
   const out: string[] = [];
 
   for (const line of lines) {
@@ -261,6 +264,20 @@ export function preprocessGuessMath(src: string): string {
     }
     if (inFence) {
       out.push(line);
+      continue;
+    }
+    // 统计本行未转义的 $$ 出现次数，用于跟踪块级公式的进出，
+    // 避免把 $$ 块内部的行当普通文本又包一层 $（会产生非法 TeX 变红）。
+    const dd = (line.match(/\$\$/g) || []).length;
+    if (inMathBlock) {
+      out.push(line); // 块内原样保留
+      if (dd % 2 === 1) inMathBlock = false; // 本行含闭合 $$
+      continue;
+    }
+    if (dd % 2 === 1) {
+      // 本行开启一个跨行 $$ 块（如单独一行 "$$"）
+      out.push(line);
+      inMathBlock = true;
       continue;
     }
     out.push(guessInline(line));
@@ -371,6 +388,12 @@ export function renderMarkdown(src: string, engine?: MD, opts?: RenderOptions): 
     const level = Number(t.tag.slice(1)); // h2 -> 2
     const inline = tokens[i + 1];
     const text = inline && inline.type === 'inline' ? inline.content : '';
+    // 用 markdown-it 的 inline 渲染器把标题渲染成 HTML（含公式占位），
+    // 供 TOC 一样能显示/排版公式；纯文本 text 保留给 slug/tooltip。
+    const headHtml =
+      inline && inline.type === 'inline'
+        ? md.renderer.renderInline(inline.children ?? [], md.options, env)
+        : escapeAttr(text);
     let slug = slugify(text);
     // 去重：重复标题追加 -2 / -3 …
     if (used.has(slug)) {
@@ -383,11 +406,12 @@ export function renderMarkdown(src: string, engine?: MD, opts?: RenderOptions): 
     t.attrSet('id', slug);
     // 便于点击标题复制锚点（可选样式）
     t.attrJoin('class', 'md-heading');
-    toc.push({ level, text, slug });
+    toc.push({ level, text, html: headHtml, slug });
   }
 
   const html = md.renderer.render(tokens, md.options, env);
   return { html, toc };
 }
+
 
 

@@ -164,12 +164,20 @@
 }
 .reader-toc-item button:hover { background: var(--accent-soft); color: var(--text-primary); }
 .reader-toc-item.is-active button { color: var(--accent); font-weight: 650; background: var(--accent-soft); }
+/* 目录里的公式：缩到与文字齐平，不撑高行、不换行 */
+.reader-toc-item .math { font-size: 0.92em; }
+.reader-toc-item .math-block { display: inline; margin: 0; text-align: left; }
+.reader-toc-item .katex-display { display: inline; margin: 0; }
+.reader-toc-item .katex { font-size: 1em; }
 .reader-toc-item.lvl-1 button { padding-left: 10px; font-weight: 600; }
 .reader-toc-item.lvl-2 button { padding-left: 20px; }
 .reader-toc-item.lvl-3 button { padding-left: 32px; font-size: 12.5px; }
 .reader-toc-item.lvl-4 button,
 .reader-toc-item.lvl-5 button,
 .reader-toc-item.lvl-6 button { padding-left: 44px; font-size: 12px; }
+
+/* 双页时舞台裁掉平移出去的列，避免出现横向滚动条 */
+.reader.is-paged .reader-stage { overflow: hidden; }
 
 /* 舞台：包住滚动体，用于叠加页码/翻页控件 */
 .reader-stage {
@@ -192,43 +200,50 @@
   padding: 32px 48px 120px;
 }
 
-/* ── 双页模式：CSS 多栏横向铺排，页间无缝 ── */
+/* ── 双页模式：像 PDF——左右两页铺满整屏，向下翻跨页 ── */
+/* 视口本身不滚动，不出现横向滚动条；靠 flow 的 transform 平移切换跨页 */
 .reader.is-paged .reader-body {
-  overflow-x: auto;
-  overflow-y: hidden;
+  overflow: hidden;
+  scroll-behavior: auto;
 }
 .reader.is-paged .reader-pageflow {
-  height: 100%;
-  padding: 40px 0 56px;
+  /* height / column-width / column-gap 由 JS 按视口设置 */
+  padding: 44px 52px 52px;
   margin: 0;
   max-width: none;
   column-fill: auto;
-  /* column-width / column-gap 由 JS 按视口设置 */
   box-sizing: border-box;
+  transition: transform 320ms cubic-bezier(0.22, 0.61, 0.36, 1);
+  will-change: transform;
 }
-/* 双页时首列左侧、末列右侧留出页边距，栏间距即页与页之间（无额外缝隙） */
-.reader.is-paged .reader-pageflow {
-  padding-left: 40px;
-  padding-right: 40px;
+/* 每一列（页）内部图片/公式不溢出到相邻页 */
+.reader.is-paged .reader-pageflow > * { break-inside: avoid-column; }
+
+/* 左右两页中缝分隔线 */
+.reader-gutter {
+  position: absolute;
+  top: 40px;
+  bottom: 40px;
+  left: 50%;
+  width: 1px;
+  transform: translateX(-0.5px);
+  background: var(--border-color);
+  opacity: 0.7;
+  pointer-events: none;
 }
 
-/* 页码：固定在舞台左下角坐标系，随横向滚动位移 */
-.reader-pagenums {
-  position: absolute;
-  left: 0;
-  bottom: 0;
-  height: 0;
-  pointer-events: none;
-  overflow: visible;
-}
+/* 页码：固定在左右两页的下角 */
 .reader-pagenum {
   position: absolute;
-  bottom: 20px;
+  bottom: 16px;
   font-size: 12px;
   color: var(--text-secondary);
   font-variant-numeric: tabular-nums;
-  opacity: 0.7;
+  opacity: 0.75;
+  pointer-events: none;
 }
+.reader-pagenum-left { left: 56px; }
+.reader-pagenum-right { right: 56px; }
 
 /* 翻页按钮（双页） */
 .reader-flip {
@@ -254,12 +269,13 @@
 
 .reader-pagebar {
   position: absolute;
-  bottom: 16px;
-  right: 20px;
+  bottom: 14px;
+  left: 50%;
+  transform: translateX(-50%);
   font-size: 12px;
   color: var(--text-secondary);
   background: color-mix(in srgb, var(--bg-node) 80%, transparent);
-  padding: 4px 10px;
+  padding: 4px 12px;
   border-radius: 8px;
   pointer-events: none;
 }
@@ -389,4 +405,5 @@
   .reader-toc { display: none; }
   .reader-pageflow { padding: 24px 20px 100px; }
 }
+
 

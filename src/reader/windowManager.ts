@@ -41,10 +41,22 @@ export async function openReaderWindow(a: OpenReaderArgs): Promise<void> {
   const { WebviewWindow } = await import('@tauri-apps/api/webviewWindow');
   const label = readerLabel(a);
 
-  // 已有同文档窗口则聚焦复用
+  // 已有同文档窗口则前置复用：先取消最小化、显示、置顶再聚焦，
+  // 否则窗口在后台/最小化时只 setFocus 常常不会浮到最前，用户以为「点了没反应」。
   const existing = await WebviewWindow.getByLabel(label);
   if (existing) {
-    await existing.setFocus();
+    try {
+      if (await existing.isMinimized()) await existing.unminimize();
+      await existing.show();
+      // 短暂置顶再取消，强制把窗口抬到最前（跨平台更可靠）
+      await existing.setAlwaysOnTop(true);
+      await existing.setFocus();
+      setTimeout(() => {
+        existing.setAlwaysOnTop(false).catch(() => {});
+      }, 300);
+    } catch {
+      await existing.setFocus().catch(() => {});
+    }
     return;
   }
 
@@ -78,4 +90,5 @@ export async function openReaderWindow(a: OpenReaderArgs): Promise<void> {
     window.dispatchEvent(new CustomEvent<OpenReaderArgs>(OPEN_READER_EVENT, { detail: a }));
   });
 }
+
 
