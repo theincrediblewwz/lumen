@@ -11,7 +11,7 @@ import {
   canRedo,
   type History,
 } from '../canvas/history';
-import { edgeGeometry, straightPath, boxContains, type Box } from '../canvas/geometry';
+import { edgeGeometry, straightPath, boxContains, type Box, type EdgeStyle } from '../canvas/geometry';
 import type { BoardFile, BoardNode, BoardEdge } from '../api';
 import { NodeCard } from './NodeCard';
 import { NodeBubble } from './NodeBubble';
@@ -42,9 +42,11 @@ const FALLBACK_NODE_H = 64;
 export function BoardCanvas({
   board,
   onChange,
+  edgeStyle = 'curved',
 }: {
   board: BoardFile;
   onChange: (nodes: BoardNode[], edges: BoardEdge[], viewport: Viewport) => void;
+  edgeStyle?: EdgeStyle;
 }) {
   const wrapRef = useRef<HTMLDivElement>(null);
   const engineRef = useRef<CanvasEngine>(
@@ -553,11 +555,11 @@ export function BoardCanvas({
         const a = nodeById[e.from];
         const b = nodeById[e.to];
         if (!a || !b) return null;
-        const g = edgeGeometry(screenBoxOf(a), screenBoxOf(b));
+        const g = edgeGeometry(screenBoxOf(a), screenBoxOf(b), edgeStyle);
         return { edge: e, geo: g };
       })
       .filter((x): x is { edge: BoardEdge; geo: ReturnType<typeof edgeGeometry> } => x !== null);
-  }, [edges, nodeById, screenBoxOf, sizesVer, vpSig]);
+  }, [edges, nodeById, screenBoxOf, sizesVer, vpSig, edgeStyle]);
 
   // 连线拖拽预览路径（屏幕坐标）
   const connectPreview = useMemo(() => {
@@ -718,4 +720,5 @@ export function BoardCanvas({
     </div>
   );
 }
+
 

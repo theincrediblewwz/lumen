@@ -1,6 +1,6 @@
 import { useEffect } from 'react';
 import { createPortal } from 'react-dom';
-import type { Settings, ThemeName, GlassMode } from '../settings';
+import type { Settings, ThemeName, GlassMode, EdgeStyle } from '../settings';
 
 const THEMES: { id: ThemeName; label: string }[] = [
   { id: 'light', label: '浅色' },
@@ -12,6 +12,12 @@ const GLASS_MODES: { id: GlassMode; label: string }[] = [
   { id: 'native', label: '原生' },
   { id: 'css', label: '网页' },
   { id: 'off', label: '关闭' },
+];
+
+const EDGE_STYLES: { id: EdgeStyle; label: string }[] = [
+  { id: 'curved', label: '曲线' },
+  { id: 'straight', label: '直线' },
+  { id: 'stepped', label: '折线' },
 ];
 
 /**
@@ -129,6 +135,23 @@ export function SettingsPanel({
         </section>
 
         <section className="settings-section">
+          <label className="settings-label">连线样式</label>
+          <div className="seg" style={{ marginTop: 10 }}>
+            {EDGE_STYLES.map((s) => (
+              <button
+                key={s.id}
+                type="button"
+                className={`seg-btn${(settings.edgeStyle ?? 'curved') === s.id ? ' is-active' : ''}`}
+                onClick={() => onChange({ edgeStyle: s.id })}
+              >
+                {s.label}
+              </button>
+            ))}
+          </div>
+          <p className="settings-hint">节点之间连线的形状：曲线更柔和、直线最简洁、折线走直角。</p>
+        </section>
+
+        <section className="settings-section">
           <div className="settings-row">
             <label className="settings-label">动画特效</label>
             <button
@@ -148,3 +171,4 @@ export function SettingsPanel({
     document.body,
   );
 }
+

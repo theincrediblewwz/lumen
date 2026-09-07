@@ -11,6 +11,9 @@ export type ThemeName = 'light' | 'paper' | 'dark';
 
 export type GlassMode = 'native' | 'css' | 'off';
 
+/** 连线视觉样式（与 canvas/geometry 的 EdgeStyle 对应） */
+export type EdgeStyle = 'curved' | 'straight' | 'stepped';
+
 export interface Settings {
   theme: ThemeName;
   glass: boolean;
@@ -22,6 +25,8 @@ export interface Settings {
   glassBlur: number;
   /** 动画特效开关 */
   motion: boolean;
+  /** 连线样式：曲线 / 直线 / 折线 */
+  edgeStyle: EdgeStyle;
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -31,6 +36,7 @@ export const DEFAULT_SETTINGS: Settings = {
   glassClarity: 55,
   glassBlur: 60,
   motion: true,
+  edgeStyle: 'curved',
 };
 
 const KEY = 'lumen.settings.v1';
@@ -76,3 +82,4 @@ export function applySettings(s: Settings, platform = ''): void {
   root.style.setProperty('--glass-alpha', alpha.toFixed(3));
   root.style.setProperty('--glass-blur', `${blur.toFixed(1)}px`);
 }
+

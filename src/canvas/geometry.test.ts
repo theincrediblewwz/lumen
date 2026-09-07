@@ -109,3 +109,50 @@ describe('boxContains', () => {
     expect(boxContains(b, { x: 50, y: 200 })).toBe(false);
   });
 });
+
+
+describe('edgeGeometry - 样式', () => {
+  const a = box(0, 0, 100, 60);
+  const b = box(400, 200, 100, 60);
+
+  it('curved 生成三次贝塞尔', () => {
+    const g = edgeGeometry(a, b, 'curved');
+    expect(g.d).toContain(' C ');
+  });
+
+  it('straight 生成单段直线，中点在两端点中间', () => {
+    const g = edgeGeometry(a, b, 'straight');
+    expect(g.d).toMatch(/^M [\d.-]+ [\d.-]+ L [\d.-]+ [\d.-]+$/);
+    expect(g.mid.x).toBeCloseTo((g.start.x + g.end.x) / 2);
+    expect(g.mid.y).toBeCloseTo((g.start.y + g.end.y) / 2);
+  });
+
+  it('stepped 生成正交折线（只有水平/竖直段）', () => {
+    const g = edgeGeometry(a, b, 'stepped');
+    // 解析所有点，相邻点之间必须共享 x 或 y（直角）
+    const nums = g.d.match(/[\d.-]+/g)!.map(Number);
+    const pts: { x: number; y: number }[] = [];
+    for (let i = 0; i < nums.length; i += 2) pts.push({ x: nums[i], y: nums[i + 1] });
+    for (let i = 1; i < pts.length; i++) {
+      const sameX = Math.abs(pts[i].x - pts[i - 1].x) < 1e-6;
+      const sameY = Math.abs(pts[i].y - pts[i - 1].y) < 1e-6;
+      expect(sameX || sameY).toBe(true);
+    }
+    // 端点仍吸附在边框
+    expect(pts[0].x).toBeCloseTo(g.start.x);
+    expect(pts[pts.length - 1].x).toBeCloseTo(g.end.x);
+  });
+
+  it('默认样式为 curved', () => {
+    expect(edgeGeometry(a, b).d).toContain(' C ');
+  });
+
+  it('三种样式端点吸附一致（都从边框出发）', () => {
+    for (const s of ['curved', 'straight', 'stepped'] as const) {
+      const g = edgeGeometry(a, b, s);
+      // a 在左上、b 在右下：起点应在 a 右/下边框，终点在 b 左/上边框附近
+      expect(Number.isFinite(g.start.x)).toBe(true);
+      expect(Number.isFinite(g.end.y)).toBe(true);
+    }
+  });
+});

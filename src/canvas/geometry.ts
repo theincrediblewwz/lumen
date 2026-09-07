@@ -19,6 +19,9 @@ export interface Box {
   h: number;
 }
 
+/** 连线视觉样式：曲线（贝塞尔）/ 直线 / 折线（正交直角） */
+export type EdgeStyle = 'curved' | 'straight' | 'stepped';
+
 export function boxCenter(b: Box): Pt {
   return { x: b.x + b.w / 2, y: b.y + b.h / 2 };
 }
@@ -52,27 +55,53 @@ function bezierMid(p0: Pt, p1: Pt, p2: Pt, p3: Pt): Pt {
 }
 
 export interface EdgeGeometry {
-  /** SVG path 的 d 属性（三次贝塞尔） */
+  /** SVG path 的 d 属性 */
   d: string;
   /** 起点（吸附在源节点边框） */
   start: Pt;
   /** 终点（吸附在目标节点边框） */
   end: Pt;
-  /** 曲线中点，用于放标签 */
+  /** 路径中点，用于放标签 */
   mid: Pt;
 }
 
 /**
- * 计算两个矩形之间的平滑连线：
- * - 端点吸附到各自边框（朝对方中心方向）
- * - 控制柄沿「离开各自节点」的方向伸出，长度随距离自适应，得到自然的 S/弧线
+ * 计算两个矩形之间的连线路径，按 style 决定形状：
+ * - 端点始终吸附到各自边框（朝对方中心方向）
+ * - curved：三次贝塞尔，控制柄沿离开各自节点的方向伸出，得到自然弧线
+ * - straight：两吸附点之间直线
+ * - stepped：正交折线（沿主导轴走一半再拐直角），中点取拐点
  */
-export function edgeGeometry(a: Box, b: Box): EdgeGeometry {
+export function edgeGeometry(a: Box, b: Box, style: EdgeStyle = 'curved'): EdgeGeometry {
   const ca = boxCenter(a);
   const cb = boxCenter(b);
   const start = borderPoint(a, cb);
   const end = borderPoint(b, ca);
 
+  if (style === 'straight') {
+    const mid = { x: (start.x + end.x) / 2, y: (start.y + end.y) / 2 };
+    return { d: `M ${start.x} ${start.y} L ${end.x} ${end.y}`, start, end, mid };
+  }
+
+  if (style === 'stepped') {
+    const dx = end.x - start.x;
+    const dy = end.y - start.y;
+    // 主导轴：水平差更大则先水平走到中点 x，再竖直，再水平（H-V-H）；否则竖直优先
+    let waypoints: Pt[];
+    if (Math.abs(dx) >= Math.abs(dy)) {
+      const mx = start.x + dx / 2;
+      waypoints = [start, { x: mx, y: start.y }, { x: mx, y: end.y }, end];
+    } else {
+      const my = start.y + dy / 2;
+      waypoints = [start, { x: start.x, y: my }, { x: end.x, y: my }, end];
+    }
+    const d =
+      `M ${waypoints[0].x} ${waypoints[0].y} ` +
+      waypoints.slice(1).map((p) => `L ${p.x} ${p.y}`).join(' ');
+    return { d, start, end, mid: waypoints[1] === undefined ? start : waypoints[Math.floor(waypoints.length / 2)] };
+  }
+
+  // curved（默认）
   const dist = len(end.x - start.x, end.y - start.y);
   const handle = Math.max(28, Math.min(dist * 0.42, 170));
 
@@ -89,7 +118,7 @@ export function edgeGeometry(a: Box, b: Box): EdgeGeometry {
   return { d, start, end, mid };
 }
 
-/** 直线路径（拖拽创建连线时的临时预览，降级为直线避免每帧重算贝塞尔） */
+/** 直线路径（拖拽创建连线时的临时预览） */
 export function straightPath(from: Pt, to: Pt): string {
   return `M ${from.x} ${from.y} L ${to.x} ${to.y}`;
 }

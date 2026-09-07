@@ -443,7 +443,7 @@ export default function App() {
 
         {/* 画布区：挂 CanvasEngine（M2-2 / M2-3） */}
         {activeBoard ? (
-          <BoardCanvas key={activeBoard.id} board={activeBoard} onChange={onCanvasChange} />
+          <BoardCanvas key={activeBoard.id} board={activeBoard} onChange={onCanvasChange} edgeStyle={settings.edgeStyle ?? 'curved'} />
         ) : (
           <main className="board-canvas canvas-placeholder">
             <p className="placeholder-hint">
@@ -464,3 +464,4 @@ export default function App() {
     </div>
   );
 }
+
