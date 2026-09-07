@@ -85,6 +85,7 @@
 | **M5 AI 地基**（provider/aiSettings/boardContext + 单测） | OpenAI 兼容请求构造 + SSE 解析 + outline 上下文；typecheck/126 测试/secrets 净 |
 | **M5-1/M5-2 AI 对话窗 + 流式** | Rust ai_chat_stream(reqwest 流式)+ai_cancel;FAB+独立窗(?ai=1)+浮层回退;回答复用 M4 渲染(ADR-034) |
 | **M5-3 白板工具调用** | AI 可主动查白板结构/节点文档/检索(agentic function calling,4 工具);"正在查阅"提示(ADR-035) |
+| **M5-6 节点引用回链** | AI 回答里 [[node:id]] 显示为节点标题胶囊(不再乱码),点击跳白板并居中闪烁高亮(ADR-036) |
 | **O-4 系统打开 PDF** | open_doc_external(Win/mac/linux)+api.docOpenExternal |
 | **目录/块级公式渲染** | TOC 标题公式(TocItem.html)与多行 $$ 块修复(不再变红) |
 | **文档预览卡放大** | 去掉节点标题的另建预览框；关联文档预览卡单列、字号加大到可读 |

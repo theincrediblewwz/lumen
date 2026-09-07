@@ -492,6 +492,31 @@ html.glass-on body {
   cursor: default;
 }
 
+/* AI 引用跳转高亮（M5-6）：短暂脉冲光环 + 轻微放大，醒目但不刺眼 */
+.node-card.is-flash {
+  animation: node-flash 1.6s ease-out;
+  z-index: 20;
+}
+@keyframes node-flash {
+  0% {
+    box-shadow: 0 0 0 0 color-mix(in srgb, var(--node-accent, var(--accent)) 70%, transparent);
+    transform: scale(1);
+  }
+  15% {
+    box-shadow: 0 0 0 8px color-mix(in srgb, var(--node-accent, var(--accent)) 45%, transparent);
+    transform: scale(1.03);
+  }
+  60% {
+    box-shadow: 0 0 0 14px color-mix(in srgb, var(--node-accent, var(--accent)) 0%, transparent);
+    transform: scale(1);
+  }
+  100% {
+    box-shadow: 0 0 0 0 transparent;
+    transform: scale(1);
+  }
+}
+html.motion-off .node-card.is-flash { animation: none; }
+
 .node-title {
   font-size: 14.5px;
   font-weight: 600;

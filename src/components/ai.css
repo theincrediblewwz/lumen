@@ -226,6 +226,46 @@
   font-size: 12.5px;
 }
 
+/* 节点引用胶囊（M5-6）：显示节点标题，可点击跳白板 */
+.ai-md .node-ref {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 1px 8px 1px 6px;
+  margin: 0 1px;
+  border-radius: 10px;
+  background: var(--bg-hover, rgba(47, 158, 119, 0.14));
+  color: var(--accent, #2f9e77);
+  border: 1px solid transparent;
+  font-size: 0.92em;
+  font-weight: 500;
+  line-height: 1.5;
+  text-decoration: none;
+  cursor: pointer;
+  vertical-align: baseline;
+  transition: background 0.12s ease, border-color 0.12s ease;
+  white-space: nowrap;
+}
+.ai-md .node-ref:hover {
+  background: var(--accent, #2f9e77);
+  color: #fff;
+  border-color: var(--accent, #2f9e77);
+}
+.ai-md .node-ref.is-missing {
+  color: var(--text-secondary, #8a8f8c);
+  background: rgba(0, 0, 0, 0.05);
+  cursor: default;
+}
+.ai-md .node-ref-icon {
+  flex: 0 0 auto;
+  opacity: 0.9;
+}
+.ai-md .node-ref-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 220px;
+}
+
 /* 工具调用状态提示（agentic 查阅白板） */
 .ai-tool-status {
   display: inline-flex;

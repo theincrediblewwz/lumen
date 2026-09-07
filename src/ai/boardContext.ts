@@ -61,7 +61,8 @@ export function buildSystemPrompt(outline: string, shareBoard: boolean): string 
   const role =
     '你是「脉络 Lumen」里的研究助手。用户在一块白板上用节点和连线整理一个研究问题的脉络。' +
     '请基于白板结构作答，回答用简体中文、条理清晰，可用 Markdown 与 KaTeX 公式。' +
-    '引用某个节点时用 [[node:节点id]] 形式，便于跳转。';
+    '当你提到白板上的某个节点时，用 [[node:节点id]] 的形式引用它（例如 [[node:n_1a2b]]），' +
+    '系统会自动把它显示为可点击的节点名并支持跳转；不要把节点 id 直接写进正文，也不要放进表格单元格里（表格里请只写节点标题文字）。';
   if (!shareBoard) return role + '\n\n（用户已关闭白板共享，仅进行普通对话。）';
   return `${role}\n\n以下是当前白板的结构：\n\n${outline}`;
 }

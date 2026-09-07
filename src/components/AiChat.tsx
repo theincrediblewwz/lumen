@@ -11,7 +11,10 @@ import {
 import { streamChatAgentic, type StreamHandle } from '../ai/aiClient';
 import type { ToolContext } from '../ai/tools';
 import { buildBoardOutline, buildSystemPrompt } from '../ai/boardContext';
+import { maskNodeRefs, unmaskNodeRefs } from '../ai/nodeRef';
+import { jumpToNode } from '../ai/nodeJump';
 import type { ChatMessage } from '../ai/provider';
+import type { BoardNode } from '../api';
 
 interface Props {
   projectId: string;
@@ -40,20 +43,58 @@ const TOOL_LABELS: Record<string, string> = {
   search_board: '检索白板内容',
 };
 
-/** 渲染 AI/用户消息的 Markdown（复用 M4 引擎 + KaTeX 排版）。 */
-function MessageBody({ content }: { content: string }) {
+/** 渲染 AI/用户消息的 Markdown（复用 M4 引擎 + KaTeX 排版）。
+ *  节点引用 [[node:id]] 做两级保护 → 显示为节点标题胶囊，点击跳白板高亮。 */
+function MessageBody({
+  content,
+  nodes,
+  projectId,
+  boardId,
+}: {
+  content: string;
+  nodes: BoardNode[];
+  projectId: string;
+  boardId: string;
+}) {
   const ref = useRef<HTMLDivElement>(null);
-  const html = useMemo(() => renderMarkdown(content, undefined, { guessMath: true }).html, [content]);
+  const titleOf = useCallback(
+    (id: string) => nodes.find((n) => n.id === id)?.title ?? null,
+    [nodes],
+  );
+  const html = useMemo(() => {
+    // 1) 渲染前把 [[node:id]] 换成 markdown 不会破坏的占位 token
+    const { text, ids } = maskNodeRefs(content);
+    // 2) 正常渲染 markdown + 公式占位
+    const rendered = renderMarkdown(text, undefined, { guessMath: true }).html;
+    // 3) 渲染后把占位换成显示标题的可点击胶囊
+    return unmaskNodeRefs(rendered, ids, titleOf);
+  }, [content, titleOf]);
+
   useEffect(() => {
     if (ref.current) {
       const h = typesetMath(ref.current);
       return () => h.cancel();
     }
   }, [html]);
+
+  // 事件委托：点击节点胶囊 → 跳转到白板并高亮
+  const onClick = useCallback(
+    (e: React.MouseEvent<HTMLDivElement>) => {
+      const target = (e.target as HTMLElement).closest<HTMLElement>('.node-ref');
+      if (!target) return;
+      const nodeId = target.getAttribute('data-node-id');
+      if (!nodeId) return;
+      e.preventDefault();
+      jumpToNode({ projectId, boardId, nodeId });
+    },
+    [projectId, boardId],
+  );
+
   return (
     <div
       ref={ref}
       className="ai-md markdown-body"
+      onClick={onClick}
       dangerouslySetInnerHTML={{ __html: html }}
     />
   );
@@ -296,7 +337,12 @@ export function AiChat({ projectId, boardId, boardName, standalone, platform, on
                   </div>
                 )}
                 {m.content ? (
-                  <MessageBody content={m.content} />
+                  <MessageBody
+                    content={m.content}
+                    nodes={board?.nodes ?? []}
+                    projectId={projectId}
+                    boardId={boardId}
+                  />
                 ) : m.tool ? null : (
                   <div className="ai-typing"><span></span><span></span><span></span></div>
                 )}

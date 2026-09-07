@@ -74,6 +74,7 @@ function AutoTextarea({
 export const NodeCard = memo(function NodeCard({
   node,
   selected,
+  flash,
   editing,
   showAnchors,
   connectTarget,
@@ -90,6 +91,7 @@ export const NodeCard = memo(function NodeCard({
 }: {
   node: BoardNode;
   selected: boolean;
+  flash?: boolean;
   editing: boolean;
   showAnchors: boolean;
   connectTarget: boolean;
@@ -121,7 +123,7 @@ export const NodeCard = memo(function NodeCard({
   return (
     <div
       ref={cardRef}
-      className={`node-card glass-surface${selected ? ' is-selected' : ''}${editing ? ' is-editing' : ''}${connectTarget ? ' is-connect-target' : ''}`}
+      className={`node-card glass-surface${selected ? ' is-selected' : ''}${flash ? ' is-flash' : ''}${editing ? ' is-editing' : ''}${connectTarget ? ' is-connect-target' : ''}`}
       style={{
         left: node.x,
         top: node.y,

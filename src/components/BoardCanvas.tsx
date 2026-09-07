@@ -46,11 +46,14 @@ export function BoardCanvas({
   onChange,
   edgeStyle = 'curved',
   guessMath = false,
+  focusNode = null,
 }: {
   board: BoardFile;
   onChange: (nodes: BoardNode[], edges: BoardEdge[], viewport: Viewport) => void;
   edgeStyle?: EdgeStyle;
   guessMath?: boolean;
+  /** AI 引用跳转目标（M5-6）：居中并闪烁高亮该节点。nonce 变化即重新触发。 */
+  focusNode?: { id: string; nonce: number } | null;
 }) {
   const wrapRef = useRef<HTMLDivElement>(null);
   const engineRef = useRef<CanvasEngine>(
@@ -72,6 +75,8 @@ export function BoardCanvas({
   const [menu, setMenu] = useState<ContextMenuState | null>(null);
   const [panelId, setPanelId] = useState<string | null>(null);
   const [hoverNode, setHoverNode] = useState<string | null>(null);
+  /** AI 跳转高亮：短暂闪烁的节点 id（M5-6） */
+  const [flashId, setFlashId] = useState<string | null>(null);
   /** 悬停简介 tooltip：悬停 400ms 后出现 */
   const [tip, setTip] = useState<{ id: string; x: number; y: number } | null>(null);
   const tipTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -105,6 +110,32 @@ export function BoardCanvas({
   /** 始终指向最新的图状态：供 window 级拖拽监听读取（避免闭包捕获旧值） */
   const graphRef = useRef(history.present);
   graphRef.current = history.present;
+
+  // ── AI 引用跳转（M5-6）：居中到目标节点 + 选中 + 闪烁高亮 ──
+  useEffect(() => {
+    if (!focusNode) return;
+    const node = graphRef.current.nodes.find((n) => n.id === focusNode.id);
+    const wrap = wrapRef.current;
+    if (!node || !wrap) return;
+    // 尺寸可能还没测到，用默认宽/估算高兜底
+    const size = sizesRef.current[node.id] ?? { w: node.w || 240, h: 120 };
+    const rectEl = wrap.getBoundingClientRect();
+    // 目标：把节点中心放到视口中心，缩放保持（至少 0.8 以看清）
+    const zoom = Math.max(0.8, engine.viewport.zoom);
+    const cx = node.x + size.w / 2;
+    const cy = node.y + size.h / 2;
+    engine.setViewport({
+      x: rectEl.width / 2 - cx * zoom,
+      y: rectEl.height / 2 - cy * zoom,
+      zoom,
+    });
+    setSelected(node.id);
+    setFlashId(node.id);
+    rerender();
+    onChange(graphRef.current.nodes, graphRef.current.edges, engine.viewport);
+    const t = setTimeout(() => setFlashId(null), 1600);
+    return () => clearTimeout(t);
+  }, [focusNode?.nonce]); // eslint-disable-line react-hooks/exhaustive-deps
 
   /** 一次原子变更：记历史 + 落盘 */
   const apply = useCallback(
@@ -771,6 +802,7 @@ export function BoardCanvas({
             key={n.id}
             node={n}
             selected={selected === n.id}
+            flash={flashId === n.id}
             editing={editingId === n.id}
             showAnchors={(selected === n.id || hoverNode === n.id) && editingId !== n.id}
             connectTarget={connect?.hoverId === n.id}

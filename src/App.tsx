@@ -40,6 +40,8 @@ export default function App() {
   const [menu, setMenu] = useState<ContextMenuState | null>(null);
   const [editing, setEditing] = useState<Editing>(null);
   const [draft, setDraft] = useState('');
+  // AI 引用跳转的目标节点（M5-6）：{nodeId, nonce} —— nonce 保证同一节点重复点也触发
+  const [focusNode, setFocusNode] = useState<{ id: string; nonce: number } | null>(null);
   const editRef = useRef<HTMLInputElement>(null);
 
   /* 应用外观设置（主题 / 玻璃 / 动画）到 <html>；platform 变化后重跑
@@ -125,6 +127,63 @@ export default function App() {
   const refreshBoards = useCallback(async (projectId: string) => {
     setBoards(await api.boardsList(projectId));
   }, []);
+
+  // ── AI 引用跳转（M5-6）：切到目标白板并高亮节点 ──
+  const jumpTo = useCallback(
+    (projectId: string, boardId: string, nodeId: string) =>
+      withBusy(async () => {
+        // 若目标项目/白板不是当前的，切过去
+        setActiveBoard((prevBoard) => {
+          if (prevBoard && prevBoard.id === boardId) return prevBoard;
+          return prevBoard; // 实际加载在下面 async
+        });
+        const projs = await api.projectsList();
+        const proj = projs.find((p) => p.id === projectId) ?? null;
+        if (proj) {
+          setActiveProject(proj);
+          setBoards(await api.boardsList(projectId));
+        }
+        const bf = await api.boardLoad(projectId, boardId);
+        setActiveBoard(bf);
+        setSidebarCollapsed(true); // 给画布腾地方
+        // 等画布挂载后再定位（用 nonce 保证每次都触发）
+        requestAnimationFrame(() =>
+          setFocusNode({ id: nodeId, nonce: Date.now() }),
+        );
+      }),
+    [],
+  );
+
+  useEffect(() => {
+    const onCustom = (e: Event) => {
+      const d = (e as CustomEvent<{ projectId: string; boardId: string; nodeId: string }>).detail;
+      if (d) jumpTo(d.projectId, d.boardId, d.nodeId);
+    };
+    window.addEventListener('lumen://jump-node', onCustom as EventListener);
+
+    let unlisten: (() => void) | undefined;
+    (async () => {
+      if (typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window) {
+        try {
+          const { listen } = await import('@tauri-apps/api/event');
+          unlisten = await listen<{ projectId: string; boardId: string; nodeId: string }>(
+            'lumen://jump-node',
+            (ev) => {
+              const d = ev.payload;
+              if (d) jumpTo(d.projectId, d.boardId, d.nodeId);
+            },
+          );
+        } catch {
+          /* 非 Tauri 忽略 */
+        }
+      }
+    })();
+
+    return () => {
+      window.removeEventListener('lumen://jump-node', onCustom as EventListener);
+      unlisten?.();
+    };
+  }, [jumpTo]);
 
   /* ── 打开白板：加载 board.json 到画布 ── */
   const openBoard = useCallback(
@@ -445,7 +504,14 @@ export default function App() {
 
         {/* 画布区：挂 CanvasEngine（M2-2 / M2-3） */}
         {activeBoard ? (
-          <BoardCanvas key={activeBoard.id} board={activeBoard} onChange={onCanvasChange} edgeStyle={settings.edgeStyle ?? 'curved'} guessMath={settings.guessMath} />
+          <BoardCanvas
+            key={activeBoard.id}
+            board={activeBoard}
+            onChange={onCanvasChange}
+            edgeStyle={settings.edgeStyle ?? 'curved'}
+            guessMath={settings.guessMath}
+            focusNode={focusNode && activeBoard.nodes.some((n) => n.id === focusNode.id) ? focusNode : null}
+          />
         ) : (
           <main className="board-canvas canvas-placeholder">
             <p className="placeholder-hint">
