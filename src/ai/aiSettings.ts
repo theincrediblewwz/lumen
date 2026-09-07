@@ -15,6 +15,8 @@ export interface AiSettings {
   temperature: number;
   /** 是否允许 AI 读取白板内容（隐私开关，关=只当普通聊天） */
   shareBoard: boolean;
+  /** 上下文 token 预算（发送给模型的历史+提示词上限，超出则压缩最旧历史）。 */
+  contextBudget: number;
 }
 
 export const DEFAULT_AI_SETTINGS: AiSettings = {
@@ -24,6 +26,7 @@ export const DEFAULT_AI_SETTINGS: AiSettings = {
   model: 'gpt-4o-mini',
   temperature: 0.7,
   shareBoard: true,
+  contextBudget: 8000,
 };
 
 const KEY = 'lumen.ai.v1';

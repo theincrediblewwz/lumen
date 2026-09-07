@@ -11,6 +11,7 @@ import {
 import { streamChatAgentic, type StreamHandle } from '../ai/aiClient';
 import type { ToolContext } from '../ai/tools';
 import { buildBoardOutline, buildSystemPrompt } from '../ai/boardContext';
+import { fitWithinBudget } from '../ai/budget';
 import { maskNodeRefs, unmaskNodeRefs } from '../ai/nodeRef';
 import { jumpToNode } from '../ai/nodeJump';
 import {
@@ -246,13 +247,16 @@ export function AiChat({ projectId, boardId, boardName, standalone, platform, on
     if (!text || busy || !configured) return;
     setInput('');
 
-    const history: ChatMessage[] = [
+    const rawHistory: ChatMessage[] = [
       { role: 'system', content: systemPrompt },
       ...messages
         .filter((m) => !m.error)
         .map((m) => ({ role: m.role, content: m.content }) as ChatMessage),
       { role: 'user', content: text },
     ];
+    // M5-4：把上下文压进 token 预算内——超长单条截断、最旧历史压成摘要，
+    // 始终保留系统提示词与本轮问题，避免超长请求被拒或烧钱。
+    const history = fitWithinBudget(rawHistory, settings.contextBudget).messages;
 
     setMessages((prev) => [
       ...prev,
@@ -594,6 +598,17 @@ function AiSettingsForm({
           step={0.1}
           value={s.temperature}
           onChange={(e) => patch({ temperature: Number(e.target.value) })}
+        />
+      </label>
+      <label className="ai-field">
+        <span>上下文预算 {s.contextBudget} tokens</span>
+        <input
+          type="range"
+          min={2000}
+          max={32000}
+          step={1000}
+          value={s.contextBudget}
+          onChange={(e) => patch({ contextBudget: Number(e.target.value) })}
         />
       </label>
       <label className="ai-check">
