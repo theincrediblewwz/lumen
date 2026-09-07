@@ -92,8 +92,49 @@
 }
 .ai-titlebar-actions {
   display: flex;
+  align-items: center;
   gap: 4px;
   -webkit-app-region: no-drag;
+  app-region: no-drag;
+}
+/* 独立窗口标题栏里的按钮都不参与拖拽 */
+.ai-titlebar.is-standalone-bar .ai-icon-btn,
+.ai-titlebar.is-standalone-bar .win-btn {
+  -webkit-app-region: no-drag;
+  app-region: no-drag;
+}
+
+/* 自绘窗口三键（Win/Linux） */
+.ai-wincontrols {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  margin-left: 6px;
+}
+.ai-wincontrols .win-btn {
+  width: 30px;
+  height: 26px;
+  border: none;
+  background: transparent;
+  border-radius: 6px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  color: var(--text-secondary, #52685f);
+  transition: background 0.12s ease, color 0.12s ease;
+}
+.ai-wincontrols .win-btn:hover {
+  background: var(--bg-node, #fff);
+  color: var(--text-primary, #1c2b26);
+}
+.ai-wincontrols .win-close:hover {
+  background: #e0503a;
+  color: #fff;
+}
+/* macOS：标题栏左侧给系统红绿灯留位 */
+.ai-root.is-mac .ai-titlebar {
+  padding-left: 78px;
 }
 .ai-icon-btn {
   width: 28px;

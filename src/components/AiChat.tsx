@@ -59,6 +59,9 @@ export function AiChat({ projectId, boardId, boardName, standalone, platform, on
   const handleRef = useRef<StreamHandle | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const configured = isAiConfigured(settings);
+  const isMac = platform === 'macos';
+  // 独立窗口在 Win/Linux 上自绘窗口控制（mac 用系统红绿灯，留白即可）
+  const showWinControls = !!standalone && !isMac;
 
   // 拉取白板结构做上下文
   useEffect(() => {
@@ -69,11 +72,20 @@ export function AiChat({ projectId, boardId, boardName, standalone, platform, on
       .catch(() => setBoard(null));
   }, [projectId, boardId]);
 
-  // 打开即根据配置决定是否弹设置
-  useEffect(() => {
-    if (!configured) setShowSettings(true);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+  // 窗口控制（独立窗口）
+  const winCtl = useCallback(async (action: 'minimize' | 'maximize' | 'close') => {
+    try {
+      const { getCurrentWindow } = await import('@tauri-apps/api/window');
+      const w = getCurrentWindow();
+      if (action === 'minimize') await w.minimize();
+      else if (action === 'maximize') await w.toggleMaximize();
+      else await w.close();
+    } catch {
+      /* 非 Tauri 环境忽略 */
+    }
   }, []);
+
+  // 默认进对话窗口，不自动弹设置；未配置时在输入区给出提示引导点 ⚙
 
   // 自动滚到底
   useEffect(() => {
@@ -168,22 +180,69 @@ export function AiChat({ projectId, boardId, boardName, standalone, platform, on
   };
 
   return (
-    <div className={`ai-root${standalone ? ' is-standalone' : ''}`} data-platform={platform}>
-      <header className="ai-titlebar" data-tauri-drag-region>
-        <span className="ai-title">AI 助手 · {boardName}</span>
+    <div
+      className={`ai-root${standalone ? ' is-standalone' : ''}${isMac && standalone ? ' is-mac' : ''}`}
+      data-platform={platform}
+    >
+      <header
+        className={`ai-titlebar${standalone ? ' is-standalone-bar' : ''}`}
+        {...(standalone ? { 'data-tauri-drag-region': true } : {})}
+      >
+        <span className="ai-title" {...(standalone ? { 'data-tauri-drag-region': true } : {})}>
+          AI 助手 · {boardName}
+        </span>
         <div className="ai-titlebar-actions">
           <button
             type="button"
             className="ai-icon-btn"
-            title="设置"
+            title={showSettings ? '返回对话' : '设置'}
+            aria-label="设置"
             onClick={() => setShowSettings((v) => !v)}
           >
             ⚙
           </button>
-          {onClose && (
-            <button type="button" className="ai-icon-btn" title="关闭" onClick={onClose}>
+          {/* 浮层模式：用回调关闭；独立窗口(非 mac)：自绘窗口三键 */}
+          {onClose && !standalone && (
+            <button type="button" className="ai-icon-btn" title="关闭" aria-label="关闭" onClick={onClose}>
               ✕
             </button>
+          )}
+          {showWinControls && (
+            <div className="ai-wincontrols">
+              <button
+                type="button"
+                className="win-btn"
+                title="最小化"
+                aria-label="最小化"
+                onClick={() => winCtl('minimize')}
+              >
+                <svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true">
+                  <path d="M1 5h8" stroke="currentColor" strokeWidth="1.1" />
+                </svg>
+              </button>
+              <button
+                type="button"
+                className="win-btn"
+                title="最大化"
+                aria-label="最大化"
+                onClick={() => winCtl('maximize')}
+              >
+                <svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true">
+                  <rect x="1.3" y="1.3" width="7.4" height="7.4" fill="none" stroke="currentColor" strokeWidth="1.1" />
+                </svg>
+              </button>
+              <button
+                type="button"
+                className="win-btn win-close"
+                title="关闭"
+                aria-label="关闭"
+                onClick={() => winCtl('close')}
+              >
+                <svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true">
+                  <path d="M1.5 1.5l7 7M8.5 1.5l-7 7" stroke="currentColor" strokeWidth="1.1" strokeLinecap="round" />
+                </svg>
+              </button>
+            </div>
           )}
         </div>
       </header>
