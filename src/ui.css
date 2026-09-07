@@ -59,7 +59,17 @@
   width: 224px;
   flex: 0 0 224px;
   border-right: var(--border-node) solid var(--border-color);
-  background: var(--bg-chrome);
+  /* 顶部一抹薄荷高光渐入，避免整块死板的灰底 */
+  background:
+    linear-gradient(180deg, var(--chrome-grad-a), var(--chrome-grad-b) 160px),
+    var(--bg-chrome);
+}
+
+/* 第二栏（白板栏）稍亮一档，与项目栏拉出纵深 */
+.pane-boards {
+  background:
+    linear-gradient(180deg, var(--chrome-grad-a), var(--chrome-grad-b) 160px),
+    var(--bg-chrome-2);
 }
 
 .pane-head {
@@ -251,3 +261,4 @@
   font-size: 14px;
   color: var(--text-secondary);
 }
+

@@ -38,6 +38,12 @@
   --ambient-a: rgba(46, 90, 78, 0.16);
   --ambient-b: rgba(84, 130, 200, 0.14);
   --ambient-c: rgba(210, 150, 90, 0.12);
+
+  /* chrome 分栏第二色 / 顶部渐变高光的安全默认（各主题可覆盖；
+     默认与 --bg-chrome 同色 + 透明渐变，等于不改观感） */
+  --bg-chrome-2: var(--bg-chrome);
+  --chrome-grad-a: transparent;
+  --chrome-grad-b: transparent;
 }
 
 /* 浅色（默认） */
@@ -45,15 +51,19 @@
 :root[data-theme='light'] {
   --bg-canvas: #ffffff; /* 白板主区：明亮纯白 */
   --bg-node: #ffffff; /* 节点卡片 */
-  /* 外壳（侧边栏 + 标题栏）：近白、带一丝清新的冷青绿，靠发丝边框+微弱强调
-     色与主区拉层次，而非灰色块（此前 #f6f7f9 偏灰） */
-  --bg-chrome: #fbfdfc;
-  --bg-hover: rgba(46, 90, 78, 0.08);
+  /* 外壳（侧边栏 + 标题栏）：清新薄荷白，靠极浅的冷绿渐变 + 发丝边框与主区
+     纯白拉出层次；不再是灰调（此前 #fbfdfc 偏灰白）。
+     chrome-2 供第二栏（白板栏）稍亮一档，做栏间纵深。 */
+  --bg-chrome: #eef7f2;
+  --bg-chrome-2: #f4faf7;
+  --chrome-grad-a: rgba(46, 130, 105, 0.06); /* 顶部薄荷高光 */
+  --chrome-grad-b: rgba(46, 130, 105, 0.0);
+  --bg-hover: rgba(46, 90, 78, 0.09);
   --grid-dot: #eceef1; /* 画布点阵网格：白底上更柔和 */
-  --border-color: #e9eeec;
-  --border-strong: #dbe3e0;
+  --border-color: #dcece4;
+  --border-strong: #cbe0d6;
   --text-primary: #1c1e21;
-  --text-secondary: #5f6b66;
+  --text-secondary: #5a6b64;
   --accent: #2e5a4e; /* 墨绿：全应用唯一的彩色 */
   --accent-soft: rgba(46, 90, 78, 0.1);
   --glass-rgb: 250, 251, 252;
@@ -168,7 +178,9 @@ html.glass-on body {
   height: 44px;
   padding: 0 8px 0 16px;
   border-bottom: var(--border-node) solid var(--border-color);
-  background: var(--bg-chrome);
+  background:
+    linear-gradient(180deg, var(--chrome-grad-a), var(--chrome-grad-b) 70%),
+    var(--bg-chrome);
   user-select: none;
   /* 整条为拖拽区；交互控件用 data-tauri-drag-region 之外 + no-drag 类抵消 */
   -webkit-app-region: drag;
@@ -1666,4 +1678,5 @@ html.native-glass .node-card {
 }
 .tt-empty { margin-top: 5px; font-size: 12px; color: var(--text-secondary); font-style: italic; }
 .tt-docs { margin-top: 6px; font-size: 11.5px; color: var(--accent); }
+
 
