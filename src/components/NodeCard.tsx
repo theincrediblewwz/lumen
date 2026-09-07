@@ -102,7 +102,7 @@ export const NodeCard = memo(function NodeCard({
   onEditCancel: () => void;
   onExitEdit: () => void;
   onMeasure: (id: string, w: number, h: number) => void;
-  onHoverChange: (hovering: boolean) => void;
+  onHoverChange: (hovering: boolean, clientX: number, clientY: number) => void;
 }) {
   const docCount = node.docs.length;
   const cardRef = useRef<HTMLDivElement>(null);
@@ -129,8 +129,8 @@ export const NodeCard = memo(function NodeCard({
         borderLeftColor: node.color || undefined,
       }}
       onPointerDown={(e) => onPointerDown(e, node.id)}
-      onPointerEnter={() => onHoverChange(true)}
-      onPointerLeave={() => onHoverChange(false)}
+      onPointerEnter={(e) => onHoverChange(true, e.clientX, e.clientY)}
+      onPointerLeave={(e) => onHoverChange(false, e.clientX, e.clientY)}
       onDoubleClick={(e) => {
         e.stopPropagation();
         onStartEdit(node.id);
@@ -203,4 +203,5 @@ export const NodeCard = memo(function NodeCard({
     </div>
   );
 });
+
 

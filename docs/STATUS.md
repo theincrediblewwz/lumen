@@ -3,7 +3,7 @@
 > **开工前先读本文件；每完成一件事就更新本文件。**
 > 本文件只记录「进度」。计划与任务清单见 [PLAN.md](./PLAN.md)，设计与决策见 [DESIGN.md](./DESIGN.md)。
 
-**最后更新**：2026-09-07 11:35 (Asia/Shanghai)
+**最后更新**：2026-09-07 12:20 (Asia/Shanghai)
 
 ---
 
@@ -60,6 +60,9 @@
 | **修复连线完全不可见（根因）** | 连线 SVG 原画在 0×0 世界层内，WebView2 不渲染零尺寸 SVG。改为铺满画布的全尺寸 SVG 覆盖层、屏幕坐标绘制、视口变化实时重算（ADR-022）。typecheck/test(51)/build/secrets 全过 |
 | **连线锚点 4→1** | 四点拖出的线一样、冗余且误导，改为节点右侧单个连线手柄（实心墨绿+中心白点）。typecheck/test(51)/build/secrets 全过 |
 | **连线样式设置**：曲线/直线/折线 | geometry.edgeGeometry 加 style 参数+5 单测(56 passed)、settings.edgeStyle 持久化、SettingsPanel 分段控件、切换即时重绘 |
+| **修复曲线退化成直线** | 贝塞尔控制柄改为沿弦垂直方向弓出，任意摆位都有明显弧度 |
+| **M2-6 悬停简介 Tooltip** | 悬停节点 400ms 浮出只读预览卡（标题+问题前 4 行+文档数） |
+| **M2-7 节点内容面板 NodePanel** | 点击节点右侧停靠：编辑标题/问题、7 色标记、文档列表、二次确认删除；Esc 关闭 |
 
 ## 三、进行中
 
@@ -82,8 +85,8 @@
 ## 五、下一步（接下来我做的）
 
 1. **等用户验收画布 v1** 手感与持久化
-3. 节点悬停简介 Tooltip / 节点内容面板（NodePanel）
-4. M4 阅读窗口（移植 mdread 内核）
+3. **M4** 阅读窗口：md 导入 + mdread 内核移植（点节点文档打开阅读器）
+4. 节点配色/连线标签的更多样式微调（按需）
 
 
 ## 六、阻塞项
@@ -113,6 +116,7 @@
 | MCP `apply_patch` 对 JSON 上下文不稳 | 给 `package.json` 打小补丁时报「patched」却未生效（同尺寸）；改用 `write_file` 全量覆盖更可靠 |
 | **在 Windows 上跑出 GUI 不代表平台错了** | Tauri 用系统 WebView（Win=WebView2 / mac=WKWebView），同一套 React 代码在开发机（本机是 Windows，故产物为 `lumen.exe`）即可调试；「主目标 macOS」指最终发布用 mac 构建。macOS 的 `.app`/`.dmg` 必须在 mac 或 CI mac runner 上 `tauri build` |
 | **自定义标题栏控件必须退出拖拽区** | 整条 titlebar 设 `-webkit-app-region: drag` 后，内部按钮要加 `no-drag`，否则点击被窗口拖拽吞掉 |
+
 
 
 

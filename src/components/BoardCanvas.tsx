@@ -14,7 +14,8 @@ import {
 import { edgeGeometry, straightPath, boxContains, type Box, type EdgeStyle } from '../canvas/geometry';
 import type { BoardFile, BoardNode, BoardEdge } from '../api';
 import { NodeCard } from './NodeCard';
-import { NodeBubble } from './NodeBubble';
+import { NodePanel } from './NodePanel';
+import { NodeTooltip } from './NodeTooltip';
 import { ContextMenu, type ContextMenuState } from './ContextMenu';
 
 /** 白板图状态：节点 + 连线由同一个历史栈驱动，撤销/重做覆盖两者 */
@@ -66,8 +67,11 @@ export function BoardCanvas({
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editingEdge, setEditingEdge] = useState<string | null>(null);
   const [menu, setMenu] = useState<ContextMenuState | null>(null);
-  const [bubble, setBubble] = useState<{ id: string; x: number; y: number } | null>(null);
+  const [panelId, setPanelId] = useState<string | null>(null);
   const [hoverNode, setHoverNode] = useState<string | null>(null);
+  /** 悬停简介 tooltip：悬停 400ms 后出现 */
+  const [tip, setTip] = useState<{ id: string; x: number; y: number } | null>(null);
+  const tipTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   /** 每个节点测得的真实布局尺寸（世界单位；不随 transform 缩放变化） */
   const sizesRef = useRef<Record<string, { w: number; h: number }>>({});
@@ -89,7 +93,7 @@ export function BoardCanvas({
     setSelectedEdge(null);
     setEditingId(null);
     setEditingEdge(null);
-    setBubble(null);
+    setPanelId(null);
     rerender();
   }, [board.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -155,6 +159,19 @@ export function BoardCanvas({
         }
         return;
       }
+      // 正在输入框/文本域中打字时，不触发画布级快捷键（避免删节点等误操作）
+      const t = e.target as HTMLElement | null;
+      const typing =
+        !!t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable);
+      if (typing) return;
+
+      if (e.key === 'Escape') {
+        if (panelId) {
+          e.preventDefault();
+          setPanelId(null);
+        }
+        return;
+      }
       if ((e.key === 'Delete' || e.key === 'Backspace') && editingId === null && editingEdge === null) {
         if (selectedEdge) {
           e.preventDefault();
@@ -167,7 +184,7 @@ export function BoardCanvas({
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [doUndo, doRedo, selectedEdge, selected, editingId, editingEdge, removeEdge]);
+  }, [doUndo, doRedo, selectedEdge, selected, editingId, editingEdge, removeEdge, panelId]);
 
   /* ── 拖拽状态 ── */
   const drag = useRef<
@@ -210,7 +227,8 @@ export function BoardCanvas({
     if (e.button !== 0) return;
     setSelected(null);
     setSelectedEdge(null);
-    setBubble(null);
+    setPanelId(null);
+    clearTip();
     const vp = engine.viewport;
     drag.current = { kind: 'pan', startX: e.clientX, startY: e.clientY, vx: vp.x, vy: vp.y };
     (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
@@ -429,25 +447,58 @@ export function BoardCanvas({
     e.stopPropagation();
     setSelectedEdge(id);
     setSelected(null);
-    setBubble(null);
+    setPanelId(null);
   };
 
-  /* ── 节点气泡 / 编辑 ── */
-  const openBubble = (id: string) => {
+  /* ── 点击节点：选中并在右侧打开内容面板（NodePanel） ── */
+  const openPanel = (id: string) => {
     if (suppressClick.current) {
       suppressClick.current = false;
       return;
     }
-    const n = nodes.find((x) => x.id === id);
-    const r = rect();
-    if (!n) return;
-    const scr = engine.toScreen({ x: n.x, y: n.y });
-    setBubble({ id, x: r.left + scr.x, y: r.top + scr.y });
+    setSelected(id);
+    setSelectedEdge(null);
+    setPanelId(id);
   };
 
   const startEdit = (id: string) => {
-    setBubble(null);
     setEditingId(id);
+  };
+
+  /* ── 悬停简介 tooltip（400ms 延时） ── */
+  const clearTip = useCallback(() => {
+    if (tipTimer.current) {
+      clearTimeout(tipTimer.current);
+      tipTimer.current = null;
+    }
+    setTip(null);
+  }, []);
+
+  const onNodeHover = useCallback(
+    (id: string, hovering: boolean, clientX: number, clientY: number) => {
+      setHoverNode((cur) => (hovering ? id : cur === id ? null : cur));
+      if (!hovering) {
+        clearTip();
+        return;
+      }
+      // 编辑中 / 已在面板里看该节点 / 正在拖拽时不弹 tooltip
+      if (editingId || panelId === id || drag.current) return;
+      if (tipTimer.current) clearTimeout(tipTimer.current);
+      tipTimer.current = setTimeout(() => setTip({ id, x: clientX, y: clientY }), 400);
+    },
+    [clearTip, editingId, panelId],
+  );
+
+  /** 设置节点颜色标记 */
+  const setNodeColor = (id: string, color: string | null) => {
+    const target = nodes.find((n) => n.id === id);
+    if (!target || (target.color ?? null) === color) return;
+    apply({
+      nodes: nodes.map((n) =>
+        n.id === id ? { ...n, color, updated_at: new Date().toISOString() } : n,
+      ),
+      edges,
+    });
   };
 
   const addNodeAtScreen = (clientX: number, clientY: number) => {
@@ -483,7 +534,8 @@ export function BoardCanvas({
     });
     if (selected === id) setSelected(null);
     if (editingId === id) setEditingId(null);
-    if (bubble?.id === id) setBubble(null);
+    if (panelId === id) setPanelId(null);
+    clearTip();
   };
   removeNodeRef.current = removeNode;
 
@@ -667,14 +719,14 @@ export function BoardCanvas({
             connectTarget={connect?.hoverId === n.id}
             onPointerDown={onNodePointerDown}
             onAnchorPointerDown={onAnchorPointerDown}
-            onOpen={openBubble}
+            onOpen={openPanel}
             onStartEdit={startEdit}
             onContextMenu={onNodeContextMenu}
             onCommit={commitNode}
             onEditCancel={() => setEditingId(null)}
             onExitEdit={() => setEditingId(null)}
             onMeasure={onMeasure}
-            onHoverChange={(hovering) => setHoverNode((cur) => (hovering ? n.id : cur === n.id ? null : cur))}
+            onHoverChange={(hovering, cx, cy) => onNodeHover(n.id, hovering, cx, cy)}
           />
         ))}
       </div>
@@ -709,10 +761,23 @@ export function BoardCanvas({
         </div>
       )}
 
-      {bubble && (() => {
-        const bn = nodes.find((n) => n.id === bubble.id);
-        return bn ? (
-          <NodeBubble node={bn} anchor={{ x: bubble.x, y: bubble.y }} onClose={() => setBubble(null)} onEdit={startEdit} />
+      {/* 悬停简介 tooltip（不拦截指针） */}
+      {tip && !panelId && (() => {
+        const tn = nodes.find((n) => n.id === tip.id);
+        return tn ? <NodeTooltip node={tn} x={tip.x} y={tip.y} /> : null;
+      })()}
+
+      {/* 节点内容面板（选中节点后停靠右侧） */}
+      {panelId && (() => {
+        const pn = nodes.find((n) => n.id === panelId);
+        return pn ? (
+          <NodePanel
+            node={pn}
+            onCommit={commitNode}
+            onColor={setNodeColor}
+            onDelete={removeNode}
+            onClose={() => setPanelId(null)}
+          />
         ) : null;
       })()}
 
@@ -720,5 +785,6 @@ export function BoardCanvas({
     </div>
   );
 }
+
 
 

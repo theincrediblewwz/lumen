@@ -101,17 +101,20 @@ export function edgeGeometry(a: Box, b: Box, style: EdgeStyle = 'curved'): EdgeG
     return { d, start, end, mid: waypoints[1] === undefined ? start : waypoints[Math.floor(waypoints.length / 2)] };
   }
 
-  // curved（默认）
-  const dist = len(end.x - start.x, end.y - start.y);
-  const handle = Math.max(28, Math.min(dist * 0.42, 170));
-
-  // 离开源/目标节点的外法向（近似为「边框点相对中心」的方向）
-  const oa = { x: start.x - ca.x, y: start.y - ca.y };
-  const ob = { x: end.x - cb.x, y: end.y - cb.y };
-  const la = len(oa.x, oa.y);
-  const lb = len(ob.x, ob.y);
-  const c1: Pt = { x: start.x + (oa.x / la) * handle, y: start.y + (oa.y / la) * handle };
-  const c2: Pt = { x: end.x + (ob.x / lb) * handle, y: end.y + (ob.y / lb) * handle };
+  // curved（默认）：控制点沿弦 1/3、2/3 处并朝垂直方向弓出一段，
+  // 保证无论节点如何摆放都有明显且一致的弧度（避免同高并排时退化成直线）。
+  const dx = end.x - start.x;
+  const dy = end.y - start.y;
+  const dist = len(dx, dy);
+  // 弦方向单位向量与其垂直向量
+  const ux = dx / dist;
+  const uy = dy / dist;
+  const px = -uy;
+  const py = ux;
+  // 弓高：随距离自适应，短线也有可见弧、长线不过分夸张
+  const bow = Math.max(18, Math.min(dist * 0.22, 90));
+  const c1: Pt = { x: start.x + ux * (dist / 3) + px * bow, y: start.y + uy * (dist / 3) + py * bow };
+  const c2: Pt = { x: start.x + ux * (dist * 2 / 3) + px * bow, y: start.y + uy * (dist * 2 / 3) + py * bow };
 
   const mid = bezierMid(start, c1, c2, end);
   const d = `M ${start.x} ${start.y} C ${c1.x} ${c1.y} ${c2.x} ${c2.y} ${end.x} ${end.y}`;

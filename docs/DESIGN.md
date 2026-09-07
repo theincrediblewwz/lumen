@@ -710,3 +710,5 @@ lumen/
 | ADR-022 | 连线层改为「覆盖整块画布的全尺寸 SVG 覆盖层、用屏幕坐标绘制」，而非画在 0×0 世界层内 | 初版把连线 SVG 放进 `.canvas-world`（该容器 `width:0;height:0`，靠 transform 定位节点），但 Chromium/WebView2 对「零尺寸视口的 SVG」常直接不绘制——导致连线与拖拽预览完全不可见（表现为"拖不出线/没有线"）。改为 `.edge-layer` 绝对定位铺满画布容器(`inset:0;width/height:100%`)，节点屏幕包围盒 = 世界坐标经 `engine.toScreen` + `zoom` 换算(screenBoxOf)，几何用屏幕坐标算并把视口签名 vpSig 并入 useMemo 依赖，故平移/缩放时连线实时重算跟随；线宽用固定屏幕像素(不再需要 non-scaling-stroke)。edge-layer 在 DOM 上位于世界层之前、pointer-events:none（仅命中区 path 开启），故连线在节点卡片之下且不挡节点交互 |
 
 | ADR-023 | 连线样式做成可切换设置（曲线/直线/折线），几何在同一 edgeGeometry 里按 style 分支 | 用户希望连线不止一种形状。端点吸附(borderPoint)对三种样式一致，仅路径生成不同：curved=三次贝塞尔(控制柄沿离开节点外法向)、straight=两吸附点直线、stepped=正交折线(按主导轴 H-V-H/V-H-V，中点取拐点放标签)。样式存 Settings.edgeStyle 持久化、经 App 传入 BoardCanvas 并入 laidEdges 的 useMemo 依赖，切换即时重绘；纯函数分支可单测（geometry.test +5） |
+
+| ADR-024 | 节点交互升级为「悬停 Tooltip + 选中停靠 NodePanel」，取代点击浮动气泡 | 点击浮动气泡(NodeBubble)会遮挡画布且定位漂移。改为：悬停 400ms 出只读简介 Tooltip(轻量、pointer-events:none)；点击节点在画布右侧停靠 NodePanel(常驻、可滚动)承载 查看/编辑标题与完整问题、颜色标记(node.color→卡片左边框色条)、关联文档列表(M4 接入导入/打开)、二次确认删除。为防在面板文本域打字时触发画布级快捷键(如 Backspace 删节点)，window keydown 增加"目标为 input/textarea/contenteditable 则跳过"的守卫。NodeBubble 组件废弃删除 |
