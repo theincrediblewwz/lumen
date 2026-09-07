@@ -39,10 +39,10 @@ export const DEFAULT_SETTINGS: Settings = {
   glassBlur: 60,
   motion: true,
   edgeStyle: 'curved',
-  guessMath: false,
+  guessMath: true,
 };
 
-const KEY = 'lumen.settings.v1';
+const KEY = 'lumen.settings.v2';
 
 export function loadSettings(): Settings {
   try {
@@ -85,5 +85,6 @@ export function applySettings(s: Settings, platform = ''): void {
   root.style.setProperty('--glass-alpha', alpha.toFixed(3));
   root.style.setProperty('--glass-blur', `${blur.toFixed(1)}px`);
 }
+
 
 

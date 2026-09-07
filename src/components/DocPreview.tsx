@@ -27,7 +27,7 @@ export function DocPreview({
   onOpen: () => void;
   onRemove: () => void;
 }) {
-  const key = `${projectId}/${boardId}/${doc.path}`;
+  const key = `${projectId}/${boardId}/${doc.path}::${guessMath}`;
   const [html, setHtml] = useState<string | null>(cache.get(key) ?? null);
   const [err, setErr] = useState(false);
   const scaleRef = useRef<HTMLDivElement>(null);
@@ -39,8 +39,8 @@ export function DocPreview({
       .docRead(projectId, boardId, doc.path)
       .then((md) => {
         if (!alive) return;
-        // 只取前若干字符，预览无需整篇
-        const snippet = md.slice(0, 1200);
+        // 取开头一段做预览：字号正常、少显示几行也要看清内容
+        const snippet = md.slice(0, 900);
         const { html: rendered } = renderMarkdown(snippet, undefined, { guessMath });
         cache.set(key, rendered);
         setHtml(rendered);
@@ -93,3 +93,4 @@ export function DocPreview({
     </div>
   );
 }
+

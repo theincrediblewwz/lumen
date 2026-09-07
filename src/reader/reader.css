@@ -44,6 +44,32 @@
   white-space: nowrap;
 }
 
+/* 独立窗口：自绘标题栏（无系统装饰，跟随软件主体） */
+.reader-bar.is-standalone-bar { height: 44px; -webkit-app-region: drag; app-region: drag; }
+.reader-bar.is-standalone-bar.is-mac { padding-left: 78px; }  /* 给 macOS 红绿灯留位 */
+.reader-bar.is-standalone-bar .reader-tools,
+.reader-bar.is-standalone-bar .reader-btn,
+.reader-bar.is-standalone-bar .reader-seg,
+.reader-bar.is-standalone-bar .win-btn { -webkit-app-region: no-drag; app-region: no-drag; }
+
+/* 独立窗口右侧的 Windows 三键 */
+.reader-wincontrols { display: inline-flex; align-items: center; gap: 2px; margin-left: 6px; }
+.reader-wincontrols .win-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 30px;
+  color: var(--text-secondary);
+  background: transparent;
+  border: none;
+  border-radius: 7px;
+  cursor: pointer;
+  transition: background 140ms ease, color 140ms ease;
+}
+.reader-wincontrols .win-btn:hover { background: var(--bg-node); color: var(--text-primary); }
+.reader-wincontrols .win-close:hover { background: #e0503a; color: #fff; }
+
 .reader-tools {
   display: flex;
   align-items: center;
@@ -363,3 +389,4 @@
   .reader-toc { display: none; }
   .reader-pageflow { padding: 24px 20px 100px; }
 }
+

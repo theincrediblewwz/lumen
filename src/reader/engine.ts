@@ -175,6 +175,39 @@ const mathPlugin: PluginSimple = (md) => {
     `<div class="math math-block" data-tex="${escapeAttr(tokens[idx].content)}"></div>\n`;
 };
 
+/* ── 定界符归一化：把 LaTeX/GPT 常见的 \(…\) \[…\] 转成 $…$ / $$…$$ ── */
+
+/**
+ * 归一化数学定界符（始终执行，与 guessMath 无关）：
+ *  - `\(  …  \)`  → `$…$`   （行内）
+ *  - `\[  …  \]`  → `$$…$$`（块级，两侧补空行以便 markdown-it 块规则识别）
+ *  - 独占整行、以 `$$` 成对包裹的行保持不变。
+ *
+ * 这是「公式变红不渲染」的主因修复：GPT 导出的正文里公式常用 \(\) \[\]，
+ * 之前引擎只认 $，未转换的 `\(` 残留后又被猜测渲染裹进公式 → KaTeX 报错标红。
+ * 跳过代码围栏与行内代码，避免误伤代码里的反斜杠。
+ */
+export function normalizeMathDelims(src: string): string {
+  // 先按代码围栏切块（奇数段是围栏，原样保留）
+  const parts = src.split(/(```[\s\S]*?```|~~~[\s\S]*?~~~)/g);
+  return parts
+    .map((part, i) => (i % 2 === 1 ? part : convertDelimsOutsideCode(part)))
+    .join('');
+}
+
+function convertDelimsOutsideCode(text: string): string {
+  // 保护行内代码 `…`（奇数段），只在普通段转换
+  const segs = text.split(/(`[^`\n]*`)/g);
+  return segs
+    .map((s, i) => {
+      if (i % 2 === 1) return s;
+      return s
+        .replace(/\\\[\s*([\s\S]+?)\s*\\\]/g, (_m, inner) => `\n\n$$\n${inner}\n$$\n\n`)
+        .replace(/\\\(\s*([\s\S]+?)\s*\\\)/g, (_m, inner) => `$${inner}$`);
+    })
+    .join('');
+}
+
 /* ── 猜测渲染：识别未用 $ 分界符、但明显是数学的行内片段 ── */
 
 /**
@@ -185,10 +218,23 @@ const mathPlugin: PluginSimple = (md) => {
 export function looksLikeMath(s: string): boolean {
   const t = s.trim();
   if (!t) return false;
-  // 含 LaTeX 反斜杠命令：\varepsilon \sim \frac 等
-  if (/\\[a-zA-Z]{2,}/.test(t)) return true;
-  // 含上标/下标且旁边有字母数字：x^2, a_{ij}, |x|^{1/3}
-  if (/[\^_]\{?[^\s]/.test(t) && /[A-Za-z0-9|)\]}]/.test(t)) return true;
+  // 纯自然语言单词（全字母、无数学符号）直接排除，避免误伤英文
+  if (/^[A-Za-z]+$/.test(t)) return false;
+  // 1) 含 LaTeX 反斜杠命令：\varepsilon \sim \frac \alpha 等
+  if (/\\[a-zA-Z]+/.test(t)) return true;
+  // 2) 含上标/下标：x^2, a_{ij}, |x|^{1/3}, 10^{-3}
+  if (/[\^_]/.test(t) && /[A-Za-z0-9|)\]}]/.test(t)) return true;
+  // 3) 绝对值/范数：|x|, \|v\|, |a-b|（成对竖线且内部有内容）
+  if (/\|[^|]+\|/.test(t)) return true;
+  // 4) 比较/关系链：a<b, x>=0, m != n, p \le q（含关系符且两侧有变量/数字）
+  if (/[A-Za-z0-9)\]}]\s*(<=|>=|!=|<|>|=|≤|≥|≠)\s*[A-Za-z0-9(\\[{.-]/.test(t)) return true;
+  // 5) 函数/导数记号：f(x), g'(x), \sin(x)（字母后紧跟括号，且整体不是纯英文句子）
+  if (/[A-Za-z]'?\([A-Za-z0-9,\s|+\-*/^_]*\)/.test(t) && /['^_\\|]/.test(t)) return true;
+  // 6) 带希腊/运算的算式：含 + - * / 且含变量或希腊字母
+  if (/[+\-*/](?=[^\s])/.test(t) && /[A-Za-z\\]/.test(t) && /[0-9A-Za-z}]/.test(t) && t.length <= 40) {
+    // 排除普通带连字符英文词（如 well-known）
+    if (!/^[A-Za-z]+(-[A-Za-z]+)+$/.test(t)) return true;
+  }
   return false;
 }
 
@@ -311,7 +357,9 @@ export interface RenderOptions {
  */
 export function renderMarkdown(src: string, engine?: MD, opts?: RenderOptions): RenderResult {
   const md = engine ?? createEngine();
-  const source = opts?.guessMath ? preprocessGuessMath(src) : src;
+  // 始终先归一化 \(\) \[\] 定界符（修复公式标红不渲染）；再按需猜测渲染
+  const normalized = normalizeMathDelims(src);
+  const source = opts?.guessMath ? preprocessGuessMath(normalized) : normalized;
   const env = {};
   const tokens = md.parse(source, env);
   const toc: TocItem[] = [];
@@ -341,4 +389,5 @@ export function renderMarkdown(src: string, engine?: MD, opts?: RenderOptions): 
   const html = md.renderer.render(tokens, md.options, env);
   return { html, toc };
 }
+
 

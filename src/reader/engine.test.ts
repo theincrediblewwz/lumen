@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { renderMarkdown, slugify, createEngine, looksLikeMath, preprocessGuessMath } from './engine';
+import { renderMarkdown, slugify, createEngine, looksLikeMath, preprocessGuessMath, normalizeMathDelims } from './engine';
 
 describe('slugify', () => {
   it('英文标题转小写连字符', () => {
@@ -151,6 +151,40 @@ describe('preprocessGuessMath（猜测渲染）', () => {
   });
 });
 
+describe('normalizeMathDelims（定界符归一化）', () => {
+  it('把 \\(…\\) 转成 $…$', () => {
+    expect(normalizeMathDelims('误差 \\(x^2\\) 收敛')).toBe('误差 $x^2$ 收敛');
+  });
+  it('把 \\[…\\] 转成块级 $$…$$', () => {
+    const out = normalizeMathDelims('见 \\[ E=mc^2 \\] 完');
+    expect(out).toContain('$$\nE=mc^2\n$$');
+  });
+  it('不动代码围栏内的反斜杠括号', () => {
+    const src = '```\n\\(x\\)\n```';
+    expect(normalizeMathDelims(src)).toBe(src);
+  });
+  it('不动行内代码内的反斜杠括号', () => {
+    expect(normalizeMathDelims('代码 `\\(x\\)` 保留')).toBe('代码 `\\(x\\)` 保留');
+  });
+  it('renderMarkdown 始终归一化（无需 guessMath）', () => {
+    const { html } = renderMarkdown('误差 \\(|\\varepsilon|^{1/3}\\sim\\delta\\) 收敛');
+    expect(html).toContain('class="math math-inline"');
+    expect(html).not.toContain('\\(');
+  });
+});
+
+describe('looksLikeMath 扩展模式', () => {
+  it('识别绝对值/关系/函数记号', () => {
+    expect(looksLikeMath('|x|')).toBe(true);
+    expect(looksLikeMath('x<y')).toBe(true);
+    expect(looksLikeMath("f'(x)")).toBe(true);
+  });
+  it('普通带连字符英文不误判', () => {
+    expect(looksLikeMath('well-known')).toBe(false);
+    expect(looksLikeMath('ChatGPT')).toBe(false);
+  });
+});
+
 describe('renderMarkdown - guessMath 选项', () => {
   it('开启后裸数学被渲染为公式占位', () => {
     const { html } = renderMarkdown('标度 |\\varepsilon|^{1/3}\\sim\\delta 明显', undefined, { guessMath: true });
@@ -161,3 +195,4 @@ describe('renderMarkdown - guessMath 选项', () => {
     expect(html).not.toContain('math-inline');
   });
 });
+

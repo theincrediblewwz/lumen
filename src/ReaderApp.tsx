@@ -18,6 +18,7 @@ export function ReaderApp() {
   const title = params.get('title') ?? path.replace(/^docs\//, '').replace(/\.(md|markdown)$/i, '');
 
   const settings = loadSettings();
+  const [platform, setPlatform] = useState<string>('');
   const [state, setState] = useState<
     { kind: 'loading' } | { kind: 'ok'; md: string } | { kind: 'error'; msg: string }
   >({ kind: 'loading' });
@@ -26,6 +27,11 @@ export function ReaderApp() {
   useEffect(() => {
     applySettings({ ...settings, glass: false });
   }, [settings]);
+
+  // 取平台：决定自绘标题栏用 macOS 红绿灯留白还是 Windows 三键
+  useEffect(() => {
+    api.appInfo().then((i) => setPlatform(i.platform)).catch(() => {});
+  }, []);
 
   useEffect(() => {
     document.title = `${title} — 脉络 Lumen`;
@@ -48,6 +54,7 @@ export function ReaderApp() {
   return (
     <ReaderView
       standalone
+      platform={platform}
       title={title}
       markdown={state.md}
       docKey={`${projectId}/${boardId}/${path}`}

@@ -58,15 +58,18 @@ export async function openReaderWindow(a: OpenReaderArgs): Promise<void> {
 
   const win = new WebviewWindow(label, {
     url: `index.html?${params.toString()}`,
-    title: `${a.title} — 脉络阅读`,
+    title: `${a.title} — 脉络 Lumen`,
     width: 860,
     height: 900,
     minWidth: 480,
     minHeight: 400,
     resizable: true,
     center: true,
-    // 阅读窗口用系统标准装饰（有标题栏/红绿灯），与主窗自绘标题栏区分
-    decorations: true,
+    // 阅读窗口与主窗一致：隐藏系统装饰，改用应用自绘标题栏（跟随软件主体，
+    // 不再出现 Windows 原生标题栏那种割裂感）。macOS 用 Overlay 保留红绿灯。
+    decorations: false,
+    titleBarStyle: 'overlay',
+    hiddenTitle: true,
   });
 
   win.once('tauri://error', (e) => {
@@ -75,3 +78,4 @@ export async function openReaderWindow(a: OpenReaderArgs): Promise<void> {
     window.dispatchEvent(new CustomEvent<OpenReaderArgs>(OPEN_READER_EVENT, { detail: a }));
   });
 }
+

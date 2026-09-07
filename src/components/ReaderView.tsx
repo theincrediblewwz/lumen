@@ -32,6 +32,7 @@ export function ReaderView({
   onClose,
   standalone = false,
   guessMath = false,
+  platform = '',
 }: {
   title: string;
   markdown: string;
@@ -39,7 +40,10 @@ export function ReaderView({
   onClose?: () => void;
   standalone?: boolean;
   guessMath?: boolean;
+  /** 独立窗口时用于自绘标题栏（'macos' 留红绿灯位；其它画 Win 三键） */
+  platform?: string;
 }) {
+  const isMac = platform === 'macos';
   const [prefs, setPrefs] = useState<ReaderPrefs>(() => loadPrefs());
   const [activeSlug, setActiveSlug] = useState<string>('');
   const [pageInfo, setPageInfo] = useState<{ pages: number; current: number; step: number }>({
@@ -202,6 +206,21 @@ export function ReaderView({
     el.scrollBy({ left: dir * pageInfo.step * 2, behavior: 'smooth' });
   };
 
+  // 独立窗口的窗口控制（无系统装饰，自绘）
+  const winCtl = useCallback(async (action: 'minimize' | 'maximize' | 'close') => {
+    try {
+      const { getCurrentWindow } = await import('@tauri-apps/api/window');
+      const w = getCurrentWindow();
+      if (action === 'minimize') await w.minimize();
+      else if (action === 'maximize') await w.toggleMaximize();
+      else await w.close();
+    } catch {
+      /* 非 Tauri 环境忽略 */
+    }
+  }, []);
+
+  const showWinControls = standalone && !isMac;
+
   return (
     <div
       ref={rootRef}
@@ -210,8 +229,11 @@ export function ReaderView({
       }`}
       style={{ ['--reader-font-scale' as string]: String(prefs.fontScale / 100) }}
     >
-      <header className="reader-bar">
-        <h1 className="reader-title" title={title}>{title}</h1>
+      <header
+        className={`reader-bar${standalone ? ' is-standalone-bar' : ''}${isMac && standalone ? ' is-mac' : ''}`}
+        {...(standalone ? { 'data-tauri-drag-region': true } : {})}
+      >
+        <h1 className="reader-title" title={title} {...(standalone ? { 'data-tauri-drag-region': true } : {})}>{title}</h1>
         <div className="reader-tools">
           <div className="reader-seg">
             <button
@@ -274,6 +296,25 @@ export function ReaderView({
                 <path d="M3 3l10 10M13 3L3 13" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
               </svg>
             </button>
+          )}
+          {showWinControls && (
+            <div className="reader-wincontrols">
+              <button type="button" className="win-btn" title="最小化" aria-label="最小化" onClick={() => winCtl('minimize')}>
+                <svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true">
+                  <path d="M1 5h8" stroke="currentColor" strokeWidth="1.1" />
+                </svg>
+              </button>
+              <button type="button" className="win-btn" title="最大化" aria-label="最大化" onClick={() => winCtl('maximize')}>
+                <svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true">
+                  <rect x="1.3" y="1.3" width="7.4" height="7.4" fill="none" stroke="currentColor" strokeWidth="1.1" />
+                </svg>
+              </button>
+              <button type="button" className="win-btn win-close" title="关闭" aria-label="关闭" onClick={() => winCtl('close')}>
+                <svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true">
+                  <path d="M1.5 1.5l7 7M8.5 1.5l-7 7" stroke="currentColor" strokeWidth="1.1" strokeLinecap="round" />
+                </svg>
+              </button>
+            </div>
           )}
         </div>
       </header>
@@ -359,3 +400,4 @@ function cssEscape(s: string): string {
   if (typeof CSS !== 'undefined' && typeof CSS.escape === 'function') return CSS.escape(s);
   return s.replace(/[^a-zA-Z0-9_\u00a0-\uffff-]/g, (c) => `\\${c}`);
 }
+

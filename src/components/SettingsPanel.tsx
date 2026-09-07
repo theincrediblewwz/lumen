@@ -59,6 +59,7 @@ export function SettingsPanel({
           </button>
         </div>
 
+        <div className="settings-body">
         <section className="settings-section">
           <label className="settings-label">主题</label>
           <div className="seg">
@@ -185,10 +186,12 @@ export function SettingsPanel({
           </div>
           <p className="settings-hint">关闭后所有过渡与位移动画立即停用（也尊重系统「减少动态效果」）。</p>
         </section>
+        </div>
       </div>
     </div>,
     document.body,
   );
 }
+
 
 
