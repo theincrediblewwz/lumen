@@ -50,7 +50,12 @@
 .reader-bar.is-standalone-bar .reader-tools,
 .reader-bar.is-standalone-bar .reader-btn,
 .reader-bar.is-standalone-bar .reader-seg,
+.reader-bar.is-standalone-bar .reader-toc-toggle,
 .reader-bar.is-standalone-bar .win-btn { -webkit-app-region: no-drag; app-region: no-drag; }
+
+/* 目录收起/展开按钮（顶栏最左） */
+.reader-toc-toggle { flex: 0 0 auto; margin-right: -2px; }
+.reader-toc-toggle.is-active { color: var(--accent); }
 
 /* 独立窗口右侧的 Windows 三键 */
 .reader-wincontrols { display: inline-flex; align-items: center; gap: 2px; margin-left: 6px; }
@@ -192,13 +197,13 @@
   scroll-behavior: smooth;
 }
 
-/* 连续滚动：正文一列（宽度限制在 .markdown-body 上） */
-.reader-content { padding: 32px 48px 120px; }
+/* 单页：正文一栏，充分利用整宽（不再把内容局促在中央） */
+.reader-content { padding: 32px clamp(24px, 6vw, 96px) 120px; }
 .reader-pages { display: none; }
 
-/* ── 双页模式：竖向连续滚动的一张张“纸”，每张纸中缝分左右两栏 ── */
-/* 双页时测量源隐藏（仅用于 JS 量块高），显示堆叠的纸页 */
-.reader.is-paged .reader-content {
+/* ── 双页模式：像 PDF「双页连续」——每行左右两页并排、向下连续滚动 ── */
+/* 双页时测量源隐藏（仅用于 JS 量块高），显示堆叠的纸行 */
+.reader.is-double .reader-content {
   position: absolute;
   visibility: hidden;
   pointer-events: none;
@@ -208,66 +213,59 @@
   max-width: none;
   margin: 0;
 }
-.reader.is-paged .reader-pages {
+.reader.is-double .reader-pages {
   display: flex;
   flex-direction: column;
   align-items: center;
   gap: 0;
-  padding: 22px 0 60px;
+  padding: 24px clamp(12px, 3vw, 48px) 72px;
   max-width: none;
   margin: 0;
 }
 
-/* 单张纸：白色/主体卡片，左右两栏 + 中缝，阴影像 PDF 页 */
+/* 一行纸：左右两页并排 + 中缝 */
 .reader-sheet {
   position: relative;
   box-sizing: border-box;
   display: flex;
   align-items: stretch;
-  width: min(96%, 1180px);
-  margin-bottom: 22px;
+  justify-content: center;
+  width: 100%;
+  margin-bottom: 24px;
+}
+/* 单页（PDF 一页）：白卡 + 阴影 */
+.reader-page {
+  position: relative;
+  box-sizing: border-box;
+  flex: 1 1 0;
+  max-width: 900px;
   background: var(--bg-node);
   border: 1px solid var(--border-color);
-  border-radius: 10px;
+  border-radius: 8px;
   box-shadow: 0 4px 18px rgba(0, 0, 0, 0.10);
   overflow: hidden;
 }
-.reader-sheet-col {
-  flex: 0 0 auto;
-  overflow: hidden;
+.reader-page.is-placeholder {
+  background: transparent;
+  border: 1px dashed var(--border-color);
+  box-shadow: none;
+  opacity: 0.35;
 }
-.reader-sheet-col > *:first-child { margin-top: 0; }
-/* 中缝分隔线 */
-.reader-sheet-gutter {
-  flex: 1 1 auto;
-  align-self: stretch;
-  position: relative;
-}
-.reader-sheet-gutter::before {
-  content: '';
-  position: absolute;
-  top: 6%;
-  bottom: 6%;
-  left: 50%;
-  width: 1px;
-  transform: translateX(-0.5px);
-  background: var(--border-color);
-  opacity: 0.7;
-}
+.reader-page-col > *:first-child { margin-top: 0; }
+.reader-page-col > *:last-child { margin-bottom: 0; }
 /* 每页页码 */
-.reader-sheet-pn {
+.reader-page-pn {
   position: absolute;
-  bottom: 14px;
+  bottom: 12px;
+  right: 16px;
   font-size: 12px;
   color: var(--text-secondary);
   font-variant-numeric: tabular-nums;
   opacity: 0.7;
   pointer-events: none;
 }
-.reader-sheet-pn-left { left: 24px; }
-.reader-sheet-pn-right { right: 24px; }
 
-/* 翻页按钮（双页）：上一张/下一张，竖直翻 */
+/* 翻页按钮（双页）：上一行/下一行，竖直翻 */
 .reader-flip {
   position: absolute;
   top: 50%;
@@ -313,10 +311,10 @@
   line-height: 1.75;
   color: var(--text-primary);
 }
-/* 连续模式下限制阅读宽度并居中 */
-.reader:not(.is-paged) .reader-content {
-  max-width: 820px;
-  margin: 0 auto;
+/* 单页模式：铺满整宽，不居中收窄 */
+.reader.is-single .reader-content {
+  max-width: none;
+  margin: 0;
 }
 .markdown-body { word-wrap: break-word; }
 .markdown-body > *:first-child { margin-top: 0; }
@@ -429,6 +427,7 @@
   .reader-toc { display: none; }
   .reader-content { padding: 24px 20px 100px; }
 }
+
 
 
 

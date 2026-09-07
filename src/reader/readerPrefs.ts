@@ -5,32 +5,37 @@
  * 主题不再由阅读器单独管理——阅读器跟随软件主体主题（ADR-027）。
  */
 
-/** 阅读模式：continuous=连续滚动；paged=双页翻页（连续排布、页间无缝） */
-export type ReaderMode = 'continuous' | 'paged';
+/** 阅读模式：single=单页连续（一栏铺满）；double=双页连续（左右两页，向下连续滚动） */
+export type ReaderMode = 'single' | 'double';
 
 export interface ReaderPrefs {
   /** 字号缩放百分比，60–150 */
   fontScale: number;
   mode: ReaderMode;
+  /** 目录是否收起 */
+  tocCollapsed?: boolean;
 }
 
-const PREFS_KEY = 'lumen.reader.prefs.v2';
+const PREFS_KEY = 'lumen.reader.prefs.v3';
 const PROGRESS_KEY = 'lumen.reader.progress.v1';
 
 export const FONT_MIN = 60;
 export const FONT_MAX = 150;
 export const FONT_STEP = 10;
 
-const DEFAULT_PREFS: ReaderPrefs = { fontScale: 100, mode: 'continuous' };
+const DEFAULT_PREFS: ReaderPrefs = { fontScale: 100, mode: 'single', tocCollapsed: false };
 
 export function loadPrefs(): ReaderPrefs {
   try {
     const raw = localStorage.getItem(PREFS_KEY);
     if (!raw) return { ...DEFAULT_PREFS };
-    const p = JSON.parse(raw) as Partial<ReaderPrefs>;
+    const p = JSON.parse(raw) as Partial<Omit<ReaderPrefs, 'mode'>> & { mode?: string };
+    // 兼容旧值：continuous→single、paged→double
+    const mode: ReaderMode = p.mode === 'double' || p.mode === 'paged' ? 'double' : 'single';
     return {
       fontScale: clampFont(typeof p.fontScale === 'number' ? p.fontScale : 100),
-      mode: p.mode === 'paged' ? 'paged' : 'continuous',
+      mode,
+      tocCollapsed: !!p.tocCollapsed,
     };
   } catch {
     return { ...DEFAULT_PREFS };
@@ -76,3 +81,4 @@ export function setProgress(docKey: string, ratio: number) {
     /* 忽略 */
   }
 }
+

@@ -15,20 +15,20 @@ import {
 } from '../reader/readerPrefs';
 
 // 双页排版几何
-const GAP = 56; // 左右两页（列）之间的中缝
-const PAGE_PAD_X = 48; // 每页左右内边距
-const PAGE_PAD_Y = 44; // 每页上下内边距
-const SHEET_MARGIN = 22; // 相邻纸页之间的竖直间距
+const GAP = 40; // 左右两页之间的中缝
+const PAGE_PAD_X = 40; // 每页左右内边距
+const PAGE_PAD_Y = 40; // 每页上下内边距
+const SHEET_GAP = 24; // 相邻纸行之间的竖直间距
 
 /**
  * 阅读器视图（M4 + 阅读体验增强）。既用于应用内浮层，也用于独立窗口。
  * - 主题跟随软件主体（ADR-027）
- * - 顶栏：标题、字号、阅读模式（连续 / 双页）、全屏、关闭、（独立窗）窗口控制
- * - 左侧：目录（TOC，含公式渲染）
- * - 连续模式：单列，自然竖向滚动
- * - 双页模式（ADR-030）：像 PDF——竖向连续滚动的一张张“纸”，每张纸由中缝分成
- *   左右两栏，正文按「左栏从上到下填满 → 右栏接着往下 → 下一张纸」的顺序排版；
- *   向下滚动即翻到后面的纸。用 JS 按列高把顶层块分配到左右栏、再堆叠成纸页。
+ * - 顶栏：标题、字号、阅读模式（单页 / 双页）、全屏、关闭、（独立窗）窗口控制
+ * - 左侧：目录（TOC，含公式渲染，可收起）
+ * - 单页（single）：一栏连续滚动，充分利用整宽（窗口越大/全屏越铺满左右）
+ * - 双页（double，ADR-031）：像 PDF「双页连续」——每行左右两页并排、向下连续滚动。
+ *   用实时布局把顶层块贪心装进「页高≈视口」的一页页里（块不拆分、装不下就换页留白，
+ *   绝不把公式/段落截一半），每两页拼成一行，纸行竖直堆叠。
  */
 export function ReaderView({
   title,
@@ -55,13 +55,14 @@ export function ReaderView({
   const [isFullscreen, setIsFullscreen] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
   const bodyRef = useRef<HTMLDivElement>(null);
-  const contentRef = useRef<HTMLDivElement>(null); // 连续模式正文 / 双页测量源
-  const pagesRef = useRef<HTMLDivElement>(null); // 双页：堆叠的纸页
+  const contentRef = useRef<HTMLDivElement>(null); // 单页正文 / 双页测量源
+  const pagesRef = useRef<HTMLDivElement>(null); // 双页：堆叠的纸行
   const tocRef = useRef<HTMLDivElement>(null);
-  const sheetStepRef = useRef(1); // 一张纸的竖直步长（纸高 + 间距）
+  const pageStepRef = useRef(1); // 一行纸的竖直步长（翻页用）
   const restoredRef = useRef(false);
 
-  const paged = prefs.mode === 'paged';
+  const double = prefs.mode === 'double';
+  const tocCollapsed = !!prefs.tocCollapsed;
 
   const { html, toc } = useMemo(
     () => renderMarkdown(markdown, undefined, { guessMath }),
@@ -71,8 +72,9 @@ export function ReaderView({
   useEffect(() => savePrefs(prefs), [prefs]);
 
   /**
-   * 双页分页：把 contentRef 里的顶层块，按“列高”依次塞进一列列里，
-   * 每两列拼成一张纸（左栏 + 中缝 + 右栏），纸页竖直堆叠。
+   * 双页分页：用「真实布局」把 contentRef 里的顶层块贪心装进一页页。
+   * 每页宽 colW、目标高 colH；逐块 append 到当前页，若溢出则退回该块另起一页
+   * （块本身不拆分，装不下就在页尾留白——不会把公式/段落截断）。每两页拼一行。
    */
   const paginate = useCallback(() => {
     const body = bodyRef.current;
@@ -81,67 +83,100 @@ export function ReaderView({
     if (!body || !content || !pages) return;
 
     const bodyW = body.clientWidth;
-    const colW = Math.max(220, Math.floor((bodyW - GAP - 2 * PAGE_PAD_X) / 2));
-    const colH = Math.max(320, body.clientHeight - 2 * PAGE_PAD_Y - SHEET_MARGIN);
+    // 两页并排：每页宽 = (可用宽 - 中缝 - 四个内边距) / 2
+    const colW = Math.max(240, Math.floor((bodyW - GAP - 4 * PAGE_PAD_X) / 2));
+    const colH = Math.max(320, body.clientHeight - 2 * PAGE_PAD_Y - SHEET_GAP);
 
-    // 先按列宽测量各块高度（保证换行与实际列一致）
-    content.style.width = `${colW}px`;
     const blocks = Array.from(content.children) as HTMLElement[];
-    const measured = blocks.map((b) => ({ el: b, h: b.offsetHeight }));
 
-    // 贪心分列
-    const columns: HTMLElement[][] = [[]];
-    let curH = 0;
-    for (const { el, h } of measured) {
-      if (curH > 0 && curH + h > colH) {
-        columns.push([]);
-        curH = 0;
+    // 离屏测量宿主：一列列真实布局，量 scrollHeight
+    const host = document.createElement('div');
+    host.style.cssText = `position:absolute;visibility:hidden;left:-9999px;top:0;width:${colW}px;`;
+    host.className = 'markdown-body';
+    host.style.setProperty('--reader-font-scale', String(prefs.fontScale / 100));
+    pages.appendChild(host);
+
+    const mkPage = () => {
+      const p = document.createElement('div');
+      p.className = 'reader-page-col';
+      p.style.width = `${colW}px`;
+      p.style.minHeight = `${colH}px`;
+      host.appendChild(p);
+      return p;
+    };
+
+    const pageCols: HTMLElement[] = [];
+    let cur = mkPage();
+    pageCols.push(cur);
+    for (const block of blocks) {
+      cur.appendChild(block);
+      if (cur.childElementCount > 1 && cur.scrollHeight > colH) {
+        cur.removeChild(block);
+        cur = mkPage();
+        pageCols.push(cur);
+        cur.appendChild(block);
       }
-      columns[columns.length - 1].push(el);
-      curH += h;
     }
 
-    // 每两列拼一张纸
+    // 组装纸行（每两页一行：左页 + 中缝 + 右页）
     pages.innerHTML = '';
-    const sheetH = colH + 2 * PAGE_PAD_Y;
-    sheetStepRef.current = sheetH + SHEET_MARGIN;
-    for (let i = 0; i < columns.length; i += 2) {
+    for (let i = 0; i < pageCols.length; i += 2) {
       const sheet = document.createElement('div');
       sheet.className = 'reader-sheet';
-      sheet.style.height = `${sheetH}px`;
-      sheet.style.padding = `${PAGE_PAD_Y}px ${PAGE_PAD_X}px`;
       sheet.style.columnGap = `${GAP}px`;
 
-      const left = document.createElement('div');
-      left.className = 'reader-sheet-col';
-      left.style.width = `${colW}px`;
-      columns[i]?.forEach((el) => left.appendChild(el));
-
-      const gutter = document.createElement('div');
-      gutter.className = 'reader-sheet-gutter';
-
-      const right = document.createElement('div');
-      right.className = 'reader-sheet-col';
-      right.style.width = `${colW}px`;
-      columns[i + 1]?.forEach((el) => right.appendChild(el));
-
-      // 页码（左右各一）
+      const leftPage = document.createElement('div');
+      leftPage.className = 'reader-page';
+      leftPage.style.padding = `${PAGE_PAD_Y}px ${PAGE_PAD_X}px`;
+      leftPage.style.minHeight = `${colH}px`;
+      const leftCol = pageCols[i];
+      leftCol.style.minHeight = '';
+      leftPage.appendChild(leftCol);
       const pnL = document.createElement('span');
-      pnL.className = 'reader-sheet-pn reader-sheet-pn-left';
+      pnL.className = 'reader-page-pn';
       pnL.textContent = String(i + 1);
-      const pnR = document.createElement('span');
-      pnR.className = 'reader-sheet-pn reader-sheet-pn-right';
-      pnR.textContent = String(i + 2);
+      leftPage.appendChild(pnL);
+      sheet.appendChild(leftPage);
 
-      sheet.appendChild(left);
-      sheet.appendChild(gutter);
-      sheet.appendChild(right);
-      sheet.appendChild(pnL);
-      if (columns[i + 1]) sheet.appendChild(pnR);
+      if (pageCols[i + 1]) {
+        const rightPage = document.createElement('div');
+        rightPage.className = 'reader-page';
+        rightPage.style.padding = `${PAGE_PAD_Y}px ${PAGE_PAD_X}px`;
+        rightPage.style.minHeight = `${colH}px`;
+        const rightCol = pageCols[i + 1];
+        rightCol.style.minHeight = '';
+        rightPage.appendChild(rightCol);
+        const pnR = document.createElement('span');
+        pnR.className = 'reader-page-pn';
+        pnR.textContent = String(i + 2);
+        rightPage.appendChild(pnR);
+        sheet.appendChild(rightPage);
+      } else {
+        // 落单的最后一页：右侧放个占位空页，保持左右对齐
+        const ph = document.createElement('div');
+        ph.className = 'reader-page is-placeholder';
+        ph.style.minHeight = `${colH}px`;
+        sheet.appendChild(ph);
+      }
       pages.appendChild(sheet);
     }
-    content.style.width = '';
-    setPageInfo({ pages: columns.length, current: 1 });
+    host.remove();
+
+    const firstSheet = pages.querySelector<HTMLElement>('.reader-sheet');
+    pageStepRef.current = firstSheet ? firstSheet.offsetHeight + SHEET_GAP : body.clientHeight;
+    setPageInfo({ pages: pageCols.length, current: 1 });
+  }, [prefs.fontScale]);
+
+  // 把双页纸行里的块搬回测量源（重排前）
+  const collectBack = useCallback(() => {
+    const content = contentRef.current;
+    const pages = pagesRef.current;
+    if (!content || !pages) return;
+    const cols = pages.querySelectorAll<HTMLElement>('.reader-page-col');
+    cols.forEach((c) => {
+      while (c.firstChild) content.appendChild(c.firstChild);
+    });
+    pages.innerHTML = '';
   }, []);
 
   // 上屏：把 html 放入测量源 → 排版公式（正文 + 目录）→（双页则分页）→ 恢复进度
@@ -159,14 +194,14 @@ export function ReaderView({
 
     handle.done.then(() => {
       if (cancelled) return;
-      if (paged) paginate();
+      if (double) paginate();
       if (restoredRef.current) return;
       restoredRef.current = true;
       const ratio = getProgress(docKey);
       requestAnimationFrame(() => {
         const el = bodyRef.current;
-        if (!el) return;
-        if (ratio > 0) el.scrollTop = ratio * (el.scrollHeight - el.clientHeight);
+        if (!el || ratio <= 0) return;
+        el.scrollTop = ratio * (el.scrollHeight - el.clientHeight);
       });
     });
 
@@ -175,25 +210,18 @@ export function ReaderView({
       handle.cancel();
       tocHandle?.cancel();
     };
-  }, [html, docKey, paged, paginate]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [html, docKey, double]);
 
-  // 视口/字号变化：双页重新分页（字号通过 --reader-font-scale 影响块高）
+  // 视口尺寸变化：双页重新分页
   useEffect(() => {
-    if (!paged) return;
+    if (!double) return;
     let raf = 0;
     const onResize = () => {
       cancelAnimationFrame(raf);
       raf = requestAnimationFrame(() => {
-        // 重新测量：把纸页里的块搬回测量源再分页
-        const content = contentRef.current;
-        const pages = pagesRef.current;
-        if (content && pages) {
-          const cols = pages.querySelectorAll<HTMLElement>('.reader-sheet-col');
-          cols.forEach((c) => {
-            while (c.firstChild) content.appendChild(c.firstChild);
-          });
-          paginate();
-        }
+        collectBack();
+        paginate();
       });
     };
     window.addEventListener('resize', onResize);
@@ -201,37 +229,42 @@ export function ReaderView({
       window.removeEventListener('resize', onResize);
       cancelAnimationFrame(raf);
     };
-  }, [paged, paginate]);
+  }, [double, paginate, collectBack]);
 
-  // 字号变化时（双页）重新分页
+  // 字号变化（双页）重新分页
   useEffect(() => {
-    if (!paged) return;
-    const content = contentRef.current;
+    if (!double) return;
     const pages = pagesRef.current;
-    if (!content || !pages) return;
-    const cols = pages.querySelectorAll<HTMLElement>('.reader-sheet-col');
-    if (cols.length === 0) return; // 尚未分页（首个 effect 会处理）
-    cols.forEach((c) => {
-      while (c.firstChild) content.appendChild(c.firstChild);
-    });
+    if (!pages || pages.querySelectorAll('.reader-page-col').length === 0) return;
+    collectBack();
     paginate();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [prefs.fontScale]);
 
-  // 全屏状态跟随
+  // 全屏状态跟随（全屏后双页需重排）
   useEffect(() => {
-    const onFs = () => setIsFullscreen(!!document.fullscreenElement);
+    const onFs = () => {
+      const fs = !!document.fullscreenElement;
+      setIsFullscreen(fs);
+      if (double) {
+        requestAnimationFrame(() => {
+          collectBack();
+          paginate();
+        });
+      }
+    };
     document.addEventListener('fullscreenchange', onFs);
     return () => document.removeEventListener('fullscreenchange', onFs);
-  }, []);
+  }, [double, paginate, collectBack]);
 
   const onScroll = useCallback(() => {
     const el = bodyRef.current;
     if (!el) return;
     const denom = el.scrollHeight - el.clientHeight;
     if (denom > 0) setProgress(docKey, el.scrollTop / denom);
-    if (paged) {
-      const cur = Math.min(pageInfo.pages, Math.floor(el.scrollTop / sheetStepRef.current) * 2 + 1);
+    if (double) {
+      const row = Math.floor(el.scrollTop / pageStepRef.current);
+      const cur = Math.min(pageInfo.pages, row * 2 + 1);
       if (cur !== pageInfo.current) setPageInfo((p) => ({ ...p, current: cur }));
       return;
     }
@@ -244,23 +277,24 @@ export function ReaderView({
       }
       if (cur) setActiveSlug(cur);
     }
-  }, [docKey, paged, pageInfo.pages, pageInfo.current]);
+  }, [docKey, double, pageInfo.pages, pageInfo.current]);
 
-  const flipSheet = useCallback((dir: 1 | -1) => {
+  const flipRow = useCallback((dir: 1 | -1) => {
     const el = bodyRef.current;
     if (!el) return;
-    el.scrollBy({ top: dir * sheetStepRef.current, behavior: 'smooth' });
+    el.scrollBy({ top: dir * pageStepRef.current, behavior: 'smooth' });
   }, []);
 
   const changeFont = (delta: number) =>
     setPrefs((p) => ({ ...p, fontScale: clampFont(p.fontScale + delta) }));
 
   const setMode = (mode: ReaderMode) => setPrefs((p) => ({ ...p, mode }));
+  const toggleToc = () => setPrefs((p) => ({ ...p, tocCollapsed: !p.tocCollapsed }));
 
   const jump = (slug: string) => {
     const el = bodyRef.current;
     if (!el) return;
-    if (paged) {
+    if (double) {
       const target = pagesRef.current?.querySelector<HTMLElement>(`#${cssEscape(slug)}`);
       const sheet = target?.closest<HTMLElement>('.reader-sheet');
       if (sheet) el.scrollTo({ top: sheet.offsetTop - 8, behavior: 'smooth' });
@@ -290,11 +324,12 @@ export function ReaderView({
   }, []);
 
   const showWinControls = standalone && !isMac;
+  const showToc = toc.length > 0 && !isFullscreen && !tocCollapsed;
 
   return (
     <div
       ref={rootRef}
-      className={`reader${standalone ? ' is-standalone' : ''}${paged ? ' is-paged' : ''}${
+      className={`reader${standalone ? ' is-standalone' : ''}${double ? ' is-double' : ' is-single'}${
         isFullscreen ? ' is-fullscreen' : ''
       }`}
       style={{ ['--reader-font-scale' as string]: String(prefs.fontScale / 100) }}
@@ -303,22 +338,34 @@ export function ReaderView({
         className={`reader-bar${standalone ? ' is-standalone-bar' : ''}${isMac && standalone ? ' is-mac' : ''}`}
         {...(standalone ? { 'data-tauri-drag-region': true } : {})}
       >
+        {toc.length > 0 && !isFullscreen && (
+          <button
+            type="button"
+            className={`reader-btn reader-icon reader-toc-toggle${tocCollapsed ? '' : ' is-active'}`}
+            title={tocCollapsed ? '展开目录' : '收起目录'}
+            onClick={toggleToc}
+          >
+            <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true">
+              <path d="M2 4h12M2 8h9M2 12h12" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+            </svg>
+          </button>
+        )}
         <h1 className="reader-title" title={title} {...(standalone ? { 'data-tauri-drag-region': true } : {})}>{title}</h1>
         <div className="reader-tools">
           <div className="reader-seg">
             <button
               type="button"
-              className={`reader-btn${!paged ? ' is-active' : ''}`}
-              title="连续滚动"
-              onClick={() => setMode('continuous')}
+              className={`reader-btn${!double ? ' is-active' : ''}`}
+              title="单页连续"
+              onClick={() => setMode('single')}
             >
-              连续
+              单页
             </button>
             <button
               type="button"
-              className={`reader-btn${paged ? ' is-active' : ''}`}
-              title="双页阅读"
-              onClick={() => setMode('paged')}
+              className={`reader-btn${double ? ' is-active' : ''}`}
+              title="双页连续"
+              onClick={() => setMode('double')}
             >
               双页
             </button>
@@ -390,7 +437,7 @@ export function ReaderView({
       </header>
 
       <div className="reader-main">
-        {toc.length > 0 && !isFullscreen && (
+        {showToc && (
           <nav className="reader-toc" aria-label="目录" ref={tocRef}>
             <div className="reader-toc-head">目录</div>
             <ul className="reader-toc-list">
@@ -413,27 +460,27 @@ export function ReaderView({
 
         <div className="reader-stage">
           <div ref={bodyRef} className="reader-body" onScroll={onScroll}>
-            {/* 连续模式正文 / 双页模式的测量源（双页时隐藏） */}
+            {/* 单页正文 / 双页测量源（双页时隐藏用于量块高） */}
             <div ref={contentRef} className="reader-content markdown-body" />
-            {/* 双页模式：堆叠的纸页（由 JS 填充） */}
+            {/* 双页：堆叠的纸行（由 JS 填充） */}
             <div ref={pagesRef} className="reader-pages markdown-body" />
           </div>
 
-          {paged && (
+          {double && (
             <>
               <button
                 type="button"
                 className="reader-flip reader-flip-prev"
-                title="上一张"
-                onClick={() => flipSheet(-1)}
+                title="上一行"
+                onClick={() => flipRow(-1)}
               >
                 ‹
               </button>
               <button
                 type="button"
                 className="reader-flip reader-flip-next"
-                title="下一张"
-                onClick={() => flipSheet(1)}
+                title="下一行"
+                onClick={() => flipRow(1)}
               >
                 ›
               </button>
