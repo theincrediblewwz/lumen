@@ -3,7 +3,7 @@
 > **开工前先读本文件；每完成一件事就更新本文件。**
 > 本文件只记录「进度」。计划与任务清单见 [PLAN.md](./PLAN.md)，设计与决策见 [DESIGN.md](./DESIGN.md)。
 
-**最后更新**：2026-09-08 (Asia/Shanghai) · M7 发布阶段推进（Windows 打包成功）
+**最后更新**：2026-09-08 (Asia/Shanghai) · M7 发布：Release v0.1.0 已发布 + M7-1 全平台打包完成；新增 OS 文件拖放到节点导入
 
 ---
 
@@ -127,7 +127,12 @@
   - **M7-4**：新建 `docs/ACCEPTANCE.md`——DESIGN §3 FR-1~9 逐条映射状态（✅自动化覆盖 / 🟩需实机 / ⏳待实机 / ➖本期不做），汇总自动化覆盖与需实机项。
   - **M7-5**：新建 `docs/PERF.md`——前端产物体积已实测（dist ~1.79MB，主 JS ~650KB/CSS ~90KB/KaTeX 字体 ~0.5MB）；画布 FPS、阅读首屏、安装包体积、启动时间列方法+目标待实机回填。
 - **M7-1 Windows 打包 成功（本轮，本机实测）**：`npm run tauri:build` 通过——release 编译约 1m45s，产出 **NSIS `Lumen_0.1.0_x64-setup.exe` 4.26 MB**（<10MB 目标达标）+ MSI 5.65 MB + lumen.exe 14.0 MB；体积已回填 `docs/PERF.md`。产物在 `src-tauri/target/release/bundle/`（target/ 已 gitignore，不入库）。顺手清理了仓库里遗留的未跟踪临时脚本（`_acl*.js`、`gen_sample.mjs`）。
-- **M7 剩余（需 macOS/CI 或实机）**：M7-1 的 **macOS arm64 .dmg** 需在 mac 或 CI mac runner 上 `tauri build`（打 tag `v*` 触发 release.yml 即可）；M7-2 自动更新(P2，未做)；ACCEPTANCE/PERF 里标 ⏳ 的实机走查项（重启一致性、FPS 压测、阅读首屏、IME、AI 实调、启动计时）。
+- **M7-1 全平台打包完成 + Release `v0.1.0` 已发布（本轮）**：GitHub Actions release 工作流 `34195641889` SUCCESS（win + mac aarch64 双 job 全绿），draft release 已由用户手动 Publish。产物体积实测（已回填 `docs/PERF.md`）：
+  - macOS arm64 `Lumen_0.1.0_aarch64.dmg` **5.38 MB**（<15MB 达标）+ `Lumen_aarch64.app.tar.gz` 5.30 MB（更新包）；
+  - Windows `Lumen_0.1.0_x64-setup.exe`（NSIS）**4.04 MB** + `Lumen_0.1.0_x64_en-US.msi` **5.34 MB**（CI 构建，与本机略有差异，均达标）。
+  - 一期 ad-hoc 未签名，macOS 首次打开需右键「打开」绕过 Gatekeeper。**M7-1 🟢 完成。**
+- **新功能：OS 文件拖放到节点导入（`6007aa5`，本轮）**：从桌面/资源管理器拖 `.md`/`.markdown` 到白板某节点上，松手即 `docImport` 到该白板 `docs/` 并 `attachDocs` 挂到该节点（按 path 去重）。用 Tauri v2 原生 `onDragDropEvent`（拿真实绝对路径 + 物理坐标）→ dpr 换算 → `toWorld` → `boxContains` 命中；拖动时高亮目标节点（`.is-drop-target`）+ 底部「松开嵌入」提示条，导入中显示「正在导入文档…」；非 md 过滤提示。改 `BoardCanvas.tsx`/`NodeCard.tsx`/`styles.css`，`typecheck` EXIT=0，sess-11 HMR 生效，**待用户实机验收落点精度**。
+- **M7 剩余**：M7-2 自动更新(P2，未做)；ACCEPTANCE/PERF 里标 ⏳ 的实机走查项（重启一致性、FPS 压测、阅读首屏、IME、AI 实调、启动计时）。
 - 应用以后台会话 `sess-11` 运行中。
 
 ### M5（已完成，等实机验收）
@@ -190,6 +195,7 @@
 | MCP `apply_patch` 对 JSON 上下文不稳 | 给 `package.json` 打小补丁时报「patched」却未生效（同尺寸）；改用 `write_file` 全量覆盖更可靠 |
 | **在 Windows 上跑出 GUI 不代表平台错了** | Tauri 用系统 WebView（Win=WebView2 / mac=WKWebView），同一套 React 代码在开发机（本机是 Windows，故产物为 `lumen.exe`）即可调试；「主目标 macOS」指最终发布用 mac 构建。macOS 的 `.app`/`.dmg` 必须在 mac 或 CI mac runner 上 `tauri build` |
 | **自定义标题栏控件必须退出拖拽区** | 整条 titlebar 设 `-webkit-app-region: drag` 后，内部按钮要加 `no-drag`，否则点击被窗口拖拽吞掉 |
+
 
 
 

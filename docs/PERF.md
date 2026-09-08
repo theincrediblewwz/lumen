@@ -25,9 +25,12 @@
 | Windows NSIS `Lumen_0.1.0_x64-setup.exe` | 参考值 <10 MB | **4.26 MB**（4,255,751 B） | ✅ 达标 |
 | Windows MSI `Lumen_0.1.0_x64_en-US.msi` | — | 5.65 MB（5,648,384 B） | ✅ |
 | Windows 可执行 `lumen.exe`（release） | — | 14.0 MB（14,005,760 B） | ✅ |
-| macOS arm64 .dmg 体积 | 参考值 <15 MB（不含系统 WebView） | — | ⏳ 待 macOS/CI 构建 |
+| macOS arm64 .dmg `Lumen_0.1.0_aarch64.dmg` | 参考值 <15 MB（不含系统 WebView） | **5.38 MB**（5,640,397 B） | ✅ 达标 |
+| macOS arm64 `Lumen_aarch64.app.tar.gz`（更新包） | — | 5.30 MB（5,561,660 B） | ✅ |
 
 > Windows 打包实测（本机 `npm run tauri:build`，2026-09-08）：release 编译约 1m45s，产出 MSI + NSIS 两种安装包。安装包体积远低于目标，得益于 Tauri 复用系统 WebView2（无需内嵌 Chromium）。
+>
+> Release `v0.1.0`（GitHub Actions，2026-09-08 已 Publish）产物实测：macOS aarch64 dmg **5.38 MB**、Windows NSIS setup **4.04 MB**、MSI **5.34 MB**（CI 构建体积与本机略有差异，均远低于目标）。macOS 一期为 ad-hoc 未签名，首次打开需右键「打开」绕过 Gatekeeper。
 
 ---
 
@@ -71,7 +74,8 @@
 
 ## 汇总
 
-- **已达标 / 已实测**：前端产物体积（~1.79 MB）；**Windows 安装包体积（NSIS 4.26 MB，MSI 5.65 MB，均达标）**。
-- **待实机填写**：macOS 安装包体积（需 macOS/CI 构建）、冷启动时间、画布 FPS 压测、阅读窗首屏。
+- **已达标 / 已实测**：前端产物体积（~1.79 MB）；**Windows 安装包体积（本机 NSIS 4.26 MB / MSI 5.65 MB；CI Release NSIS 4.04 MB / MSI 5.34 MB）**；**macOS arm64 dmg 5.38 MB**（CI Release，均达标）。
+- **待实机填写**：冷启动时间、画布 FPS 压测、阅读窗首屏。
 - 压测数据回填后，如任一项不达标，记录瓶颈并在 `docs/STATUS.md` 开跟进项。
+
 
