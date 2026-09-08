@@ -118,6 +118,22 @@ export const api = {
   secretGet: (account: string) => invoke<string | null>('secret_get', { account }),
   secretDelete: (account: string) => invoke<void>('secret_delete', { account }),
   secretHas: (account: string) => invoke<boolean>('secret_has', { account }),
+
+  /* ── 全局搜索（M6-6，跨白板全文检索） ── */
+  searchAll: (query: string) => invoke<SearchHit[]>('search_all', { query }),
+};
+
+/** 全局搜索命中项（与 Rust storage::SearchHit 对应） */
+export type SearchHit = {
+  projectId: string;
+  projectName: string;
+  boardId: string;
+  boardName: string;
+  kind: 'node_title' | 'node_summary' | 'doc_title' | 'doc_content';
+  nodeId: string | null;
+  docPath: string | null;
+  title: string;
+  snippet: string;
 };
 
 /** 打开系统文件选择框，返回选中的 .md 文件绝对路径（可多选）。 */
@@ -130,4 +146,5 @@ export async function pickMarkdownFiles(): Promise<string[]> {
   if (picked == null) return [];
   return Array.isArray(picked) ? picked : [picked];
 }
+
 

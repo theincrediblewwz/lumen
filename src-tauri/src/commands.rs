@@ -184,6 +184,13 @@ pub fn secret_has(account: String) -> Result<bool, String> {
     Ok(secrets::get_secret(&account)?.is_some())
 }
 
+// ───────────────── 全局搜索（M6-6，跨白板全文检索） ─────────────────
+
+#[tauri::command]
+pub fn search_all(query: String) -> Result<Vec<storage::SearchHit>, String> {
+    storage::search_all(&root()?, &query)
+}
+
 
 // ───────────────── 用系统默认程序打开文档（O-4，M5/M6） ─────────────────
 
@@ -226,3 +233,4 @@ fn open_path_os(p: &std::path::Path) -> Result<(), String> {
         .map(|_| ())
         .map_err(|e| format!("打开失败: {e}"))
 }
+

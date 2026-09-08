@@ -67,11 +67,13 @@ pub fn run() {
             commands::secret_get,
             commands::secret_delete,
             commands::secret_has,
+            commands::search_all,
             ai::ai_chat_stream,
             ai::ai_cancel,
         ])
         .run(tauri::generate_context!())
         .expect("failed to launch Lumen");
 }
+
 
 

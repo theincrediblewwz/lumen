@@ -624,6 +624,144 @@ pub fn write_chats(
     atomic_write(&chats_file(root, pid, bid), content)
 }
 
+// ─────────────────────────── 全局搜索（M6-6） ───────────────────────────
+
+#[derive(Serialize, Clone, Debug)]
+pub struct SearchHit {
+    #[serde(rename = "projectId")]
+    pub project_id: String,
+    #[serde(rename = "projectName")]
+    pub project_name: String,
+    #[serde(rename = "boardId")]
+    pub board_id: String,
+    #[serde(rename = "boardName")]
+    pub board_name: String,
+    /// 命中类型：node_title / node_summary / doc_title / doc_content
+    pub kind: String,
+    /// 命中所在节点 id（若适用），供前端跳转白板并高亮
+    #[serde(rename = "nodeId")]
+    pub node_id: Option<String>,
+    /// 命中所在文档相对路径（若适用），供前端打开阅读窗
+    #[serde(rename = "docPath")]
+    pub doc_path: Option<String>,
+    /// 展示标题（节点标题 / 文档标题）
+    pub title: String,
+    /// 命中上下文片段（高亮词前后若干字符）
+    pub snippet: String,
+}
+
+/// 在片段里定位（大小写不敏感）关键词，返回其前后 ctx 字符的上下文。
+fn make_snippet(haystack: &str, needle_lower: &str, ctx: usize) -> Option<String> {
+    let hay_lower = haystack.to_lowercase();
+    let pos = hay_lower.find(needle_lower)?;
+    // 按字符（非字节）截取，避免切断多字节 UTF-8
+    let chars: Vec<char> = haystack.chars().collect();
+    // 把字节位置换算成字符位置
+    let char_pos = haystack[..pos].chars().count();
+    let start = char_pos.saturating_sub(ctx);
+    let end = (char_pos + needle_lower.chars().count() + ctx).min(chars.len());
+    let mut s = String::new();
+    if start > 0 {
+        s.push('…');
+    }
+    s.extend(&chars[start..end]);
+    if end < chars.len() {
+        s.push('…');
+    }
+    // 折叠空白，单行展示
+    Some(s.split_whitespace().collect::<Vec<_>>().join(" "))
+}
+
+/// 跨全部项目 / 白板做全文检索：节点标题、简介、文档标题、文档正文。
+/// query 为空返回空结果；大小写不敏感；每类命中取首个匹配片段。
+pub fn search_all(root: &Path, query: &str) -> Result<Vec<SearchHit>, String> {
+    let q = query.trim();
+    if q.is_empty() {
+        return Ok(vec![]);
+    }
+    let ql = q.to_lowercase();
+    let mut hits: Vec<SearchHit> = Vec::new();
+    let index = read_index(root)?;
+
+    for pm in &index.projects {
+        let pf = match read_project(root, &pm.id) {
+            Ok(pf) => pf,
+            Err(_) => continue,
+        };
+        for bm in &pf.boards {
+            let board = match load_board(root, &pm.id, &bm.id) {
+                Ok(b) => b,
+                Err(_) => continue,
+            };
+            let base = |kind: &str, node_id: Option<String>, doc_path: Option<String>, title: String, snippet: String| SearchHit {
+                project_id: pm.id.clone(),
+                project_name: pf.name.clone(),
+                board_id: bm.id.clone(),
+                board_name: board.name.clone(),
+                kind: kind.to_string(),
+                node_id,
+                doc_path,
+                title,
+                snippet,
+            };
+
+            // 节点标题 / 简介
+            for n in &board.nodes {
+                if n.title.to_lowercase().contains(&ql) {
+                    hits.push(base(
+                        "node_title",
+                        Some(n.id.clone()),
+                        None,
+                        n.title.clone(),
+                        n.title.clone(),
+                    ));
+                }
+                if let Some(sm) = &n.summary {
+                    if sm.to_lowercase().contains(&ql) {
+                        if let Some(sn) = make_snippet(sm, &ql, 40) {
+                            hits.push(base(
+                                "node_summary",
+                                Some(n.id.clone()),
+                                None,
+                                n.title.clone(),
+                                sn,
+                            ));
+                        }
+                    }
+                }
+                // 关联文档：标题 + 正文
+                for d in &n.docs {
+                    if d.title.to_lowercase().contains(&ql) {
+                        hits.push(base(
+                            "doc_title",
+                            Some(n.id.clone()),
+                            Some(d.path.clone()),
+                            d.title.clone(),
+                            d.title.clone(),
+                        ));
+                    }
+                    // 读正文（失败跳过，不阻塞整体检索）
+                    if let Ok(content) = read_doc(root, &pm.id, &bm.id, &d.path) {
+                        if content.to_lowercase().contains(&ql) {
+                            if let Some(sn) = make_snippet(&content, &ql, 50) {
+                                hits.push(base(
+                                    "doc_content",
+                                    Some(n.id.clone()),
+                                    Some(d.path.clone()),
+                                    d.title.clone(),
+                                    sn,
+                                ));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    Ok(hits)
+}
+
 pub fn resolve_doc_path(
     root: &Path,
     project_id: &str,
@@ -863,4 +1001,5 @@ mod tests {
         fs::remove_dir_all(&root).ok();
     }
 }
+
 

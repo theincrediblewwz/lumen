@@ -8,6 +8,7 @@ import { AiFab } from './components/AiFab';
 import type { Viewport } from './canvas/CanvasEngine';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { SettingsPanel } from './components/SettingsPanel';
+import { GlobalSearch } from './components/GlobalSearch';
 import { loadSettings, saveSettings, applySettings, type Settings } from './settings';
 
 type Phase = 'loading' | 'setup' | 'ready';
@@ -42,6 +43,7 @@ export default function App() {
   const [draft, setDraft] = useState('');
   // AI 引用跳转的目标节点（M5-6）：{nodeId, nonce} —— nonce 保证同一节点重复点也触发
   const [focusNode, setFocusNode] = useState<{ id: string; nonce: number } | null>(null);
+  const [searchOpen, setSearchOpen] = useState(false);
   const editRef = useRef<HTMLInputElement>(null);
 
   /* 应用外观设置（主题 / 玻璃 / 动画）到 <html>；platform 变化后重跑
@@ -103,6 +105,10 @@ export default function App() {
       if (e.key === 'F11') {
         e.preventDefault();
         toggleFullscreen();
+      } else if ((e.ctrlKey || e.metaKey) && (e.key === 'k' || e.key === 'K')) {
+        // 全局搜索（M6-6）
+        e.preventDefault();
+        setSearchOpen((v) => !v);
       } else if (e.key === 'Escape' && fullscreen) {
         applyFullscreen(false);
       }
@@ -130,7 +136,7 @@ export default function App() {
 
   // ── AI 引用跳转（M5-6）：切到目标白板并高亮节点 ──
   const jumpTo = useCallback(
-    (projectId: string, boardId: string, nodeId: string) =>
+    (projectId: string, boardId: string, nodeId: string | null) =>
       withBusy(async () => {
         // 若目标项目/白板不是当前的，切过去
         setActiveBoard((prevBoard) => {
@@ -146,10 +152,12 @@ export default function App() {
         const bf = await api.boardLoad(projectId, boardId);
         setActiveBoard(bf);
         setSidebarCollapsed(true); // 给画布腾地方
-        // 等画布挂载后再定位（用 nonce 保证每次都触发）
-        requestAnimationFrame(() =>
-          setFocusNode({ id: nodeId, nonce: Date.now() }),
-        );
+        // 等画布挂载后再定位（用 nonce 保证每次都触发）；无 nodeId 只切白板不高亮
+        if (nodeId) {
+          requestAnimationFrame(() =>
+            setFocusNode({ id: nodeId, nonce: Date.now() }),
+          );
+        }
       }),
     [],
   );
@@ -526,6 +534,7 @@ export default function App() {
       </div>
 
       {menu && <ContextMenu state={menu} onClose={() => setMenu(null)} />}
+      <GlobalSearch open={searchOpen} onClose={() => setSearchOpen(false)} onJump={jumpTo} />
       {settingsOpen && (
         <SettingsPanel settings={settings} platform={platform} onChange={patchSettings} onClose={() => setSettingsOpen(false)} />
       )}
@@ -542,6 +551,7 @@ export default function App() {
     </div>
   );
 }
+
 
 
 

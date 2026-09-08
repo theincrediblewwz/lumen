@@ -2014,3 +2014,136 @@ html.motion-off .edge-line { animation: none; }
 
 
 
+
+/* ==========================================================================
+   全局搜索（M6-6）：Ctrl/Cmd+K 打开的跨白板检索浮层
+   ========================================================================== */
+.gs-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 200;
+  background: rgba(0, 0, 0, 0.28);
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding-top: 12vh;
+  animation: fade-in var(--dur-fast) var(--ease-standard);
+}
+.gs-panel {
+  width: min(680px, 92vw);
+  max-height: 70vh;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-node);
+  border: var(--border-node) solid var(--border-color);
+  border-radius: 14px;
+  box-shadow: var(--shadow-node-hover);
+  overflow: hidden;
+  animation: rise-in var(--dur-normal) var(--ease-decelerate);
+}
+.gs-input-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--border-color);
+}
+.gs-icon {
+  color: var(--text-secondary);
+  flex: none;
+}
+.gs-input {
+  flex: 1;
+  border: none;
+  outline: none;
+  background: transparent;
+  font-size: 16px;
+  color: var(--text-primary);
+  font-family: inherit;
+}
+.gs-input::placeholder {
+  color: var(--text-secondary);
+}
+.gs-kbd {
+  flex: none;
+  font-size: 11px;
+  color: var(--text-secondary);
+  border: 1px solid var(--border-color);
+  border-radius: 5px;
+  padding: 2px 6px;
+  background: var(--bg-hover);
+}
+.gs-results {
+  overflow-y: auto;
+  padding: 6px;
+}
+.gs-status {
+  padding: 22px 16px;
+  text-align: center;
+  color: var(--text-secondary);
+  font-size: 14px;
+}
+.gs-status.gs-hint {
+  font-size: 13px;
+}
+.gs-item {
+  display: block;
+  width: 100%;
+  text-align: left;
+  border: 1px solid transparent;
+  background: transparent;
+  border-radius: 9px;
+  padding: 10px 12px;
+  cursor: pointer;
+  transition: background var(--dur-fast) var(--ease-standard),
+    border-color var(--dur-fast) var(--ease-standard);
+}
+.gs-item:hover,
+.gs-item.is-active {
+  background: var(--bg-hover);
+  border-color: var(--border-color);
+}
+.gs-item-top {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+}
+.gs-item-title {
+  font-size: 14.5px;
+  font-weight: 600;
+  color: var(--text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.gs-kind {
+  flex: none;
+  font-size: 11px;
+  color: var(--accent);
+  background: var(--accent-soft);
+  border-radius: 5px;
+  padding: 1px 7px;
+}
+.gs-item-snippet {
+  margin-top: 3px;
+  font-size: 12.5px;
+  color: var(--text-secondary);
+  line-height: 1.5;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.gs-item-crumb {
+  margin-top: 4px;
+  font-size: 11.5px;
+  color: var(--text-secondary);
+  opacity: 0.8;
+}
+.gs-mark {
+  background: color-mix(in srgb, var(--accent) 30%, transparent);
+  color: inherit;
+  border-radius: 2px;
+  padding: 0 1px;
+}
