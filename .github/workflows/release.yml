@@ -64,7 +64,8 @@ jobs:
             - macOS：Apple Silicon (arm64)。两种取用方式，二选一：
               - `Lumen_<版本>_aarch64.zip` —— 解压即得 `Lumen.app`，拖进「应用程序」即可（推荐，无需装 dmg）。
               - `Lumen_<版本>_aarch64.dmg` —— 传统磁盘映像。
-              未签名，首次运行请右键 →「打开」，或执行 `xattr -dr com.apple.quarantine /Applications/Lumen.app`。
+              已做 ad-hoc 自签名（未做 Apple 公证）：首次运行请右键 →「打开」→ 确认；
+              若仍被拦，执行 `xattr -dr com.apple.quarantine /Applications/Lumen.app` 后再打开。
             - Windows：NSIS 安装包 / MSI。未签名，SmartScreen 提示时选择「仍要运行」。
           releaseDraft: true
           prerelease: false
@@ -84,8 +85,16 @@ jobs:
           ARCH=$(echo "${{ matrix.rust_target }}" | cut -d- -f1)
           VERSION="${GITHUB_REF_NAME#v}"
           ZIP_NAME="${APP_NAME}_${VERSION}_${ARCH}.zip"
+          # ── ad-hoc 自签名（关键）───────────────────────────────────
+          # Apple Silicon 要求所有代码至少有一个有效签名，否则内核拒绝加载并
+          # 误报「已损坏，应移到废纸篓」。codesign --sign - 即 ad-hoc 自签名，
+          # 无需 Apple 开发者账号；配合 tauri.conf.json 的 signingIdentity:"-"
+          # 双保险，确保 zip 内的 .app 一定带签名。
+          codesign --force --deep --sign - "$APP_PATH"
+          codesign --verify --deep --strict "$APP_PATH"
           echo "打包 $APP_PATH -> $ZIP_NAME"
           ditto -c -k --sequesterRsrc --keepParent "$APP_PATH" "$ZIP_NAME"
           # 草稿 release 用 --clobber 覆盖同名资产，按 tag 定位
           gh release upload "${GITHUB_REF_NAME}" "$ZIP_NAME" --clobber --repo "${GITHUB_REPOSITORY}"
+
 
