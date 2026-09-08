@@ -12,6 +12,7 @@ import {
   type History,
 } from '../canvas/history';
 import { edgeGeometry, straightPath, boxContains, type Box, type EdgeStyle } from '../canvas/geometry';
+import { computeTreeLayout } from '../canvas/autoLayout';
 import { api, pickMarkdownFiles, type BoardFile, type BoardNode, type BoardEdge, type DocRef } from '../api';
 import { openReaderWindow } from '../reader/windowManager';
 import { NodeCard } from './NodeCard';
@@ -84,6 +85,9 @@ export function BoardCanvas({
   /** 每个节点测得的真实布局尺寸（世界单位；不随 transform 缩放变化） */
   const sizesRef = useRef<Record<string, { w: number; h: number }>>({});
   const [sizesVer, setSizesVer] = useState(0);
+  /** 自动布局归位期间给世界层加过渡类（§4.3：慢 360ms 归位） */
+  const [arranging, setArranging] = useState(false);
+  const arrangeTimer = useRef<number | null>(null);
   const onMeasure = useCallback((id: string, w: number, h: number) => {
     const prev = sizesRef.current[id];
     if (!prev || Math.abs(prev.w - w) > 0.5 || Math.abs(prev.h - h) > 0.5) {
@@ -145,6 +149,33 @@ export function BoardCanvas({
     },
     [engine, onChange],
   );
+
+  /** 树状自动布局（M6-4）：只重排位置、不改结构，进历史可撤销；带 360ms 归位过渡。 */
+  const autoArrange = useCallback(() => {
+    const g = graphRef.current;
+    if (g.nodes.length === 0) return;
+    // 用节点原坐标包围盒左上作为布局原点，避免整块图跳到别处
+    const minX = Math.min(...g.nodes.map((n) => n.x));
+    const minY = Math.min(...g.nodes.map((n) => n.y));
+    const layoutNodes = g.nodes.map((n) => ({
+      id: n.id,
+      w: sizesRef.current[n.id]?.w ?? n.w ?? 240,
+      h: sizesRef.current[n.id]?.h ?? 96,
+    }));
+    const pos = computeTreeLayout(layoutNodes, g.edges, {
+      originX: minX,
+      originY: minY,
+    });
+    const nextNodes = g.nodes.map((n) => {
+      const p = pos.get(n.id);
+      return p ? { ...n, x: p.x, y: p.y } : n;
+    });
+    // 先开启过渡类，再更新坐标，让节点平滑滑到新位；到时长后移除类
+    setArranging(true);
+    if (arrangeTimer.current) window.clearTimeout(arrangeTimer.current);
+    arrangeTimer.current = window.setTimeout(() => setArranging(false), 420);
+    apply({ nodes: nextNodes, edges: g.edges });
+  }, [apply]);
 
   const doUndo = useCallback(() => {
     setHistory((h) => {
@@ -738,6 +769,15 @@ export function BoardCanvas({
             <path d="M10 4l3.5 3.2L10 10.4M13 7.2H6.8A4 4 0 0 0 3 11.2v.3" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" />
           </svg>
         </button>
+        <span className="tb-sep" aria-hidden="true" />
+        <button type="button" className="tb-btn" title="整理布局（树状自动排列，可撤销）" disabled={nodes.length === 0} onClick={autoArrange}>
+          <svg width="15" height="15" viewBox="0 0 16 16" aria-hidden="true">
+            <rect x="6" y="1.5" width="4" height="3" rx="0.8" fill="none" stroke="currentColor" strokeWidth="1.3" />
+            <rect x="1.5" y="11.5" width="4" height="3" rx="0.8" fill="none" stroke="currentColor" strokeWidth="1.3" />
+            <rect x="10.5" y="11.5" width="4" height="3" rx="0.8" fill="none" stroke="currentColor" strokeWidth="1.3" />
+            <path d="M8 4.5v3M8 7.5H3.5v4M8 7.5h4.5v4" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" />
+          </svg>
+        </button>
       </div>
 
       {/* 连线层：覆盖整块画布的全尺寸 SVG，用屏幕坐标绘制（避免 0×0 世界层不渲染）。
@@ -797,7 +837,7 @@ export function BoardCanvas({
       </svg>
 
       {/* 世界层：只改 transform（DESIGN §5.4） */}
-      <div className="canvas-world" style={{ transform: engine.transform, transformOrigin: '0 0', ...glowVars }}>
+      <div className={`canvas-world${arranging ? ' is-arranging' : ''}`} style={{ transform: engine.transform, transformOrigin: '0 0', ...glowVars }}>
         {nodes.map((n) => (
           <NodeCard
             key={n.id}
@@ -881,6 +921,7 @@ export function BoardCanvas({
     </div>
   );
 }
+
 
 
 

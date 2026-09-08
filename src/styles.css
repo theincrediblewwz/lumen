@@ -450,6 +450,26 @@ html.glass-on body {
   cursor: default;
 }
 
+/* 工具栏分隔条 */
+.canvas-toolbar .tb-sep {
+  width: 1px;
+  height: 18px;
+  margin: 0 2px;
+  background: var(--border-color);
+  opacity: 0.7;
+}
+
+/* §4.3 树状自动布局归位：360ms 慢速缓动把节点滑到新位置。
+   仅在 is-arranging 期间给 left/top 加过渡，平时拖拽保持零延迟直接跟随。 */
+.canvas-world.is-arranging .node-card {
+  transition:
+    left var(--dur-slow) var(--ease-standard),
+    top var(--dur-slow) var(--ease-standard);
+}
+html.motion-off .canvas-world.is-arranging .node-card {
+  transition: none;
+}
+
 
 /* 世界层：平移/缩放只改这一层的 transform（不逐个重排节点） */
 .canvas-world {
@@ -1985,6 +2005,7 @@ html.motion-off .edge-line { animation: none; }
 }
 .tt-empty { margin-top: 5px; font-size: 12px; color: var(--text-secondary); font-style: italic; }
 .tt-docs { margin-top: 6px; font-size: 11.5px; color: var(--accent); }
+
 
 
 
