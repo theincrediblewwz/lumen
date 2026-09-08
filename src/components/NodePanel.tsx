@@ -107,15 +107,30 @@ export function NodePanel({
     }
   });
 
-  // 首次挂载：若无已存位置，用默认停靠位（右侧）初始化为具体像素，方便后续拖拽。
+  /** 夹紧到可视区内。
+   *  坐标系统一为「视口坐标」：与 getBoundingClientRect() 同口径，配合
+   *  .is-floating 的 position:fixed，写进 style 的 left/top 就是最终位置，
+   *  无需再叠加画布容器的偏移（ADR-041）。 */
+  function clamp(r: Rect): Rect {
+    const vw = window.innerWidth;
+    const vh = window.innerHeight;
+    const width = Math.round(Math.min(Math.max(r.width, MIN_W), vw - 16));
+    const height = Math.round(Math.min(Math.max(r.height, MIN_H), vh - 16));
+    const left = Math.round(Math.min(Math.max(r.left, 8), Math.max(8, vw - width - 8)));
+    const top = Math.round(Math.min(Math.max(r.top, 8), Math.max(8, vh - height - 8)));
+    return { left, top, width, height };
+  }
+
+  // 首次挂载（或双击标题栏复位后）：以默认停靠位（画布右侧）初始化为具体像素，方便后续拖拽。
+  // 依赖里带 rect：rect 被置回 null 时会重新量一次，用于「复位到默认位置」。
   useLayoutEffect(() => {
     if (rect || !asideRef.current) return;
     const r = asideRef.current.getBoundingClientRect();
-    setRect({ left: r.left, top: r.top, width: r.width, height: r.height });
+    setRect(clamp({ left: r.left, top: r.top, width: r.width, height: r.height }));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [rect]);
 
-  // 保存 + 视口收缩时夹紧，避免面板跑出屏幕。
+  // 保存位置，下次打开面板时恢复。
   useEffect(() => {
     if (!rect) return;
     try {
@@ -125,17 +140,26 @@ export function NodePanel({
     }
   }, [rect]);
 
-  const clamp = (r: Rect): Rect => {
-    const vw = window.innerWidth;
-    const vh = window.innerHeight;
-    const width = Math.min(Math.max(r.width, MIN_W), vw - 16);
-    const height = Math.min(Math.max(r.height, MIN_H), vh - 16);
-    const left = Math.min(Math.max(r.left, 8), vw - width - 8);
-    const top = Math.min(Math.max(r.top, 8), vh - height - 8);
-    return { left, top, width, height };
+  // 窗口尺寸变化（含侧栏展开挤压可视区、外接显示器切换）时重新夹紧，避免面板被挤出屏幕。
+  useEffect(() => {
+    const onResize = () => setRect((prev) => (prev ? clamp(prev) : prev));
+    window.addEventListener('resize', onResize);
+    return () => window.removeEventListener('resize', onResize);
+  }, []);
+
+  /** 双击标题栏：复位到默认停靠位（位置记错 / 被挤出屏幕时的逃生口） */
+  const resetDock = () => {
+    try {
+      localStorage.removeItem(RECT_KEY);
+    } catch {
+      /* 忽略 */
+    }
+    setRect(null);
   };
 
-  // 拖动标题栏移动整个面板
+  // 拖动标题栏移动整个面板。
+  // base 取自 getBoundingClientRect()（视口坐标），与 .is-floating(fixed) 下
+  // style.left/top 的口径一致，所以起拖瞬间不会再跳位。
   const startMove = (e: React.PointerEvent) => {
     if ((e.target as HTMLElement).closest('button')) return; // 关闭按钮等不触发拖动
     e.preventDefault();
@@ -244,7 +268,12 @@ export function NodePanel({
       <span className="np-resize np-resize-se" onPointerDown={startResize('se')} />
       <span className="np-resize np-resize-sw" onPointerDown={startResize('sw')} />
 
-      <div className="np-head" onPointerDown={startMove} title="按住此处拖动面板">
+      <div
+        className="np-head"
+        onPointerDown={startMove}
+        onDoubleClick={resetDock}
+        title="按住此处拖动面板 · 双击复位到默认位置"
+      >
         <span className="np-kicker">问题节点</span>
         <button type="button" className="np-close" title="收起面板 (Esc)" onClick={onClose}>
           <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true">

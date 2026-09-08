@@ -1599,8 +1599,16 @@ html.motion-off .edge-line { animation: none; }
   animation: np-in var(--dur-normal) var(--ease-decelerate);
 }
 
-/* 已被拖动/缩放过：改用 JS 计算的绝对坐标（style 内联），取消默认停靠与入场位移动画 */
+/* 已被拖动/缩放过：改用 JS 计算的「视口坐标」（style 内联），取消默认停靠与入场位移动画。
+   ⚠ 必须是 fixed：left/top 取自 getBoundingClientRect()，即视口坐标系。若沿用 absolute，
+   这两个值会被当成相对 .board-canvas 的坐标，于是产生两个 bug：
+     ① 侧栏展开时画布左边界右移 224/448px，面板被一并推出可视区；
+     ② 画布上方还有 44px 标题栏，每次开始拖动，面板都会再往下跳一个标题栏的高度。
+   改 fixed 后「测量口径」与「写入口径」一致（都是视口），面板位置与侧栏/画布彻底解耦。
+   已确认祖先链 .workspace / .board-surface / .board-canvas 均无 transform、filter、
+   backdrop-filter、contain —— 不会给 fixed 造成新的定位基准（ADR-041）。 */
 .node-panel.is-floating {
+  position: fixed;
   animation: none;
 }
 
@@ -1624,7 +1632,14 @@ html.motion-off .edge-line { animation: none; }
 .np-resize-se { bottom: -4px; right: -4px; width: 14px; height: 14px; cursor: nwse-resize; }
 .np-resize-sw { bottom: -4px; left: -4px; width: 14px; height: 14px; cursor: nesw-resize; }
 
+/* 四角手柄压在标题栏之上，保证拉伸仍可用（顶边整条让位给标题栏拖拽） */
+.np-resize-ne, .np-resize-nw, .np-resize-se, .np-resize-sw { z-index: 7; }
+
 .np-head {
+  /* 定位 + 提层：盖住顶边的 np-resize-n 拉伸条。否则按住标题栏最上沿拖动时
+     会误触发「从顶边缩小」，表现为面板突然往下挪一截。 */
+  position: relative;
+  z-index: 6;
   display: flex;
   align-items: center;
   justify-content: space-between;

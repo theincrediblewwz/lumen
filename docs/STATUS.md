@@ -3,7 +3,7 @@
 > **开工前先读本文件；每完成一件事就更新本文件。**
 > 本文件只记录「进度」。计划与任务清单见 [PLAN.md](./PLAN.md)，设计与决策见 [DESIGN.md](./DESIGN.md)。
 
-**最后更新**：2026-09-08 (Asia/Shanghai) · M7 发布：Release v0.1.0 已发布 + M7-1 全平台打包完成；新增 OS 文件拖放到节点导入
+**最后更新**：2026-09-08 (Asia/Shanghai) · **v0.1.5：修节点面板定位两 bug（ADR-041）**；此前 Release v0.1.0/v0.1.1 已发布、M7-1 全平台打包完成
 
 ---
 
@@ -96,6 +96,7 @@
 | **阅读窗自绘标题栏** | 阅读窗去系统装饰，自绘可拖拽标题栏(Win三键/mac红绿灯位) |
 | **设置滚动修复** | 头部固定不随滚动消失 + 圆角自定义滚动条 |
 | **阅读体验** | 连续滚动/双页(无缝+页码+翻页)、全屏 |
+| **修节点面板定位两 bug（ADR-041，发 v0.1.5）** | 用户报：① 展开「项目/白板」侧栏时节点面板被挤出可视区；② 按住面板标题栏起拖时面板突然下移一截。根因是**坐标系串味**——面板是 `.board-canvas` 内的 `position:absolute`，却把 `getBoundingClientRect()` 的**视口坐标**写进 `style.left/top`：侧栏展开使画布左边界右移 224/448px，面板随容器被推出屏幕；画布上方还有 44px 标题栏，每次起拖重新测量都会再叠加一次偏移，于是每拖一次下移 44px。改：浮动态 `.node-panel.is-floating` 用 `position:fixed`，测量与写入口径统一为视口；首次测量即 `clamp`；监听 `resize` 重新夹紧；`.np-head` 提层盖住顶边 `np-resize-n` 拉伸条（防误触发「从顶边缩小」）；四角手柄 `z-index:7` 保留拉伸；新增双击标题栏复位。验证：tsc EXIT=0 / vitest **221 passed(15 files)** / vite build ✓ / **cargo check ✓(lumen v0.1.5)** / check:secrets 净。**待用户实机验收** |
 
 ## 三、进行中
 
@@ -151,6 +152,7 @@
 | --- | --- | --- |
 | （可选）实机验收 M1 | 应用若仍在运行，直接操作：选目录 → 建项目 → 建白板 | 有问题告诉我，我来改 |
 | （可选）本地跑单测 | `npm test` | 验证 CanvasEngine 换算内核（30 用例） |
+| **实机验收 v0.1.5 面板定位** | 开白板 → 点节点出面板 → 展开/收起侧栏，面板应纹丝不动 → 拖标题栏，起拖不再下跳 → 双击标题栏可复位 | 装 v0.1.5 或 `npm run tauri:dev` |
 
 > 注：推送等我已能自行完成（凭据已缓存，且走 ghproxy 镜像），不再需要用户代劳。
 
@@ -195,6 +197,7 @@
 | MCP `apply_patch` 对 JSON 上下文不稳 | 给 `package.json` 打小补丁时报「patched」却未生效（同尺寸）；改用 `write_file` 全量覆盖更可靠 |
 | **在 Windows 上跑出 GUI 不代表平台错了** | Tauri 用系统 WebView（Win=WebView2 / mac=WKWebView），同一套 React 代码在开发机（本机是 Windows，故产物为 `lumen.exe`）即可调试；「主目标 macOS」指最终发布用 mac 构建。macOS 的 `.app`/`.dmg` 必须在 mac 或 CI mac runner 上 `tauri build` |
 | **自定义标题栏控件必须退出拖拽区** | 整条 titlebar 设 `-webkit-app-region: drag` 后，内部按钮要加 `no-drag`，否则点击被窗口拖拽吞掉 |
+| **浮动面板的坐标系必须和定位方式对齐** | `getBoundingClientRect()` 给的是**视口坐标**，`position:absolute` 的 `left/top` 却是**容器坐标**。给画布内的浮动面板写坐标前，要么改 `position:fixed`（推荐），要么手动减去容器 rect。混用的症状：容器尺寸一变元素就漂移，且每次重新测量都会再叠加一次偏移（表现为「每次拖动都往下跳一截」）。改 `fixed` 前务必确认祖先链上没有 transform/filter/backdrop-filter/contain——否则 fixed 会被该祖先重新锚定，bug 原样复发（ADR-041） |
 
 
 
