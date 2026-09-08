@@ -2274,3 +2274,93 @@ html.motion-off .edge-line { animation: none; }
   gap: 6px;
   flex: none;
 }
+
+
+/* 工具栏缩放百分比按钮：等宽避免抖动 */
+.canvas-toolbar .tb-btn.tb-zoom {
+  min-width: 48px;
+  justify-content: center;
+  font-variant-numeric: tabular-nums;
+  font-size: 12px;
+}
+
+/* ── 快捷键帮助面板（M6-9，复用 .gs-overlay / .gs-panel） ── */
+.sc-panel {
+  width: min(560px, 92vw);
+}
+.sc-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--border-color);
+}
+.sc-title {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+.sc-body {
+  overflow-y: auto;
+  padding: 10px 16px 16px;
+  columns: 2;
+  column-gap: 26px;
+}
+.sc-group {
+  break-inside: avoid;
+  margin-top: 12px;
+}
+.sc-group:first-child {
+  margin-top: 2px;
+}
+.sc-group-title {
+  margin: 0 0 6px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--accent);
+  letter-spacing: 0.04em;
+}
+.sc-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.sc-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 5px 0;
+}
+.sc-label {
+  font-size: 13px;
+  color: var(--text-primary);
+  min-width: 0;
+}
+.sc-keys {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.sc-or {
+  font-size: 11px;
+  color: var(--text-secondary);
+  margin: 0 2px;
+}
+.sc-kbd {
+  font-family: inherit;
+  font-size: 11.5px;
+  color: var(--text-primary);
+  background: var(--bg-hover);
+  border: 1px solid var(--border-color);
+  border-bottom-width: 2px;
+  border-radius: 5px;
+  padding: 1px 6px;
+  white-space: nowrap;
+}
+@media (max-width: 480px) {
+  .sc-body {
+    columns: 1;
+  }
+}

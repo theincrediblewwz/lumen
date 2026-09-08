@@ -13,6 +13,7 @@ import {
 } from '../canvas/history';
 import { edgeGeometry, straightPath, boxContains, type Box, type EdgeStyle } from '../canvas/geometry';
 import { computeTreeLayout } from '../canvas/autoLayout';
+import { matchShortcut, isEditableTarget, shortcut } from '../canvas/shortcuts';
 import { api, pickMarkdownFiles, type BoardFile, type BoardNode, type BoardEdge, type DocRef } from '../api';
 import { openReaderWindow } from '../reader/windowManager';
 import { NodeCard } from './NodeCard';
@@ -71,6 +72,10 @@ export function BoardCanvas({
 
   const [selected, setSelected] = useState<string | null>(null);
   const [selectedEdge, setSelectedEdge] = useState<string | null>(null);
+  // 供键盘快捷键在稳定回调里读取最新选中与新建节点（规避闭包旧值）
+  const selectedRef = useRef<string | null>(null);
+  selectedRef.current = selected;
+  const addNodeRef = useRef<(x: number, y: number) => void>(() => {});
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editingEdge, setEditingEdge] = useState<string | null>(null);
   const [menu, setMenu] = useState<ContextMenuState | null>(null);
@@ -177,6 +182,74 @@ export function BoardCanvas({
     apply({ nodes: nextNodes, edges: g.edges });
   }, [apply]);
 
+  /* ── 键盘视图操作（M6-9）：缩放 / 重置 / 适配 / 中心新建 / 微移 ── */
+
+  /** 以视口中心为锚缩放（键盘缩放不该跟着鼠标跑）。 */
+  const zoomCenter = useCallback(
+    (factor: number) => {
+      const r = rect();
+      engine.zoomByFactor({ x: r.width / 2, y: r.height / 2 }, factor);
+      rerender();
+      onChange(graphRef.current.nodes, graphRef.current.edges, engine.viewport);
+    },
+    [engine, onChange, rerender],
+  );
+
+  /** 缩放重置为 100%，保持视口中心对应的世界点不动。 */
+  const zoomReset = useCallback(() => {
+    const r = rect();
+    engine.zoomAtPoint({ x: r.width / 2, y: r.height / 2 }, 1);
+    rerender();
+    onChange(graphRef.current.nodes, graphRef.current.edges, engine.viewport);
+  }, [engine, onChange, rerender]);
+
+  /** 适配全部内容到屏幕（zoom-to-fit）。 */
+  const fitAll = useCallback(() => {
+    const g = graphRef.current;
+    const r = rect();
+    if (g.nodes.length === 0) {
+      engine.fit(null, { width: r.width, height: r.height });
+    } else {
+      let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+      for (const n of g.nodes) {
+        const s = sizesRef.current[n.id] ?? { w: n.w || 240, h: 96 };
+        minX = Math.min(minX, n.x);
+        minY = Math.min(minY, n.y);
+        maxX = Math.max(maxX, n.x + s.w);
+        maxY = Math.max(maxY, n.y + s.h);
+      }
+      engine.fit(
+        { x: minX, y: minY, width: maxX - minX, height: maxY - minY },
+        { width: r.width, height: r.height },
+      );
+    }
+    rerender();
+    onChange(graphRef.current.nodes, graphRef.current.edges, engine.viewport);
+  }, [engine, onChange, rerender]);
+
+  /** 在视口中心新建节点（键盘 N）。 */
+  const addNodeAtCenter = useCallback(() => {
+    const r = rect();
+    const world = engine.toWorld({ x: r.width / 2, y: r.height / 2 });
+    addNodeRef.current(world.x, world.y);
+  }, [engine]);
+
+  /** 方向键微移选中节点（Shift 步长更大），进历史可撤销。 */
+  const nudgeSelected = useCallback(
+    (dx: number, dy: number) => {
+      const id = selectedRef.current;
+      if (!id) return;
+      const g = graphRef.current;
+      const nextNodes = g.nodes.map((n) =>
+        n.id === id
+          ? { ...n, x: n.x + dx, y: n.y + dy, updated_at: new Date().toISOString() }
+          : n,
+      );
+      apply({ nodes: nextNodes, edges: g.edges });
+    },
+    [apply],
+  );
+
   const doUndo = useCallback(() => {
     setHistory((h) => {
       if (!canUndo(h)) return h;
@@ -210,34 +283,80 @@ export function BoardCanvas({
 
   const removeNodeRef = useRef<(id: string) => void>(() => {});
 
-  /* 快捷键：撤销/重做 + Delete 删除选中连线/节点 */
+  /* 快捷键（M6-9，集中匹配）：撤销/重做/缩放/适配/新建/微移/删除/取消 */
   useEffect(() => {
+    const hit = (id: string, e: KeyboardEvent) => matchShortcut(e, shortcut(id)!);
     const onKey = (e: KeyboardEvent) => {
-      if (e.ctrlKey || e.metaKey) {
-        const k = e.key.toLowerCase();
-        if (k === 'z' && !e.shiftKey) {
+      // 撤销/重做即便焦点在输入框外也应响应；但打字时交给输入框自身
+      const editable = isEditableTarget(e.target);
+      if (!editable) {
+        if (hit('undo', e)) {
           e.preventDefault();
           doUndo();
-        } else if ((k === 'z' && e.shiftKey) || k === 'y') {
+          return;
+        }
+        if (hit('redo', e)) {
           e.preventDefault();
           doRedo();
+          return;
         }
-        return;
+        if (hit('zoom-in', e)) {
+          e.preventDefault();
+          zoomCenter(1.2);
+          return;
+        }
+        if (hit('zoom-out', e)) {
+          e.preventDefault();
+          zoomCenter(1 / 1.2);
+          return;
+        }
+        if (hit('zoom-reset', e)) {
+          e.preventDefault();
+          zoomReset();
+          return;
+        }
+        if (hit('fit', e)) {
+          e.preventDefault();
+          fitAll();
+          return;
+        }
+        if (hit('new-node', e)) {
+          e.preventDefault();
+          addNodeAtCenter();
+          return;
+        }
       }
-      // 正在输入框/文本域中打字时，不触发画布级快捷键（避免删节点等误操作）
-      const t = e.target as HTMLElement | null;
-      const typing =
-        !!t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable);
-      if (typing) return;
+
+      // 以下画布级操作在打字时一律跳过（避免删节点等误操作）
+      if (editable) return;
 
       if (e.key === 'Escape') {
         if (panelId) {
           e.preventDefault();
           setPanelId(null);
+        } else if (selected || selectedEdge) {
+          e.preventDefault();
+          setSelected(null);
+          setSelectedEdge(null);
         }
         return;
       }
-      if ((e.key === 'Delete' || e.key === 'Backspace') && editingId === null && editingEdge === null) {
+
+      // 方向键微移选中节点（Shift 步长更大）
+      if (
+        selectedRef.current &&
+        editingId === null &&
+        (e.key === 'ArrowUp' || e.key === 'ArrowDown' || e.key === 'ArrowLeft' || e.key === 'ArrowRight')
+      ) {
+        e.preventDefault();
+        const step = e.shiftKey ? 20 : 2;
+        const dx = e.key === 'ArrowLeft' ? -step : e.key === 'ArrowRight' ? step : 0;
+        const dy = e.key === 'ArrowUp' ? -step : e.key === 'ArrowDown' ? step : 0;
+        nudgeSelected(dx, dy);
+        return;
+      }
+
+      if (hit('delete', e) && editingId === null && editingEdge === null) {
         if (selectedEdge) {
           e.preventDefault();
           removeEdge(selectedEdge);
@@ -249,7 +368,21 @@ export function BoardCanvas({
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [doUndo, doRedo, selectedEdge, selected, editingId, editingEdge, removeEdge, panelId]);
+  }, [
+    doUndo,
+    doRedo,
+    zoomCenter,
+    zoomReset,
+    fitAll,
+    addNodeAtCenter,
+    nudgeSelected,
+    selectedEdge,
+    selected,
+    editingId,
+    editingEdge,
+    removeEdge,
+    panelId,
+  ]);
 
   /* ── 拖拽状态 ── */
   const drag = useRef<
@@ -640,10 +773,12 @@ export function BoardCanvas({
       created_at: now,
       updated_at: now,
     };
-    apply({ nodes: [...nodes, node], edges });
+    const g = graphRef.current;
+    apply({ nodes: [...g.nodes, node], edges: g.edges });
     setSelected(node.id);
     setEditingId(node.id);
   };
+  addNodeRef.current = addNode;
 
   const removeNode = (id: string) => {
     // 级联清理该节点的连线（FR-4.5）
@@ -757,25 +892,44 @@ export function BoardCanvas({
       onContextMenu={onCanvasContextMenu}
       onDoubleClick={onCanvasDoubleClick}
     >
-      {/* 悬浮工具栏：撤销 / 重做 */}
-      <div className="canvas-toolbar" onPointerDown={(e) => e.stopPropagation()}>
-        <button type="button" className="tb-btn" title="撤销 (Ctrl+Z)" disabled={!canUndo(history)} onClick={doUndo}>
+      {/* 悬浮工具栏：撤销 / 重做 / 整理 / 缩放 / 适配 */}
+      <div className="canvas-toolbar" role="toolbar" aria-label="画布工具" onPointerDown={(e) => e.stopPropagation()}>
+        <button type="button" className="tb-btn" title="撤销 (Ctrl+Z)" aria-label="撤销" disabled={!canUndo(history)} onClick={doUndo}>
           <svg width="15" height="15" viewBox="0 0 16 16" aria-hidden="true">
             <path d="M6 4L2.5 7.2 6 10.4M3 7.2h6.2A4 4 0 0 1 13 11.2v.3" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" />
           </svg>
         </button>
-        <button type="button" className="tb-btn" title="重做 (Ctrl+Shift+Z)" disabled={!canRedo(history)} onClick={doRedo}>
+        <button type="button" className="tb-btn" title="重做 (Ctrl+Shift+Z)" aria-label="重做" disabled={!canRedo(history)} onClick={doRedo}>
           <svg width="15" height="15" viewBox="0 0 16 16" aria-hidden="true">
             <path d="M10 4l3.5 3.2L10 10.4M13 7.2H6.8A4 4 0 0 0 3 11.2v.3" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" />
           </svg>
         </button>
         <span className="tb-sep" aria-hidden="true" />
-        <button type="button" className="tb-btn" title="整理布局（树状自动排列，可撤销）" disabled={nodes.length === 0} onClick={autoArrange}>
+        <button type="button" className="tb-btn" title="整理布局（树状自动排列，可撤销）" aria-label="整理布局" disabled={nodes.length === 0} onClick={autoArrange}>
           <svg width="15" height="15" viewBox="0 0 16 16" aria-hidden="true">
             <rect x="6" y="1.5" width="4" height="3" rx="0.8" fill="none" stroke="currentColor" strokeWidth="1.3" />
             <rect x="1.5" y="11.5" width="4" height="3" rx="0.8" fill="none" stroke="currentColor" strokeWidth="1.3" />
             <rect x="10.5" y="11.5" width="4" height="3" rx="0.8" fill="none" stroke="currentColor" strokeWidth="1.3" />
             <path d="M8 4.5v3M8 7.5H3.5v4M8 7.5h4.5v4" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" />
+          </svg>
+        </button>
+        <span className="tb-sep" aria-hidden="true" />
+        <button type="button" className="tb-btn" title="缩小 (Ctrl+-)" aria-label="缩小" onClick={() => zoomCenter(1 / 1.2)}>
+          <svg width="15" height="15" viewBox="0 0 16 16" aria-hidden="true">
+            <path d="M4 8h8" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+          </svg>
+        </button>
+        <button type="button" className="tb-btn tb-zoom" title="缩放重置为 100% (Ctrl+0)" aria-label={`当前缩放 ${Math.round(zoom * 100)}%，点击重置为 100%`} onClick={zoomReset}>
+          {Math.round(zoom * 100)}%
+        </button>
+        <button type="button" className="tb-btn" title="放大 (Ctrl+=)" aria-label="放大" onClick={() => zoomCenter(1.2)}>
+          <svg width="15" height="15" viewBox="0 0 16 16" aria-hidden="true">
+            <path d="M8 4v8M4 8h8" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+          </svg>
+        </button>
+        <button type="button" className="tb-btn" title="适配全部内容 (Shift+1)" aria-label="适配全部内容到屏幕" onClick={fitAll}>
+          <svg width="15" height="15" viewBox="0 0 16 16" aria-hidden="true">
+            <path d="M2 5.5V2.5h3M14 5.5V2.5h-3M2 10.5v3h3M14 10.5v3h-3" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" />
           </svg>
         </button>
       </div>
@@ -921,6 +1075,7 @@ export function BoardCanvas({
     </div>
   );
 }
+
 
 
 

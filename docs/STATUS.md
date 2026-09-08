@@ -3,7 +3,7 @@
 > **开工前先读本文件；每完成一件事就更新本文件。**
 > 本文件只记录「进度」。计划与任务清单见 [PLAN.md](./PLAN.md)，设计与决策见 [DESIGN.md](./DESIGN.md)。
 
-**最后更新**：2026-09-08 (Asia/Shanghai) · M6-8 快照与恢复完成待提交
+**最后更新**：2026-09-08 (Asia/Shanghai) · M6-9 快捷键与可访问性完成待提交（M6 打磨阶段全部完成）
 
 ---
 
@@ -112,7 +112,14 @@
   - commands.rs 加 `snapshot_list/create/restore/delete`，lib.rs 注册。
   - 前端 `api.snapshotList/Create/Restore/Delete` + `SnapshotMeta` 类型；新建 `src/components/SnapshotPanel.tsx`（列出历史版本、存快照、恢复、删除，「恢复前保险」徽标）；App 打开白板时自动 `snapshotCreate`、应用菜单加「快照与恢复…」、渲染面板；styles.css 加 `.snap-*` 样式（复用 `.gs-overlay/.gs-panel`）。
   - 验证：tsc EXIT=0、vitest **198 passed(14 files)**、vite build EXIT=0、cargo test **12 passed**。
-- **下一步**：M6-9 快捷键与可访问性（M6 收尾）。
+- **M6-9 快捷键与可访问性 完成（本轮，待提交）**：
+  - 纯逻辑 `src/canvas/shortcuts.ts`：平台感知 combo 体系（`mod`=⌘/Ctrl）、`parseCombo/matchCombo/matchShortcut/formatCombo/formatShortcut`、`isEditableTarget`、`isMac`（可注入 platform）、`SHORTCUTS` 定义表（全局/视图/画布/节点四组）+ `shortcuts.test.ts` **23 passed**。
+  - 新建 `src/components/ShortcutsHelp.tsx`：Shift+/（?）打开的帮助面板，按组列出全部快捷键，平台感知显示 ⌘/Ctrl（`role=dialog aria-modal`，双栏布局）。
+  - App.tsx：全局 keydown 改用 shortcuts 模块（全屏 F11 / 搜索 mod+K / 帮助 ? / Esc 退全屏），加 `helpOpen` state、菜单「快捷键帮助 ?」、渲染 `<ShortcutsHelp>`。
+  - BoardCanvas.tsx：keydown 集中匹配，新增 视图缩放（mod+= / mod+- 以视口中心为锚）、mod+0 重置 100%、Shift+1 适配全部内容（`fitAll`）、N 视图中心新建节点、方向键微移选中节点（Shift 步长 20/普通 2，进历史可撤销）、Esc 取消选中；工具栏加 `role=toolbar`+aria-label、缩放（−/百分比/＋）与适配按钮。
+  - styles.css：`.tb-zoom`（等宽百分比）与 `.sc-*` 帮助面板样式（主题感知、窄屏单栏）。
+  - 验证：tsc EXIT=0、vitest **221 passed(15 files)**、vite build EXIT=0。
+- **M6 打磨阶段全部完成**（M6-1~M6-9）。下一步进入 **M7**（打包发布/用户文档等，见 PLAN）。
 - 应用以后台会话 `sess-11` 运行中。
 
 ### M5（已完成，等实机验收）
@@ -175,6 +182,7 @@
 | MCP `apply_patch` 对 JSON 上下文不稳 | 给 `package.json` 打小补丁时报「patched」却未生效（同尺寸）；改用 `write_file` 全量覆盖更可靠 |
 | **在 Windows 上跑出 GUI 不代表平台错了** | Tauri 用系统 WebView（Win=WebView2 / mac=WKWebView），同一套 React 代码在开发机（本机是 Windows，故产物为 `lumen.exe`）即可调试；「主目标 macOS」指最终发布用 mac 构建。macOS 的 `.app`/`.dmg` 必须在 mac 或 CI mac runner 上 `tauri build` |
 | **自定义标题栏控件必须退出拖拽区** | 整条 titlebar 设 `-webkit-app-region: drag` 后，内部按钮要加 `no-drag`，否则点击被窗口拖拽吞掉 |
+
 
 
 

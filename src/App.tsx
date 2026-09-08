@@ -10,6 +10,8 @@ import { getCurrentWindow } from '@tauri-apps/api/window';
 import { SettingsPanel } from './components/SettingsPanel';
 import { GlobalSearch } from './components/GlobalSearch';
 import { SnapshotPanel } from './components/SnapshotPanel';
+import { ShortcutsHelp } from './components/ShortcutsHelp';
+import { matchShortcut, isEditableTarget, shortcut } from './canvas/shortcuts';
 import { exportMarkdown, exportHtml, exportSvg } from './canvas/boardExport';
 import { loadSettings, saveSettings, applySettings, type Settings } from './settings';
 
@@ -75,7 +77,9 @@ export default function App() {
   const [focusNode, setFocusNode] = useState<{ id: string; nonce: number } | null>(null);
   const [searchOpen, setSearchOpen] = useState(false);
   const [snapshotOpen, setSnapshotOpen] = useState(false);
+  const [helpOpen, setHelpOpen] = useState(false);
   const editRef = useRef<HTMLInputElement>(null);
+  const mac = /darwin|mac/i.test(platform);
 
   /* 应用外观设置（主题 / 玻璃 / 动画）到 <html>；platform 变化后重跑
      （原生材质仅 macOS 启用，需知道平台才能正确决定 native/实色）。 */
@@ -130,23 +134,27 @@ export default function App() {
     });
   }, []);
 
-  /* F11 切换全屏；Esc 退出全屏 */
+  /* 全局快捷键（M6-9）：全屏 / 搜索 / 帮助；Esc 退出全屏。画布级快捷键在 BoardCanvas 内处理 */
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'F11') {
+      if (matchShortcut(e, shortcut('fullscreen')!, { mac })) {
         e.preventDefault();
         toggleFullscreen();
-      } else if ((e.ctrlKey || e.metaKey) && (e.key === 'k' || e.key === 'K')) {
-        // 全局搜索（M6-6）
+      } else if (matchShortcut(e, shortcut('search')!, { mac })) {
+        // 全局搜索（M6-6）——在输入框里也允许（方便随时唤出）
         e.preventDefault();
         setSearchOpen((v) => !v);
+      } else if (!isEditableTarget(e.target) && matchShortcut(e, shortcut('help')!, { mac })) {
+        // 快捷键帮助（Shift+/ 即 ?）；打字时不触发
+        e.preventDefault();
+        setHelpOpen((v) => !v);
       } else if (e.key === 'Escape' && fullscreen) {
         applyFullscreen(false);
       }
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [fullscreen, toggleFullscreen, applyFullscreen]);
+  }, [fullscreen, toggleFullscreen, applyFullscreen, mac]);
 
   useEffect(() => {
     if (editing) {
@@ -395,6 +403,7 @@ export default function App() {
       { type: 'item', label: '设置…', onClick: () => setSettingsOpen(true) },
       { type: 'item', label: '进入全屏  F11', onClick: () => applyFullscreen(true) },
       { type: 'item', label: '全局搜索  Ctrl/Cmd+K', onClick: () => setSearchOpen(true) },
+      { type: 'item', label: '快捷键帮助  ?', onClick: () => setHelpOpen(true) },
       ...(activeBoard
         ? ([
             { type: 'separator' },
@@ -630,6 +639,7 @@ export default function App() {
         onClose={() => setSnapshotOpen(false)}
         onRestored={(board) => setActiveBoard(board)}
       />
+      <ShortcutsHelp open={helpOpen} platform={platform} onClose={() => setHelpOpen(false)} />
       {settingsOpen && (
         <SettingsPanel settings={settings} platform={platform} onChange={patchSettings} onClose={() => setSettingsOpen(false)} />
       )}
@@ -646,6 +656,7 @@ export default function App() {
     </div>
   );
 }
+
 
 
 
