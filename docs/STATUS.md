@@ -120,8 +120,13 @@
   - styles.css：`.tb-zoom`（等宽百分比）与 `.sc-*` 帮助面板样式（主题感知、窄屏单栏）。
   - 验证：tsc EXIT=0、vitest **221 passed(15 files)**、vite build EXIT=0。
 - **M6 打磨阶段全部完成**（M6-1~M6-9）。
-- **M7-3 用户文档 完成（本轮，待提交）**：新建 `docs/USER_GUIDE.md`（首次启动引导四步 + 界面速览 + 快捷键表【与 `src/canvas/shortcuts.ts` 同源】+ 文档/阅读、AI、搜索、导出、快照、数据存储/备份、无障碍）；`README.md` 全量刷新（M0 → M0–M6 完成、进入 M7；功能一览、开发快速开始、数据布局、文档索引加 USER_GUIDE、路线图状态更新）。纯文档改动，无需构建验证。
-- **M7 剩余待办**：M7-1 打包（macOS arm64 dmg 主 + Windows）、M7-2 自动更新(P2)、M7-4 端到端验收（DESIGN §3 逐条）、M7-5 性能与体积基线、M7-6 GitHub Actions（push/PR 跑 Linux 测试；tag 触发 mac+win 构建）。**打包/CI 需实际构建环境，建议与用户确认再动。**
+- **M7-3 用户文档 完成并推送（`2d9e371`）**：`docs/USER_GUIDE.md` + `README.md` 全量刷新。
+- **M7-6 CI + M7-1 打包配置 + M7-4 验收清单 + M7-5 性能基线 完成（本轮，待提交）**：
+  - **M7-6**：`.github/workflows/ci.yml` 补 `npm test` + `npm run build` 步骤，新增 `rust-test` job（Linux 装 webkit2gtk/gtk 依赖 + `cargo test`）。release.yml 已存在（tag `v*` 触发 mac arm64 + win 构建，tauri-action）。
+  - **M7-1 打包配置**：`src-tauri/tauri.conf.json` bundle 段补全 icon 列表、publisher、short/longDescription、copyright、NSIS `installMode=currentUser`、macOS `minimumSystemVersion=11.0`；`cargo check` EXIT=0 通过。图标齐全（icons/ 下 icns/ico/png 全在）。
+  - **M7-4**：新建 `docs/ACCEPTANCE.md`——DESIGN §3 FR-1~9 逐条映射状态（✅自动化覆盖 / 🟩需实机 / ⏳待实机 / ➖本期不做），汇总自动化覆盖与需实机项。
+  - **M7-5**：新建 `docs/PERF.md`——前端产物体积已实测（dist ~1.79MB，主 JS ~650KB/CSS ~90KB/KaTeX 字体 ~0.5MB）；画布 FPS、阅读首屏、安装包体积、启动时间列方法+目标待实机回填。
+- **M7 剩余（需实际打包/实机，建议由用户触发）**：M7-1 真正产出安装包（本机 `npm run tauri:build` 或打 tag 触发 CI）、M7-2 自动更新(P2，未做)、以及 ACCEPTANCE/PERF 里标 ⏳ 的实机走查项。
 - 应用以后台会话 `sess-11` 运行中。
 
 ### M5（已完成，等实机验收）
@@ -184,6 +189,7 @@
 | MCP `apply_patch` 对 JSON 上下文不稳 | 给 `package.json` 打小补丁时报「patched」却未生效（同尺寸）；改用 `write_file` 全量覆盖更可靠 |
 | **在 Windows 上跑出 GUI 不代表平台错了** | Tauri 用系统 WebView（Win=WebView2 / mac=WKWebView），同一套 React 代码在开发机（本机是 Windows，故产物为 `lumen.exe`）即可调试；「主目标 macOS」指最终发布用 mac 构建。macOS 的 `.app`/`.dmg` 必须在 mac 或 CI mac runner 上 `tauri build` |
 | **自定义标题栏控件必须退出拖拽区** | 整条 titlebar 设 `-webkit-app-region: drag` 后，内部按钮要加 `no-drag`，否则点击被窗口拖拽吞掉 |
+
 
 
 
