@@ -17,11 +17,16 @@
   --font-node: 15px;
   --line-node: 1.55;
 
-  /* 动效时长 */
+  /* 动效时长（DESIGN §4.3 时长表） */
   --dur-instant: 80ms;
   --dur-fast: 140ms;
   --dur-normal: 220ms;
   --dur-slow: 360ms;
+  /* §4.3 专项场景时长（不落在通用四档里的具体值） */
+  --dur-node-in: 180ms; /* 节点新建 */
+  --dur-node-out: 140ms; /* 节点删除 */
+  --dur-edge-draw: 300ms; /* 连线建立：描边画出 */
+  --dur-jump: 600ms; /* 引用跳转：居中缓动 + 脉冲 */
 
   /* 缓动：位移用减速（进入感），消失用加速（干净利落） */
   --ease-standard: cubic-bezier(0.2, 0, 0, 1);
@@ -375,11 +380,19 @@ html.glass-on body {
   border-top: var(--border-node) solid var(--border-color);
 }
 
-/* 尊重系统「减少动态效果」设置（FR-9.2） */
+/* 尊重系统「减少动态效果」设置（FR-9.2 / M6-3）。
+   不只是把时长归零：还要把无限循环动画（如连线拖拽预览的行进虚线）迭代次数
+   收成 1、去掉延迟、关闭平滑滚动，避免"瞬时时长 + 无限循环"反而高频闪动。 */
 @media (prefers-reduced-motion: reduce) {
-  * {
-    animation-duration: 0.01ms !important;
-    transition-duration: 0.01ms !important;
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    animation-delay: 0ms !important;
+    transition-duration: 0.001ms !important;
+    transition-delay: 0ms !important;
+    scroll-behavior: auto !important;
   }
 }
 
@@ -492,9 +505,11 @@ html.glass-on body {
   cursor: default;
 }
 
-/* AI 引用跳转高亮（M5-6）：短暂脉冲光环 + 轻微放大，醒目但不刺眼 */
+/* AI 引用跳转高亮（M5-6 / §4.3 引用跳转）：脉冲 2 次，醒目但不刺眼。
+   视口居中缓动在 JS 侧（jumpToNode/focusNode）用 --dur-jump 时长完成；
+   这里的高亮做两轮 ring 脉冲（0%→50% 一次，50%→100% 第二次）。 */
 .node-card.is-flash {
-  animation: node-flash 1.6s ease-out;
+  animation: node-flash 1.2s var(--ease-standard);
   z-index: 20;
 }
 @keyframes node-flash {
@@ -502,11 +517,20 @@ html.glass-on body {
     box-shadow: 0 0 0 0 color-mix(in srgb, var(--node-accent, var(--accent)) 70%, transparent);
     transform: scale(1);
   }
-  15% {
+  12% {
     box-shadow: 0 0 0 8px color-mix(in srgb, var(--node-accent, var(--accent)) 45%, transparent);
     transform: scale(1.03);
   }
-  60% {
+  40% {
+    box-shadow: 0 0 0 14px color-mix(in srgb, var(--node-accent, var(--accent)) 0%, transparent);
+    transform: scale(1);
+  }
+  /* 第二次脉冲 */
+  56% {
+    box-shadow: 0 0 0 8px color-mix(in srgb, var(--node-accent, var(--accent)) 40%, transparent);
+    transform: scale(1.025);
+  }
+  85% {
     box-shadow: 0 0 0 14px color-mix(in srgb, var(--node-accent, var(--accent)) 0%, transparent);
     transform: scale(1);
   }
@@ -704,10 +728,15 @@ html.glass-on .ctx-menu {
   border-color: var(--glass-edge);
 }
 
-/* 关闭动画（设置里关 or 系统减少动态效果） */
-html.motion-off * {
+/* 关闭动画（设置里手动关）——与系统 reduced-motion 同等强度 */
+html.motion-off *,
+html.motion-off *::before,
+html.motion-off *::after {
   animation-duration: 0.001ms !important;
+  animation-iteration-count: 1 !important;
+  animation-delay: 0ms !important;
   transition-duration: 0.001ms !important;
+  transition-delay: 0ms !important;
 }
 
 @keyframes fade-in {
@@ -722,7 +751,8 @@ html.motion-off * {
   flex-direction: column;
   gap: 6px;
   height: auto;
-  animation: node-pop var(--dur-normal) var(--ease-spring);
+  /* §4.3 节点新建：180ms 减速，scale .96→1 + opacity 0→1（不弹过头） */
+  animation: node-pop var(--dur-node-in) var(--ease-decelerate);
   transition:
     box-shadow var(--dur-fast) var(--ease-standard),
     border-color var(--dur-fast) var(--ease-standard),
@@ -732,7 +762,7 @@ html.motion-off * {
 @keyframes node-pop {
   from {
     opacity: 0;
-    transform: scale(0.86);
+    transform: scale(0.96);
   }
   to {
     opacity: 1;
@@ -1409,6 +1439,24 @@ html.native-glass .node-card {
   to { opacity: 1; }
 }
 
+/* §4.3 连线建立：300ms 沿 stroke-dashoffset 由起点画到终点。
+   依赖 path 上的 pathLength="1"（BoardCanvas 里已设），把线长归一化为 1，
+   dashoffset 1→0 即"画出"。仅在出现时跑一次，跑完落到实线。 */
+.edge-line {
+  animation: edge-draw var(--dur-edge-draw) var(--ease-standard);
+}
+@keyframes edge-draw {
+  from {
+    stroke-dasharray: 1;
+    stroke-dashoffset: 1;
+  }
+  to {
+    stroke-dasharray: 1;
+    stroke-dashoffset: 0;
+  }
+}
+html.motion-off .edge-line { animation: none; }
+
 .edge-label {
   font-family: inherit;
   font-size: 11.5px;
@@ -1937,6 +1985,7 @@ html.native-glass .node-card {
 }
 .tt-empty { margin-top: 5px; font-size: 12px; color: var(--text-secondary); font-style: italic; }
 .tt-docs { margin-top: 6px; font-size: 11.5px; color: var(--accent); }
+
 
 
 

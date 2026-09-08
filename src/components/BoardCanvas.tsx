@@ -776,6 +776,7 @@ export function BoardCanvas({
                 className="edge-line"
                 d={geo.d}
                 fill="none"
+                pathLength={1}
                 markerEnd={edge.directed ? (isSel ? 'url(#lm-arrow-sel)' : 'url(#lm-arrow)') : undefined}
               />
               {edge.label && !editingEdge && (
@@ -880,6 +881,7 @@ export function BoardCanvas({
     </div>
   );
 }
+
 
 
 
