@@ -121,6 +121,12 @@ export const api = {
 
   /* ── 全局搜索（M6-6，跨白板全文检索） ── */
   searchAll: (query: string) => invoke<SearchHit[]>('search_all', { query }),
+
+  /* ── 导出（M6-7，写入白板 exports/ 目录，返回绝对路径） ── */
+  exportText: (projectId: string, boardId: string, filename: string, content: string) =>
+    invoke<string>('export_text', { projectId, boardId, filename, content }),
+  exportBinary: (projectId: string, boardId: string, filename: string, b64: string) =>
+    invoke<string>('export_binary', { projectId, boardId, filename, b64 }),
 };
 
 /** 全局搜索命中项（与 Rust storage::SearchHit 对应） */

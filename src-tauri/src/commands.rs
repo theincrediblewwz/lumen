@@ -191,6 +191,28 @@ pub fn search_all(query: String) -> Result<Vec<storage::SearchHit>, String> {
     storage::search_all(&root()?, &query)
 }
 
+// ───────────────── 导出（M6-7，写入白板 exports/ 目录） ─────────────────
+
+#[tauri::command]
+pub fn export_text(
+    project_id: String,
+    board_id: String,
+    filename: String,
+    content: String,
+) -> Result<String, String> {
+    storage::export_text(&root()?, &project_id, &board_id, &filename, &content)
+}
+
+#[tauri::command]
+pub fn export_binary(
+    project_id: String,
+    board_id: String,
+    filename: String,
+    b64: String,
+) -> Result<String, String> {
+    storage::export_binary_b64(&root()?, &project_id, &board_id, &filename, &b64)
+}
+
 
 // ───────────────── 用系统默认程序打开文档（O-4，M5/M6） ─────────────────
 

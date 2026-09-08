@@ -624,6 +624,99 @@ pub fn write_chats(
     atomic_write(&chats_file(root, pid, bid), content)
 }
 
+// ─────────────────────────── 导出（M6-7） ───────────────────────────
+
+pub fn exports_dir(root: &Path, project_id: &str, board_id: &str) -> PathBuf {
+    board_dir(root, project_id, board_id).join("exports")
+}
+
+/// 只允许安全的导出文件名（单层、无路径分隔、限定扩展名）。
+fn safe_export_name(name: &str) -> Result<String, String> {
+    if name.is_empty() || name.contains('/') || name.contains('\\') || name.contains("..") {
+        return Err("非法导出文件名".into());
+    }
+    let ok = name.ends_with(".md")
+        || name.ends_with(".html")
+        || name.ends_with(".svg")
+        || name.ends_with(".png");
+    if !ok {
+        return Err("仅支持 .md/.html/.svg/.png 导出".into());
+    }
+    Ok(name.to_string())
+}
+
+/// 写入文本类导出（md/html/svg），返回写入文件的绝对路径。
+pub fn export_text(
+    root: &Path,
+    project_id: &str,
+    board_id: &str,
+    filename: &str,
+    content: &str,
+) -> Result<String, String> {
+    let pid = safe_id(project_id)?;
+    let bid = safe_id(board_id)?;
+    let name = safe_export_name(filename)?;
+    let dir = exports_dir(root, pid, bid);
+    fs::create_dir_all(&dir).map_err(|e| format!("创建导出目录失败: {e}"))?;
+    let p = dir.join(&name);
+    atomic_write(&p, content)?;
+    Ok(p.to_string_lossy().to_string())
+}
+
+/// 写入二进制导出（png），入参是 base64 字符串。返回写入文件的绝对路径。
+pub fn export_binary_b64(
+    root: &Path,
+    project_id: &str,
+    board_id: &str,
+    filename: &str,
+    b64: &str,
+) -> Result<String, String> {
+    let pid = safe_id(project_id)?;
+    let bid = safe_id(board_id)?;
+    let name = safe_export_name(filename)?;
+    let bytes = b64_decode(b64)?;
+    let dir = exports_dir(root, pid, bid);
+    fs::create_dir_all(&dir).map_err(|e| format!("创建导出目录失败: {e}"))?;
+    let p = dir.join(&name);
+    if let Some(parent) = p.parent() {
+        fs::create_dir_all(parent).ok();
+    }
+    fs::write(&p, &bytes).map_err(|e| format!("写入导出文件失败: {e}"))?;
+    Ok(p.to_string_lossy().to_string())
+}
+
+/// 极简 base64 解码（标准字母表，忽略空白与末尾 '='），避免引入额外依赖。
+fn b64_decode(s: &str) -> Result<Vec<u8>, String> {
+    // 允许 data URL 前缀
+    let s = s.rsplit(',').next().unwrap_or(s);
+    let val = |c: u8| -> Option<u32> {
+        match c {
+            b'A'..=b'Z' => Some((c - b'A') as u32),
+            b'a'..=b'z' => Some((c - b'a' + 26) as u32),
+            b'0'..=b'9' => Some((c - b'0' + 52) as u32),
+            b'+' => Some(62),
+            b'/' => Some(63),
+            _ => None,
+        }
+    };
+    let mut buf = 0u32;
+    let mut bits = 0u32;
+    let mut out = Vec::with_capacity(s.len() / 4 * 3);
+    for &c in s.as_bytes() {
+        if c == b'=' || c.is_ascii_whitespace() {
+            continue;
+        }
+        let v = val(c).ok_or("base64 含非法字符")?;
+        buf = (buf << 6) | v;
+        bits += 6;
+        if bits >= 8 {
+            bits -= 8;
+            out.push((buf >> bits) as u8);
+        }
+    }
+    Ok(out)
+}
+
 // ─────────────────────────── 全局搜索（M6-6） ───────────────────────────
 
 #[derive(Serialize, Clone, Debug)]

@@ -9,6 +9,7 @@ import type { Viewport } from './canvas/CanvasEngine';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { SettingsPanel } from './components/SettingsPanel';
 import { GlobalSearch } from './components/GlobalSearch';
+import { exportMarkdown, exportHtml, exportSvg } from './canvas/boardExport';
 import { loadSettings, saveSettings, applySettings, type Settings } from './settings';
 
 type Phase = 'loading' | 'setup' | 'ready';
@@ -20,6 +21,34 @@ type Editing =
   | { kind: 'new-board' }
   | { kind: 'rename-project'; id: string; value: string }
   | { kind: 'rename-board'; id: string; value: string };
+
+/** 将 SVG 字符串栅格化为 PNG，返回 base64（不含 data URL 前缀）。 */
+async function svgToPngBase64(svg: string): Promise<string> {
+  const svgBlob = new Blob([svg], { type: 'image/svg+xml;charset=utf-8' });
+  const url = URL.createObjectURL(svgBlob);
+  try {
+    const img = new Image();
+    await new Promise<void>((resolve, reject) => {
+      img.onload = () => resolve();
+      img.onerror = () => reject(new Error('SVG 载入失败'));
+      img.src = url;
+    });
+    const scale = 2; // 2x 更清晰
+    const w = img.naturalWidth || img.width || 800;
+    const h = img.naturalHeight || img.height || 600;
+    const canvas = document.createElement('canvas');
+    canvas.width = Math.max(1, Math.round(w * scale));
+    canvas.height = Math.max(1, Math.round(h * scale));
+    const ctx = canvas.getContext('2d');
+    if (!ctx) throw new Error('无法创建画布上下文');
+    ctx.scale(scale, scale);
+    ctx.drawImage(img, 0, 0);
+    const dataUrl = canvas.toDataURL('image/png');
+    return dataUrl.replace(/^data:image\/png;base64,/, '');
+  } finally {
+    URL.revokeObjectURL(url);
+  }
+}
 
 export default function App() {
   const [phase, setPhase] = useState<Phase>('loading');
@@ -313,12 +342,64 @@ export default function App() {
     setMenu({ x: e.clientX, y: e.clientY, items });
   };
 
+  /* ── 导出（M6-7）：写入白板 exports/ 目录，完成后提示路径 ── */
+  const cssVar = (name: string, fallback: string) =>
+    getComputedStyle(document.documentElement).getPropertyValue(name).trim() || fallback;
+
+  const safeName = (s: string) => s.replace(/[\\/:*?"<>|]/g, '_').slice(0, 60) || 'board';
+
+  const doExport = (kind: 'md' | 'html' | 'svg' | 'png') =>
+    withBusy(async () => {
+      const b = activeBoard;
+      if (!b || !activeProject) return;
+      const base = safeName(b.name);
+      try {
+        let saved = '';
+        if (kind === 'md') {
+          saved = await api.exportText(activeProject.id, b.id, `${base}.md`, exportMarkdown(b));
+        } else if (kind === 'html') {
+          saved = await api.exportText(activeProject.id, b.id, `${base}.html`, exportHtml(b));
+        } else {
+          // SVG/PNG 用当前主题色
+          const themed = {
+            bg: cssVar('--bg-canvas', '#ffffff'),
+            nodeBg: cssVar('--bg-node', '#ffffff'),
+            nodeBorder: cssVar('--border-color', '#dcece4'),
+            text: cssVar('--text-primary', '#1c1e21'),
+            edge: cssVar('--edge-color', '#b4bfba'),
+            accent: cssVar('--accent', '#2e5a4e'),
+          };
+          const svg = exportSvg(b, themed);
+          if (kind === 'svg') {
+            saved = await api.exportText(activeProject.id, b.id, `${base}.svg`, svg);
+          } else {
+            const b64 = await svgToPngBase64(svg);
+            saved = await api.exportBinary(activeProject.id, b.id, `${base}.png`, b64);
+          }
+        }
+        setError(`已导出到：${saved}`);
+        window.setTimeout(() => setError(null), 4000);
+      } catch (err) {
+        setError(`导出失败：${String(err)}`);
+      }
+    });
+
   const appMenu = (e: React.MouseEvent) =>
     openAt(e, [
       { type: 'info', text: '脉络 Lumen', sub: root ?? '未设置存储目录' },
       { type: 'separator' },
       { type: 'item', label: '设置…', onClick: () => setSettingsOpen(true) },
       { type: 'item', label: '进入全屏  F11', onClick: () => applyFullscreen(true) },
+      { type: 'item', label: '全局搜索  Ctrl/Cmd+K', onClick: () => setSearchOpen(true) },
+      ...(activeBoard
+        ? ([
+            { type: 'separator' },
+            { type: 'item', label: '导出 · Markdown（保留层级）', onClick: () => doExport('md') },
+            { type: 'item', label: '导出 · HTML（可离线打开）', onClick: () => doExport('html') },
+            { type: 'item', label: '导出 · 图片 SVG（矢量）', onClick: () => doExport('svg') },
+            { type: 'item', label: '导出 · 图片 PNG（位图）', onClick: () => doExport('png') },
+          ] as ContextMenuState['items'])
+        : []),
       { type: 'separator' },
       { type: 'item', label: '更改存储目录…', onClick: chooseDir },
     ]);

@@ -3,7 +3,7 @@
 > **开工前先读本文件；每完成一件事就更新本文件。**
 > 本文件只记录「进度」。计划与任务清单见 [PLAN.md](./PLAN.md)，设计与决策见 [DESIGN.md](./DESIGN.md)。
 
-**最后更新**：2026-09-08 (Asia/Shanghai)
+**最后更新**：2026-09-08 (Asia/Shanghai) · M6-7 导出完成待提交
 
 ---
 
@@ -99,7 +99,20 @@
 
 ## 三、进行中
 
-- **M5 AI 对话：M5-1~M5-7 全部完成并推送**。当前无编码任务在飞，等用户实机验收。
+### M6 打磨阶段（P1 全清，P2 进行）
+- **M6-1~M6-4 完成**：三主题统一 / 动效对齐 DESIGN §4.3 / prefers-reduced-motion / 树状自动布局。
+- **M6-5** PDF 点击 = 调系统默认程序打开（决策⑳），视为完成。
+- **M6-6 全局搜索 完成并推送（`82e90fe`）**：Rust `search_all` 跨白板全文检索 + 前端 `GlobalSearch`（Ctrl/Cmd+K 弹窗、防抖 live search、键盘导航、命中高亮、点击跳转白板高亮）。
+- **M6-7 导出 md/HTML/PNG/SVG 完成（本轮，待提交）**：
+  - 纯函数 `src/canvas/boardExport.ts`（`buildForest` 图→森林；`exportMarkdown` 保留父子层级；`exportHtml` 独立内联样式；`exportSvg` 按坐标画卡片+连线+箭头）+ 11 测试。
+  - Rust `export_text` / `export_binary`（写入白板 `exports/` 目录，`safe_export_name` 限 .md/.html/.svg/.png，自写 base64 解码无新依赖）。
+  - 前端 `api.exportText/exportBinary` + App 应用菜单「导出 · md/HTML/SVG/PNG」；PNG 由 SVG 经 Image→canvas→toDataURL 栅格化（2x）。
+  - 验证：tsc EXIT=0、vitest **198 passed(14 files)**、vite build EXIT=0、`cargo check` Finished。
+- **下一步**：M6-8 快照与恢复 → M6-9 快捷键与可访问性。
+- 应用以后台会话 `sess-11` 运行中。
+
+### M5（已完成，等实机验收）
+- **M5 AI 对话：M5-1~M5-7 全部完成并推送**。当前等用户实机验收。
 - 应用以后台会话 `sess-11`（`powershell -NoProfile -Command "npm run tauri:dev"`）运行中，`lumen.exe` 在用户桌面（此前会话因 /tmp 脚本跨会话清空 + 软件被用户关闭而中断，已重建 MCP 客户端并重启）。
 - **等用户实机验收 M5**：
   - M5-7 密钥加密：设置里填 Key 保存 → 重开应用不用重填即可对话；`chats.json`/应用配置中不含明文 Key。
@@ -158,6 +171,7 @@
 | MCP `apply_patch` 对 JSON 上下文不稳 | 给 `package.json` 打小补丁时报「patched」却未生效（同尺寸）；改用 `write_file` 全量覆盖更可靠 |
 | **在 Windows 上跑出 GUI 不代表平台错了** | Tauri 用系统 WebView（Win=WebView2 / mac=WKWebView），同一套 React 代码在开发机（本机是 Windows，故产物为 `lumen.exe`）即可调试；「主目标 macOS」指最终发布用 mac 构建。macOS 的 `.app`/`.dmg` 必须在 mac 或 CI mac runner 上 `tauri build` |
 | **自定义标题栏控件必须退出拖拽区** | 整条 titlebar 设 `-webkit-app-region: drag` 后，内部按钮要加 `no-drag`，否则点击被窗口拖拽吞掉 |
+
 
 
 
