@@ -89,7 +89,7 @@ pub async fn ai_chat_stream(
                 "ai://error",
                 ErrorEvent {
                     request_id: request_id.clone(),
-                    message: format!("请求失败: {e}"),
+                    message: friendly_network_error(&e),
                 },
             );
             return Ok(());
@@ -99,7 +99,7 @@ pub async fn ai_chat_stream(
     if !resp.status().is_success() {
         let status = resp.status();
         let text = resp.text().await.unwrap_or_default();
-        let msg = format!("HTTP {}: {}", status.as_u16(), truncate(&text, 500));
+        let msg = friendly_http_error(status.as_u16(), &text);
         let _ = window.emit(
             "ai://error",
             ErrorEvent {
@@ -164,3 +164,37 @@ fn truncate(s: &str, max: usize) -> String {
         s.chars().take(max).collect::<String>() + "…"
     }
 }
+
+/// 把 reqwest 网络错误翻译成用户能看懂的中文引导（断网 / 超时 / 地址错等）。
+fn friendly_network_error(e: &reqwest::Error) -> String {
+    if e.is_connect() {
+        "无法连接到 AI 服务：请检查网络是否正常，以及设置里的「接口地址」是否正确。".to_string()
+    } else if e.is_timeout() {
+        "连接 AI 服务超时：网络可能不稳定，请稍后重试。".to_string()
+    } else if e.is_request() {
+        "请求无法发出：请检查设置里的「接口地址」格式是否正确（应形如 https://api.openai.com/v1）。"
+            .to_string()
+    } else {
+        // 兜底：给出简短技术信息但不吓人
+        format!("网络请求失败：{}。请检查网络连接后重试。", truncate(&e.to_string(), 160))
+    }
+}
+
+/// 把 HTTP 非 2xx 状态翻译成中文引导；常见鉴权/额度/地址错单独提示。
+fn friendly_http_error(status: u16, body: &str) -> String {
+    let hint = match status {
+        401 => "API Key 无效或缺失：请在设置里检查密钥是否填写正确。",
+        403 => "访问被拒绝：密钥可能没有该模型的权限，或额度受限，请检查账户设置。",
+        404 => "接口地址或模型不存在：请检查设置里的「接口地址」与「模型」名称。",
+        429 => "请求过于频繁或额度不足：请稍后重试，或检查账户余额与限流设置。",
+        500..=599 => "AI 服务端出错：这是对方服务的问题，请稍后重试。",
+        _ => "请求未成功。",
+    };
+    let detail = truncate(body.trim(), 300);
+    if detail.is_empty() {
+        format!("{hint}（HTTP {status}）")
+    } else {
+        format!("{hint}（HTTP {status}）\n\n详情：{detail}")
+    }
+}
+

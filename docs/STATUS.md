@@ -99,11 +99,13 @@
 
 ## 三、进行中
 
-- 白板画布 v1（M2-2 节点 DOM 层 + M2-3 新建/编辑/移动）已接入主界面，代码级验证全过。
-- **等用户实机验收**：新建/拖拽/双击编辑/缩放平移的手感，以及自动落盘后重开白板节点是否还在。
-- 应用以后台会话 `sess-5`（`npm run tauri:dev`）运行中，窗口在用户桌面（sess-3 因整页重载/Cargo 变更退出，已重启）。
-- **等用户验收 M3 连线**：拖节点四周锚点到另一节点建连线、右键连线切有向/无向/加标签/删除、删节点连线是否级联清除、重开白板连线是否恢复。
-- **等用户验收外壳新配色**：侧栏/顶栏是否够清新明亮。
+- **M5 AI 对话：M5-1~M5-7 全部完成并推送**。当前无编码任务在飞，等用户实机验收。
+- 应用以后台会话 `sess-11`（`powershell -NoProfile -Command "npm run tauri:dev"`）运行中，`lumen.exe` 在用户桌面（此前会话因 /tmp 脚本跨会话清空 + 软件被用户关闭而中断，已重建 MCP 客户端并重启）。
+- **等用户实机验收 M5**：
+  - M5-7 密钥加密：设置里填 Key 保存 → 重开应用不用重填即可对话；`chats.json`/应用配置中不含明文 Key。
+  - M5-4 上下文预算：调低「上下文预算」滑杆后连续多轮长对话，不报超长错且 AI 记得早前内容。
+  - 复验：表格/加粗正常渲染、🕘历史面板切换会话、＋新对话、[[node]] 引用胶囊点击跳转高亮。
+- **早期里程碑仍挂验收（非阻塞）**：M2-2/2-3 画布手感、M3 连线交互、外壳配色。
 
 
 ## 四、等待用户执行
@@ -117,13 +119,16 @@
 
 ## 五、下一步（接下来我做的）
 
-**已进入 M5 · AI 对话**（决策：OpenAI 兼容优先 / PDF 调系统程序）。分解：
+**M5 · AI 对话已全部完成**（决策：OpenAI 兼容优先 / PDF 调系统程序）。分解（全 ✅）：
 1. ✅ M5 地基：Provider 纯逻辑层（OpenAI 兼容请求体 + SSE 流解析，单测）+ AI 设置持久化 + Rust `open_external`（O-4）
-2. M5-1 悬浮 FAB + 独立 AI 对话窗口（绑定当前白板）——GUI，待实机
-3. M5-2 网络传输走 Rust 命令 `ai_chat_stream`（reqwest 流式 + 事件回传，守"前端零网络"边界）+ 可中断
-4. M5-3 白板工具：read_board_outline / list_nodes / read_node_doc / search_board
-5. M5-4 提示词 + token 预算 + 分段 + 历史压缩
-6. M5-5 回答渲染复用 M4 管线；M5-6 引用回链 [[node:xx]]；M5-7 设置(baseURL/模型/Key 加密)+隐私开关
+2. ✅ M5-1 悬浮 FAB + 独立 AI 对话窗口（绑定当前白板）
+3. ✅ M5-2 网络传输走 Rust 命令 `ai_chat_stream`（reqwest 流式 + 事件回传，守"前端零网络"边界）+ 可中断
+4. ✅ M5-3 白板工具：read_board_outline / list_nodes / read_node_doc / search_board
+5. ✅ M5-4 token 预算 + 超长截断 + 最旧历史压缩（budget.ts，11 测试）
+6. ✅ M5-5 回答渲染复用 M4 管线（含修 guessMath 乱码）；M5-6 引用回链 [[node:xx]]；M5-7 Key 加密(OS 凭据库 keyring)+隐私开关
+7. ✅ 附加：对话历史长期持久化到白板 chats.json（退出不丢，多会话）
+
+**下一步**：M5 全部完成，待用户实机验收后可收尾进入下一里程碑（M6）。验收基线：tsc EXIT=0 / vitest 177 passed(12) / cargo check ✓ / vite build ✓ / secrets 净。
 
 
 ## 六、阻塞项
@@ -153,6 +158,7 @@
 | MCP `apply_patch` 对 JSON 上下文不稳 | 给 `package.json` 打小补丁时报「patched」却未生效（同尺寸）；改用 `write_file` 全量覆盖更可靠 |
 | **在 Windows 上跑出 GUI 不代表平台错了** | Tauri 用系统 WebView（Win=WebView2 / mac=WKWebView），同一套 React 代码在开发机（本机是 Windows，故产物为 `lumen.exe`）即可调试；「主目标 macOS」指最终发布用 mac 构建。macOS 的 `.app`/`.dmg` 必须在 mac 或 CI mac runner 上 `tauri build` |
 | **自定义标题栏控件必须退出拖拽区** | 整条 titlebar 设 `-webkit-app-region: drag` 后，内部按钮要加 `no-drag`，否则点击被窗口拖拽吞掉 |
+
 
 
 
