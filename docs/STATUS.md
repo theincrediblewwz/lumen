@@ -3,7 +3,7 @@
 > **开工前先读本文件；每完成一件事就更新本文件。**
 > 本文件只记录「进度」。计划与任务清单见 [PLAN.md](./PLAN.md)，设计与决策见 [DESIGN.md](./DESIGN.md)。
 
-**最后更新**：2026-09-08 (Asia/Shanghai) · M6-9 快捷键与可访问性完成待提交（M6 打磨阶段全部完成）
+**最后更新**：2026-09-08 (Asia/Shanghai) · M7-3 用户文档完成待提交（M7 发布阶段进行中）
 
 ---
 
@@ -119,7 +119,9 @@
   - BoardCanvas.tsx：keydown 集中匹配，新增 视图缩放（mod+= / mod+- 以视口中心为锚）、mod+0 重置 100%、Shift+1 适配全部内容（`fitAll`）、N 视图中心新建节点、方向键微移选中节点（Shift 步长 20/普通 2，进历史可撤销）、Esc 取消选中；工具栏加 `role=toolbar`+aria-label、缩放（−/百分比/＋）与适配按钮。
   - styles.css：`.tb-zoom`（等宽百分比）与 `.sc-*` 帮助面板样式（主题感知、窄屏单栏）。
   - 验证：tsc EXIT=0、vitest **221 passed(15 files)**、vite build EXIT=0。
-- **M6 打磨阶段全部完成**（M6-1~M6-9）。下一步进入 **M7**（打包发布/用户文档等，见 PLAN）。
+- **M6 打磨阶段全部完成**（M6-1~M6-9）。
+- **M7-3 用户文档 完成（本轮，待提交）**：新建 `docs/USER_GUIDE.md`（首次启动引导四步 + 界面速览 + 快捷键表【与 `src/canvas/shortcuts.ts` 同源】+ 文档/阅读、AI、搜索、导出、快照、数据存储/备份、无障碍）；`README.md` 全量刷新（M0 → M0–M6 完成、进入 M7；功能一览、开发快速开始、数据布局、文档索引加 USER_GUIDE、路线图状态更新）。纯文档改动，无需构建验证。
+- **M7 剩余待办**：M7-1 打包（macOS arm64 dmg 主 + Windows）、M7-2 自动更新(P2)、M7-4 端到端验收（DESIGN §3 逐条）、M7-5 性能与体积基线、M7-6 GitHub Actions（push/PR 跑 Linux 测试；tag 触发 mac+win 构建）。**打包/CI 需实际构建环境，建议与用户确认再动。**
 - 应用以后台会话 `sess-11` 运行中。
 
 ### M5（已完成，等实机验收）
@@ -182,6 +184,7 @@
 | MCP `apply_patch` 对 JSON 上下文不稳 | 给 `package.json` 打小补丁时报「patched」却未生效（同尺寸）；改用 `write_file` 全量覆盖更可靠 |
 | **在 Windows 上跑出 GUI 不代表平台错了** | Tauri 用系统 WebView（Win=WebView2 / mac=WKWebView），同一套 React 代码在开发机（本机是 Windows，故产物为 `lumen.exe`）即可调试；「主目标 macOS」指最终发布用 mac 构建。macOS 的 `.app`/`.dmg` 必须在 mac 或 CI mac runner 上 `tauri build` |
 | **自定义标题栏控件必须退出拖拽区** | 整条 titlebar 设 `-webkit-app-region: drag` 后，内部按钮要加 `no-drag`，否则点击被窗口拖拽吞掉 |
+
 
 
 
