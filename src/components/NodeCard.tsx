@@ -78,6 +78,7 @@ export const NodeCard = memo(function NodeCard({
   editing,
   showAnchors,
   connectTarget,
+  dropTarget,
   onPointerDown,
   onAnchorPointerDown,
   onOpen,
@@ -95,6 +96,8 @@ export const NodeCard = memo(function NodeCard({
   editing: boolean;
   showAnchors: boolean;
   connectTarget: boolean;
+  /** 文件拖放（OS 拖入 .md）悬停到该节点时高亮 */
+  dropTarget?: boolean;
   onPointerDown: (e: React.PointerEvent, id: string) => void;
   onAnchorPointerDown: (e: React.PointerEvent, id: string) => void;
   onOpen: (id: string) => void;
@@ -123,7 +126,7 @@ export const NodeCard = memo(function NodeCard({
   return (
     <div
       ref={cardRef}
-      className={`node-card glass-surface${selected ? ' is-selected' : ''}${flash ? ' is-flash' : ''}${editing ? ' is-editing' : ''}${connectTarget ? ' is-connect-target' : ''}`}
+      className={`node-card glass-surface${selected ? ' is-selected' : ''}${flash ? ' is-flash' : ''}${editing ? ' is-editing' : ''}${connectTarget ? ' is-connect-target' : ''}${dropTarget ? ' is-drop-target' : ''}`}
       style={{
         left: node.x,
         top: node.y,
@@ -208,6 +211,7 @@ export const NodeCard = memo(function NodeCard({
     </div>
   );
 });
+
 
 
 

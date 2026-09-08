@@ -2364,3 +2364,33 @@ html.motion-off .edge-line { animation: none; }
     columns: 1;
   }
 }
+
+
+/* ── OS 文件拖放到节点（拖 .md 直接嵌入节点） ── */
+.node-card.is-drop-target {
+  border-color: var(--accent);
+  box-shadow: var(--shadow-node-hover),
+    0 0 0 3px color-mix(in srgb, var(--accent) 45%, transparent);
+  outline: 2px dashed var(--accent);
+  outline-offset: 3px;
+}
+
+.drop-hint {
+  position: absolute;
+  left: 50%;
+  bottom: 28px;
+  transform: translateX(-50%);
+  z-index: 40;
+  padding: 8px 16px;
+  border-radius: 999px;
+  background: var(--accent);
+  color: #fff;
+  font-size: 13px;
+  font-weight: 500;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.22);
+  pointer-events: none;
+  animation: fade-in var(--dur-fast) var(--ease-standard);
+}
+.drop-hint-busy {
+  background: var(--text-secondary);
+}

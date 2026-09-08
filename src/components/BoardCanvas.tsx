@@ -81,6 +81,10 @@ export function BoardCanvas({
   const [menu, setMenu] = useState<ContextMenuState | null>(null);
   const [panelId, setPanelId] = useState<string | null>(null);
   const [hoverNode, setHoverNode] = useState<string | null>(null);
+  /** OS 文件拖放（拖 .md 到节点）悬停命中的节点 id；null 表示未悬停在任何节点上 */
+  const [dropTargetId, setDropTargetId] = useState<string | null>(null);
+  /** 正在处理拖入导入（防重入 + 显示忙碌） */
+  const [dropBusy, setDropBusy] = useState(false);
   /** AI 跳转高亮：短暂闪烁的节点 id（M5-6） */
   const [flashId, setFlashId] = useState<string | null>(null);
   /** 悬停简介 tooltip：悬停 400ms 后出现 */
@@ -119,6 +123,79 @@ export function BoardCanvas({
   /** 始终指向最新的图状态：供 window 级拖拽监听读取（避免闭包捕获旧值） */
   const graphRef = useRef(history.present);
   graphRef.current = history.present;
+
+  /** OS 文件拖放导入：始终指向最新实现，供只订阅一次的原生拖放监听调用 */
+  const importDroppedRef = useRef<(nodeId: string, paths: string[]) => Promise<void>>(async () => {});
+  /** 当前拖放命中的节点 id（ref 版，供只订阅一次的监听读取，避免闭包旧值） */
+  const dropTargetIdRef = useRef<string | null>(null);
+  const setDrop = useCallback((id: string | null) => {
+    if (dropTargetIdRef.current !== id) {
+      dropTargetIdRef.current = id;
+      setDropTargetId(id);
+    }
+  }, []);
+
+  /** 把一个物理(设备)像素坐标命中到某节点 id（用于原生拖放事件定位） */
+  const hitNodeAtPhysical = useCallback(
+    (physX: number, physY: number): string | null => {
+      const wrap = wrapRef.current;
+      if (!wrap) return null;
+      const dpr = window.devicePixelRatio || 1;
+      // 原生拖放坐标是相对窗口的物理像素；转成 CSS 像素后再减去画布容器位置
+      const clientX = physX / dpr;
+      const clientY = physY / dpr;
+      const r = wrap.getBoundingClientRect();
+      if (clientX < r.left || clientX > r.right || clientY < r.top || clientY > r.bottom) return null;
+      const world = engineRef.current.toWorld({ x: clientX - r.left, y: clientY - r.top });
+      for (const nn of graphRef.current.nodes) {
+        const s = sizesRef.current[nn.id];
+        const box = { x: nn.x, y: nn.y, w: s?.w ?? nn.w ?? DEFAULT_NODE_W, h: s?.h ?? FALLBACK_NODE_H };
+        if (boxContains(box, world)) return nn.id;
+      }
+      return null;
+    },
+    [],
+  );
+
+  /* ── OS 文件拖放到节点（拖 .md 进来直接嵌入该节点） ──
+     用 Tauri 原生 webview 拖放事件（tauri://drag-drop），只订阅一次，逻辑走 ref。 */
+  useEffect(() => {
+    if (typeof window === 'undefined' || !('__TAURI_INTERNALS__' in window)) return;
+    let unlisten: (() => void) | undefined;
+    let disposed = false;
+    (async () => {
+      try {
+        const { getCurrentWebview } = await import('@tauri-apps/api/webview');
+        const wv = getCurrentWebview();
+        const un = await wv.onDragDropEvent((event) => {
+          const p = event.payload;
+          if (p.type === 'enter' || p.type === 'over') {
+            const pos = p.position;
+            setDrop(hitNodeAtPhysical(pos.x, pos.y));
+          } else if (p.type === 'drop') {
+            const pos = p.position;
+            const target = hitNodeAtPhysical(pos.x, pos.y);
+            setDrop(null);
+            if (target && p.paths && p.paths.length > 0) {
+              void importDroppedRef.current(target, p.paths);
+            }
+          } else {
+            // leave / cancel
+            setDrop(null);
+          }
+        });
+        if (disposed) un();
+        else unlisten = un;
+      } catch (err) {
+        console.error('订阅文件拖放事件失败：', err);
+      }
+    })();
+    return () => {
+      disposed = true;
+      unlisten?.();
+      setDrop(null);
+    };
+  }, [hitNodeAtPhysical, setDrop]);
 
   // ── AI 引用跳转（M5-6）：居中到目标节点 + 选中 + 闪烁高亮 ──
   useEffect(() => {
@@ -717,20 +794,56 @@ export function BoardCanvas({
     });
   };
 
+  /** 把一组绝对路径的文档复制进白板 docs/ 并挂到节点（去重、逐个导入，返回成功导入数） */
+  const importPathsToNode = async (nodeId: string, paths: string[]): Promise<number> => {
+    if (paths.length === 0) return 0;
+    const refs: DocRef[] = [];
+    const failed: string[] = [];
+    for (const p of paths) {
+      try {
+        refs.push(await api.docImport(board.projectId, board.id, p));
+      } catch (err) {
+        console.error('导入文档失败：', p, err);
+        failed.push(p);
+      }
+    }
+    attachDocs(nodeId, refs);
+    if (failed.length > 0) {
+      alert(`有 ${failed.length} 个文件导入失败（仅支持 .md / .markdown）：\n${failed.join('\n')}`);
+    }
+    return refs.length;
+  };
+
   const importDocs = async (nodeId: string) => {
     try {
       const paths = await pickMarkdownFiles();
-      if (paths.length === 0) return;
-      const refs: DocRef[] = [];
-      for (const p of paths) {
-        refs.push(await api.docImport(board.projectId, board.id, p));
-      }
-      attachDocs(nodeId, refs);
+      await importPathsToNode(nodeId, paths);
     } catch (err) {
       console.error('导入文档失败：', err);
       alert(`导入文档失败：${String(err)}`);
     }
   };
+
+  /** OS 文件拖放到节点：过滤 .md/.markdown，导入并挂到该节点，并短暂高亮 */
+  const importDroppedToNode = async (nodeId: string, paths: string[]) => {
+    const mdPaths = paths.filter((p) => /\.(md|markdown)$/i.test(p));
+    if (mdPaths.length === 0) {
+      alert('只能拖入 Markdown 文件（.md / .markdown）。');
+      return;
+    }
+    setDropBusy(true);
+    try {
+      const n = await importPathsToNode(nodeId, mdPaths);
+      if (n > 0) {
+        setSelected(nodeId);
+        setFlashId(nodeId);
+        window.setTimeout(() => setFlashId(null), 1200);
+      }
+    } finally {
+      setDropBusy(false);
+    }
+  };
+  importDroppedRef.current = importDroppedToNode;
 
   const openDoc = (_nodeId: string, path: string, title: string) => {
     void openReaderWindow({ projectId: board.projectId, boardId: board.id, path, title });
@@ -1001,6 +1114,7 @@ export function BoardCanvas({
             editing={editingId === n.id}
             showAnchors={(selected === n.id || hoverNode === n.id) && editingId !== n.id}
             connectTarget={connect?.hoverId === n.id}
+            dropTarget={dropTargetId === n.id}
             onPointerDown={onNodePointerDown}
             onAnchorPointerDown={onAnchorPointerDown}
             onOpen={openPanel}
@@ -1045,6 +1159,12 @@ export function BoardCanvas({
         </div>
       )}
 
+      {/* 文件拖放提示：拖 .md 悬停在节点上时给出「松开嵌入」引导 */}
+      {dropTargetId && (
+        <div className="drop-hint" role="status">松开鼠标，把文档嵌入该节点</div>
+      )}
+      {dropBusy && <div className="drop-hint drop-hint-busy" role="status">正在导入文档…</div>}
+
       {/* 悬停简介 tooltip（不拦截指针） */}
       {tip && !panelId && (() => {
         const tn = nodes.find((n) => n.id === tip.id);
@@ -1075,6 +1195,7 @@ export function BoardCanvas({
     </div>
   );
 }
+
 
 
 
