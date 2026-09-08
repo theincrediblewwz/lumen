@@ -70,12 +70,17 @@ pub fn run() {
             commands::search_all,
             commands::export_text,
             commands::export_binary,
+            commands::snapshot_list,
+            commands::snapshot_create,
+            commands::snapshot_restore,
+            commands::snapshot_delete,
             ai::ai_chat_stream,
             ai::ai_cancel,
         ])
         .run(tauri::generate_context!())
         .expect("failed to launch Lumen");
 }
+
 
 
 

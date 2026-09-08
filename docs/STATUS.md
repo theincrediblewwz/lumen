@@ -3,7 +3,7 @@
 > **开工前先读本文件；每完成一件事就更新本文件。**
 > 本文件只记录「进度」。计划与任务清单见 [PLAN.md](./PLAN.md)，设计与决策见 [DESIGN.md](./DESIGN.md)。
 
-**最后更新**：2026-09-08 (Asia/Shanghai) · M6-7 导出完成待提交
+**最后更新**：2026-09-08 (Asia/Shanghai) · M6-8 快照与恢复完成待提交
 
 ---
 
@@ -103,12 +103,16 @@
 - **M6-1~M6-4 完成**：三主题统一 / 动效对齐 DESIGN §4.3 / prefers-reduced-motion / 树状自动布局。
 - **M6-5** PDF 点击 = 调系统默认程序打开（决策⑳），视为完成。
 - **M6-6 全局搜索 完成并推送（`82e90fe`）**：Rust `search_all` 跨白板全文检索 + 前端 `GlobalSearch`（Ctrl/Cmd+K 弹窗、防抖 live search、键盘导航、命中高亮、点击跳转白板高亮）。
-- **M6-7 导出 md/HTML/PNG/SVG 完成（本轮，待提交）**：
+- **M6-7 导出 md/HTML/PNG/SVG 完成并推送（`c2a4dd4`）**：
   - 纯函数 `src/canvas/boardExport.ts`（`buildForest` 图→森林；`exportMarkdown` 保留父子层级；`exportHtml` 独立内联样式；`exportSvg` 按坐标画卡片+连线+箭头）+ 11 测试。
   - Rust `export_text` / `export_binary`（写入白板 `exports/` 目录，`safe_export_name` 限 .md/.html/.svg/.png，自写 base64 解码无新依赖）。
   - 前端 `api.exportText/exportBinary` + App 应用菜单「导出 · md/HTML/SVG/PNG」；PNG 由 SVG 经 Image→canvas→toDataURL 栅格化（2x）。
-  - 验证：tsc EXIT=0、vitest **198 passed(14 files)**、vite build EXIT=0、`cargo check` Finished。
-- **下一步**：M6-8 快照与恢复 → M6-9 快捷键与可访问性。
+- **M6-8 快照与恢复 完成（本轮，待提交）**：
+  - Rust `storage.rs` 加快照层：`snapshots_dir`（白板 `.snapshots/`）、`snapshot_board`（打开前存 `board.<ts>.json`，与最近一份去重、保留最近 20 份 `prune_snapshots`）、`list_snapshots`（倒序+节点/连线数+字节数+auto_backup 标记）、`restore_snapshot`（恢复前先存「恢复前保险」快照再覆盖，纠正归属）、`delete_snapshot`、`safe_snapshot_name` 防穿越；+ Rust 单测 `snapshot_create_list_restore_and_prune`（cargo test **12 passed**）。
+  - commands.rs 加 `snapshot_list/create/restore/delete`，lib.rs 注册。
+  - 前端 `api.snapshotList/Create/Restore/Delete` + `SnapshotMeta` 类型；新建 `src/components/SnapshotPanel.tsx`（列出历史版本、存快照、恢复、删除，「恢复前保险」徽标）；App 打开白板时自动 `snapshotCreate`、应用菜单加「快照与恢复…」、渲染面板；styles.css 加 `.snap-*` 样式（复用 `.gs-overlay/.gs-panel`）。
+  - 验证：tsc EXIT=0、vitest **198 passed(14 files)**、vite build EXIT=0、cargo test **12 passed**。
+- **下一步**：M6-9 快捷键与可访问性（M6 收尾）。
 - 应用以后台会话 `sess-11` 运行中。
 
 ### M5（已完成，等实机验收）
@@ -171,6 +175,7 @@
 | MCP `apply_patch` 对 JSON 上下文不稳 | 给 `package.json` 打小补丁时报「patched」却未生效（同尺寸）；改用 `write_file` 全量覆盖更可靠 |
 | **在 Windows 上跑出 GUI 不代表平台错了** | Tauri 用系统 WebView（Win=WebView2 / mac=WKWebView），同一套 React 代码在开发机（本机是 Windows，故产物为 `lumen.exe`）即可调试；「主目标 macOS」指最终发布用 mac 构建。macOS 的 `.app`/`.dmg` 必须在 mac 或 CI mac runner 上 `tauri build` |
 | **自定义标题栏控件必须退出拖拽区** | 整条 titlebar 设 `-webkit-app-region: drag` 后，内部按钮要加 `no-drag`，否则点击被窗口拖拽吞掉 |
+
 
 
 

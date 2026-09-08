@@ -214,6 +214,44 @@ pub fn export_binary(
 }
 
 
+// ───────────────── 快照与恢复（M6-8，白板 .snapshots/） ─────────────────
+
+#[tauri::command]
+pub fn snapshot_list(
+    project_id: String,
+    board_id: String,
+) -> Result<Vec<storage::SnapshotMeta>, String> {
+    storage::list_snapshots(&root()?, &project_id, &board_id)
+}
+
+/// 手动/自动为当前白板存快照。backup=true 标记为「恢复前保险」。
+#[tauri::command]
+pub fn snapshot_create(
+    project_id: String,
+    board_id: String,
+    backup: Option<bool>,
+) -> Result<Option<String>, String> {
+    storage::snapshot_board(&root()?, &project_id, &board_id, backup.unwrap_or(false))
+}
+
+#[tauri::command]
+pub fn snapshot_restore(
+    project_id: String,
+    board_id: String,
+    file: String,
+) -> Result<storage::BoardFile, String> {
+    storage::restore_snapshot(&root()?, &project_id, &board_id, &file)
+}
+
+#[tauri::command]
+pub fn snapshot_delete(
+    project_id: String,
+    board_id: String,
+    file: String,
+) -> Result<(), String> {
+    storage::delete_snapshot(&root()?, &project_id, &board_id, &file)
+}
+
 // ───────────────── 用系统默认程序打开文档（O-4，M5/M6） ─────────────────
 
 /// 用操作系统默认程序打开白板 docs/ 下的某个文件（如 PDF）。
@@ -255,4 +293,5 @@ fn open_path_os(p: &std::path::Path) -> Result<(), String> {
         .map(|_| ())
         .map_err(|e| format!("打开失败: {e}"))
 }
+
 

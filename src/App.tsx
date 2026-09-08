@@ -9,6 +9,7 @@ import type { Viewport } from './canvas/CanvasEngine';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { SettingsPanel } from './components/SettingsPanel';
 import { GlobalSearch } from './components/GlobalSearch';
+import { SnapshotPanel } from './components/SnapshotPanel';
 import { exportMarkdown, exportHtml, exportSvg } from './canvas/boardExport';
 import { loadSettings, saveSettings, applySettings, type Settings } from './settings';
 
@@ -73,6 +74,7 @@ export default function App() {
   // AI 引用跳转的目标节点（M5-6）：{nodeId, nonce} —— nonce 保证同一节点重复点也触发
   const [focusNode, setFocusNode] = useState<{ id: string; nonce: number } | null>(null);
   const [searchOpen, setSearchOpen] = useState(false);
+  const [snapshotOpen, setSnapshotOpen] = useState(false);
   const editRef = useRef<HTMLInputElement>(null);
 
   /* 应用外观设置（主题 / 玻璃 / 动画）到 <html>；platform 变化后重跑
@@ -226,6 +228,8 @@ export default function App() {
   const openBoard = useCallback(
     (projectId: string, boardId: string) =>
       withBusy(async () => {
+        // 打开前自动存一份快照（DESIGN §FR-8.4：去重、保留最近 20 份）；失败不阻断打开
+        api.snapshotCreate(projectId, boardId, false).catch(() => {});
         const bf = await api.boardLoad(projectId, boardId);
         setActiveBoard(bf);
       }),
@@ -393,6 +397,8 @@ export default function App() {
       { type: 'item', label: '全局搜索  Ctrl/Cmd+K', onClick: () => setSearchOpen(true) },
       ...(activeBoard
         ? ([
+            { type: 'separator' },
+            { type: 'item', label: '快照与恢复…', onClick: () => setSnapshotOpen(true) },
             { type: 'separator' },
             { type: 'item', label: '导出 · Markdown（保留层级）', onClick: () => doExport('md') },
             { type: 'item', label: '导出 · HTML（可离线打开）', onClick: () => doExport('html') },
@@ -616,6 +622,14 @@ export default function App() {
 
       {menu && <ContextMenu state={menu} onClose={() => setMenu(null)} />}
       <GlobalSearch open={searchOpen} onClose={() => setSearchOpen(false)} onJump={jumpTo} />
+      <SnapshotPanel
+        open={snapshotOpen}
+        projectId={activeProject?.id ?? null}
+        boardId={activeBoard?.id ?? null}
+        boardName={activeBoard?.name ?? null}
+        onClose={() => setSnapshotOpen(false)}
+        onRestored={(board) => setActiveBoard(board)}
+      />
       {settingsOpen && (
         <SettingsPanel settings={settings} platform={platform} onChange={patchSettings} onClose={() => setSettingsOpen(false)} />
       )}
@@ -632,6 +646,7 @@ export default function App() {
     </div>
   );
 }
+
 
 
 

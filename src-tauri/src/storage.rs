@@ -717,6 +717,200 @@ fn b64_decode(s: &str) -> Result<Vec<u8>, String> {
     Ok(out)
 }
 
+// ─────────────────────────── 快照与恢复（M6-8，DESIGN §FR-8.4 / §存储布局） ───────────────────────────
+
+/// 保留的最近快照份数（DESIGN §存储布局：最近 20 份）。
+const SNAPSHOT_KEEP: usize = 20;
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct SnapshotMeta {
+    /// 文件名，形如 `board.<ts>.json`，作为恢复时的句柄。
+    pub file: String,
+    /// 快照创建时间（RFC3339）。
+    pub created_at: String,
+    /// 节点数与连线数，便于用户辨认。
+    pub nodes: usize,
+    pub edges: usize,
+    /// 文件字节数。
+    pub bytes: u64,
+    /// 是否为「恢复前自动保险」快照。
+    #[serde(default)]
+    pub auto_backup: bool,
+}
+
+/// 白板快照目录 `<board>/.snapshots/`。
+pub fn snapshots_dir(root: &Path, project_id: &str, board_id: &str) -> PathBuf {
+    board_dir(root, project_id, board_id).join(".snapshots")
+}
+
+/// 快照文件名里的时间戳片段：紧凑、可排序、文件系统安全。
+fn snapshot_stamp() -> String {
+    // 形如 20260908T104233Z-3f2a（毫秒级+计数器，避免同秒撞名）
+    let ms = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_millis())
+        .unwrap_or(0);
+    static SNAP_COUNTER: AtomicU64 = AtomicU64::new(0);
+    let n = SNAP_COUNTER.fetch_add(1, Ordering::Relaxed);
+    let iso = Utc::now().format("%Y%m%dT%H%M%SZ");
+    format!("{iso}-{ms:x}{n:x}")
+}
+
+/// 从 board.json 内容里数出节点/连线数。
+fn count_nodes_edges(json: &str) -> (usize, usize) {
+    match serde_json::from_str::<BoardFile>(json) {
+        Ok(b) => (b.nodes.len(), b.edges.len()),
+        Err(_) => (0, 0),
+    }
+}
+
+/// 列出某白板的快照，按时间倒序（最新在前）。
+pub fn list_snapshots(
+    root: &Path,
+    project_id: &str,
+    board_id: &str,
+) -> Result<Vec<SnapshotMeta>, String> {
+    let pid = safe_id(project_id)?;
+    let bid = safe_id(board_id)?;
+    let dir = snapshots_dir(root, pid, bid);
+    if !dir.exists() {
+        return Ok(vec![]);
+    }
+    let mut out: Vec<SnapshotMeta> = Vec::new();
+    let entries = fs::read_dir(&dir).map_err(|e| format!("读取快照目录失败: {e}"))?;
+    for ent in entries.flatten() {
+        let name = ent.file_name().to_string_lossy().to_string();
+        if !(name.starts_with("board.") && name.ends_with(".json")) {
+            continue;
+        }
+        let p = ent.path();
+        let content = fs::read_to_string(&p).unwrap_or_default();
+        let (nodes, edges) = count_nodes_edges(&content);
+        let bytes = ent.metadata().map(|m| m.len()).unwrap_or(0);
+        let created_at = serde_json::from_str::<BoardFile>(&content)
+            .map(|b| b.updated_at)
+            .unwrap_or_else(|_| now_iso());
+        let auto_backup = name.contains(".backup.");
+        out.push(SnapshotMeta { file: name, created_at, nodes, edges, bytes, auto_backup });
+    }
+    out.sort_by(|a, b| b.file.cmp(&a.file));
+    Ok(out)
+}
+
+/// 只保留最近 SNAPSHOT_KEEP 份，删除更旧的。
+fn prune_snapshots(dir: &Path) {
+    let mut files: Vec<String> = match fs::read_dir(dir) {
+        Ok(rd) => rd
+            .flatten()
+            .map(|e| e.file_name().to_string_lossy().to_string())
+            .filter(|n| n.starts_with("board.") && n.ends_with(".json"))
+            .collect(),
+        Err(_) => return,
+    };
+    files.sort_by(|a, b| b.cmp(a));
+    for old in files.into_iter().skip(SNAPSHOT_KEEP) {
+        let _ = fs::remove_file(dir.join(old));
+    }
+}
+
+/// 为白板当前的 board.json 存一份快照。返回快照文件名（内容与最近一份相同或 board.json 不存在则返回 None）。
+pub fn snapshot_board(
+    root: &Path,
+    project_id: &str,
+    board_id: &str,
+    backup: bool,
+) -> Result<Option<String>, String> {
+    let pid = safe_id(project_id)?;
+    let bid = safe_id(board_id)?;
+    let src = board_file(root, pid, bid);
+    if !src.exists() {
+        return Ok(None);
+    }
+    let content = fs::read_to_string(&src).map_err(|e| format!("读取 board.json 失败: {e}"))?;
+
+    let dir = snapshots_dir(root, pid, bid);
+    fs::create_dir_all(&dir).map_err(|e| format!("创建快照目录失败: {e}"))?;
+
+    if !backup {
+        if let Some(latest) = list_snapshots(root, pid, bid)?.first() {
+            let lp = dir.join(&latest.file);
+            if let Ok(prev) = fs::read_to_string(&lp) {
+                if prev == content {
+                    return Ok(None);
+                }
+            }
+        }
+    }
+
+    let stamp = snapshot_stamp();
+    let fname = if backup {
+        format!("board.{stamp}.backup.json")
+    } else {
+        format!("board.{stamp}.json")
+    };
+    atomic_write(&dir.join(&fname), &content)?;
+    prune_snapshots(&dir);
+    Ok(Some(fname))
+}
+
+/// 校验快照文件名（防路径穿越，限定命名模式）。
+fn safe_snapshot_name(name: &str) -> Result<(), String> {
+    if name.contains('/') || name.contains('\\') || name.contains("..") {
+        return Err("非法快照文件名".into());
+    }
+    if !(name.starts_with("board.") && name.ends_with(".json")) {
+        return Err("非法快照文件名".into());
+    }
+    Ok(())
+}
+
+/// 从指定快照恢复白板：恢复前先给当前状态存一份保险快照，再覆盖 board.json。
+pub fn restore_snapshot(
+    root: &Path,
+    project_id: &str,
+    board_id: &str,
+    file: &str,
+) -> Result<BoardFile, String> {
+    let pid = safe_id(project_id)?;
+    let bid = safe_id(board_id)?;
+    safe_snapshot_name(file)?;
+
+    let snap_path = snapshots_dir(root, pid, bid).join(file);
+    if !snap_path.exists() {
+        return Err("快照不存在".into());
+    }
+    let snap_content =
+        fs::read_to_string(&snap_path).map_err(|e| format!("读取快照失败: {e}"))?;
+    let mut board: BoardFile =
+        serde_json::from_str(&snap_content).map_err(|e| format!("快照内容损坏: {e}"))?;
+
+    let _ = snapshot_board(root, pid, bid, true);
+
+    board.id = bid.to_string();
+    board.project_id = pid.to_string();
+    board.version = FORMAT_VERSION;
+    board.updated_at = now_iso();
+    write_json(&board_file(root, pid, bid), &board)?;
+    Ok(board)
+}
+
+/// 删除单个快照。
+pub fn delete_snapshot(
+    root: &Path,
+    project_id: &str,
+    board_id: &str,
+    file: &str,
+) -> Result<(), String> {
+    let pid = safe_id(project_id)?;
+    let bid = safe_id(board_id)?;
+    safe_snapshot_name(file)?;
+    let p = snapshots_dir(root, pid, bid).join(file);
+    if p.exists() {
+        fs::remove_file(&p).map_err(|e| format!("删除快照失败: {e}"))?;
+    }
+    Ok(())
+}
+
 // ─────────────────────────── 全局搜索（M6-6） ───────────────────────────
 
 #[derive(Serialize, Clone, Debug)]
@@ -1093,6 +1287,69 @@ mod tests {
 
         fs::remove_dir_all(&root).ok();
     }
+
+    #[test]
+    fn snapshot_create_list_restore_and_prune() {
+        let root = tmpdir("snap");
+        ensure_storage(&root).unwrap();
+        let p = create_project(&root, "P").unwrap();
+        let b = create_board(&root, &p.id, "B").unwrap();
+
+        // 初次快照：有 board.json，应成功
+        let f1 = snapshot_board(&root, &p.id, &b.id, false).unwrap();
+        assert!(f1.is_some(), "首次应产生快照");
+        assert_eq!(list_snapshots(&root, &p.id, &b.id).unwrap().len(), 1);
+
+        // 内容未变，去重：不应产生新快照
+        let dup = snapshot_board(&root, &p.id, &b.id, false).unwrap();
+        assert!(dup.is_none(), "内容相同应去重");
+        assert_eq!(list_snapshots(&root, &p.id, &b.id).unwrap().len(), 1);
+
+        // 改动白板 -> 再快照应新增一份
+        let mut loaded = load_board(&root, &p.id, &b.id).unwrap();
+        loaded.nodes.push(BoardNode {
+            id: "n1".into(),
+            title: "T".into(),
+            summary: None,
+            x: 1.0,
+            y: 2.0,
+            w: default_node_w(),
+            color: None,
+            docs: vec![],
+            created_at: now_iso(),
+            updated_at: now_iso(),
+        });
+        save_board(&root, &loaded).unwrap();
+        let f2 = snapshot_board(&root, &p.id, &b.id, false).unwrap();
+        assert!(f2.is_some());
+        let list = list_snapshots(&root, &p.id, &b.id).unwrap();
+        assert_eq!(list.len(), 2);
+        // 最新在前，且带一个节点
+        assert_eq!(list[0].nodes, 1);
+        assert_eq!(list[1].nodes, 0);
+
+        // 从最旧那份（0 节点）恢复
+        let old_file = list[1].file.clone();
+        let restored = restore_snapshot(&root, &p.id, &b.id, &old_file).unwrap();
+        assert_eq!(restored.nodes.len(), 0, "应恢复到 0 节点");
+        assert_eq!(restored.id, b.id);
+        assert_eq!(restored.project_id, p.id);
+
+        // 恢复会产生一份「恢复前保险」快照
+        let after = list_snapshots(&root, &p.id, &b.id).unwrap();
+        assert!(after.iter().any(|m| m.auto_backup), "应有恢复前保险快照");
+
+        // 非法快照名被拒
+        assert!(restore_snapshot(&root, &p.id, &b.id, "../../evil.json").is_err());
+        assert!(delete_snapshot(&root, &p.id, &b.id, "board.x.txt").is_err());
+
+        // 删除一份
+        delete_snapshot(&root, &p.id, &b.id, &old_file).unwrap();
+        assert!(!list_snapshots(&root, &p.id, &b.id).unwrap().iter().any(|m| m.file == old_file));
+
+        fs::remove_dir_all(&root).ok();
+    }
 }
+
 
 

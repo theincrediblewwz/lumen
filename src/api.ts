@@ -127,6 +127,26 @@ export const api = {
     invoke<string>('export_text', { projectId, boardId, filename, content }),
   exportBinary: (projectId: string, boardId: string, filename: string, b64: string) =>
     invoke<string>('export_binary', { projectId, boardId, filename, b64 }),
+
+  /* ── 快照与恢复（M6-8，白板 .snapshots/，保留最近 20 份） ── */
+  snapshotList: (projectId: string, boardId: string) =>
+    invoke<SnapshotMeta[]>('snapshot_list', { projectId, boardId }),
+  snapshotCreate: (projectId: string, boardId: string, backup = false) =>
+    invoke<string | null>('snapshot_create', { projectId, boardId, backup }),
+  snapshotRestore: (projectId: string, boardId: string, file: string) =>
+    invoke<BoardFile>('snapshot_restore', { projectId, boardId, file }),
+  snapshotDelete: (projectId: string, boardId: string, file: string) =>
+    invoke<void>('snapshot_delete', { projectId, boardId, file }),
+};
+
+/** 白板快照元信息（与 Rust storage::SnapshotMeta 对应） */
+export type SnapshotMeta = {
+  file: string;
+  created_at: string;
+  nodes: number;
+  edges: number;
+  bytes: number;
+  auto_backup: boolean;
 };
 
 /** 全局搜索命中项（与 Rust storage::SearchHit 对应） */
@@ -152,5 +172,6 @@ export async function pickMarkdownFiles(): Promise<string[]> {
   if (picked == null) return [];
   return Array.isArray(picked) ? picked : [picked];
 }
+
 
 
