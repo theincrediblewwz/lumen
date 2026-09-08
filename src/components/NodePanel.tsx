@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import type { BoardNode } from '../api';
 import { DocPreview } from './DocPreview';
 
@@ -92,6 +92,123 @@ export function NodePanel({
   const [importing, setImporting] = useState(false);
   useEffect(() => setConfirmDel(false), [node.id]);
 
+  /* ── 面板位置与尺寸（可拖动 + 可四边/四角拉伸），持久化到 localStorage ── */
+  const asideRef = useRef<HTMLElement>(null);
+  const MIN_W = 280;
+  const MIN_H = 240;
+  const RECT_KEY = 'lumen.nodePanel.rect.v1';
+  type Rect = { left: number; top: number; width: number; height: number };
+  const [rect, setRect] = useState<Rect | null>(() => {
+    try {
+      const raw = localStorage.getItem(RECT_KEY);
+      return raw ? (JSON.parse(raw) as Rect) : null;
+    } catch {
+      return null;
+    }
+  });
+
+  // 首次挂载：若无已存位置，用默认停靠位（右侧）初始化为具体像素，方便后续拖拽。
+  useLayoutEffect(() => {
+    if (rect || !asideRef.current) return;
+    const r = asideRef.current.getBoundingClientRect();
+    setRect({ left: r.left, top: r.top, width: r.width, height: r.height });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // 保存 + 视口收缩时夹紧，避免面板跑出屏幕。
+  useEffect(() => {
+    if (!rect) return;
+    try {
+      localStorage.setItem(RECT_KEY, JSON.stringify(rect));
+    } catch {
+      /* 忽略 */
+    }
+  }, [rect]);
+
+  const clamp = (r: Rect): Rect => {
+    const vw = window.innerWidth;
+    const vh = window.innerHeight;
+    const width = Math.min(Math.max(r.width, MIN_W), vw - 16);
+    const height = Math.min(Math.max(r.height, MIN_H), vh - 16);
+    const left = Math.min(Math.max(r.left, 8), vw - width - 8);
+    const top = Math.min(Math.max(r.top, 8), vh - height - 8);
+    return { left, top, width, height };
+  };
+
+  // 拖动标题栏移动整个面板
+  const startMove = (e: React.PointerEvent) => {
+    if ((e.target as HTMLElement).closest('button')) return; // 关闭按钮等不触发拖动
+    e.preventDefault();
+    const base = asideRef.current!.getBoundingClientRect();
+    const start = { x: e.clientX, y: e.clientY, left: base.left, top: base.top };
+    const onMove = (ev: PointerEvent) => {
+      setRect((prev) =>
+        clamp({
+          left: start.left + (ev.clientX - start.x),
+          top: start.top + (ev.clientY - start.y),
+          width: prev?.width ?? base.width,
+          height: prev?.height ?? base.height,
+        }),
+      );
+    };
+    const onUp = () => {
+      window.removeEventListener('pointermove', onMove);
+      window.removeEventListener('pointerup', onUp);
+    };
+    window.addEventListener('pointermove', onMove);
+    window.addEventListener('pointerup', onUp);
+  };
+
+  // 从某条边/角开始拉伸；dir 含 n/s/e/w 任意组合
+  const startResize = (dir: string) => (e: React.PointerEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const base = asideRef.current!.getBoundingClientRect();
+    const start = {
+      x: e.clientX,
+      y: e.clientY,
+      left: base.left,
+      top: base.top,
+      width: base.width,
+      height: base.height,
+    };
+    const onMove = (ev: PointerEvent) => {
+      const dx = ev.clientX - start.x;
+      const dy = ev.clientY - start.y;
+      let { left, top, width, height } = start;
+      if (dir.includes('e')) width = start.width + dx;
+      if (dir.includes('s')) height = start.height + dy;
+      if (dir.includes('w')) {
+        width = start.width - dx;
+        left = start.left + dx;
+      }
+      if (dir.includes('n')) {
+        height = start.height - dy;
+        top = start.top + dy;
+      }
+      // 触底最小值时锁住对应边，避免继续拖时位置漂移
+      if (width < MIN_W) {
+        if (dir.includes('w')) left = start.left + (start.width - MIN_W);
+        width = MIN_W;
+      }
+      if (height < MIN_H) {
+        if (dir.includes('n')) top = start.top + (start.height - MIN_H);
+        height = MIN_H;
+      }
+      setRect(clamp({ left, top, width, height }));
+    };
+    const onUp = () => {
+      window.removeEventListener('pointermove', onMove);
+      window.removeEventListener('pointerup', onUp);
+    };
+    window.addEventListener('pointermove', onMove);
+    window.addEventListener('pointerup', onUp);
+  };
+
+  const rectStyle: React.CSSProperties | undefined = rect
+    ? { left: rect.left, top: rect.top, width: rect.width, height: rect.height, right: 'auto', bottom: 'auto' }
+    : undefined;
+
   const doImport = async () => {
     setImporting(true);
     try {
@@ -109,13 +226,25 @@ export function NodePanel({
 
   return (
     <aside
-      className="node-panel glass-surface"
+      ref={asideRef}
+      className={`node-panel glass-surface${rect ? ' is-floating' : ''}`}
+      style={rectStyle}
       onPointerDown={(e) => e.stopPropagation()}
       onWheel={(e) => e.stopPropagation()}
       onDoubleClick={(e) => e.stopPropagation()}
       onContextMenu={(e) => e.stopPropagation()}
     >
-      <div className="np-head">
+      {/* 四边 + 四角拉伸手柄：按住哪条边往哪拖，就往哪个方向扩展 */}
+      <span className="np-resize np-resize-n" onPointerDown={startResize('n')} />
+      <span className="np-resize np-resize-s" onPointerDown={startResize('s')} />
+      <span className="np-resize np-resize-e" onPointerDown={startResize('e')} />
+      <span className="np-resize np-resize-w" onPointerDown={startResize('w')} />
+      <span className="np-resize np-resize-ne" onPointerDown={startResize('ne')} />
+      <span className="np-resize np-resize-nw" onPointerDown={startResize('nw')} />
+      <span className="np-resize np-resize-se" onPointerDown={startResize('se')} />
+      <span className="np-resize np-resize-sw" onPointerDown={startResize('sw')} />
+
+      <div className="np-head" onPointerDown={startMove} title="按住此处拖动面板">
         <span className="np-kicker">问题节点</span>
         <button type="button" className="np-close" title="收起面板 (Esc)" onClick={onClose}>
           <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true">
@@ -216,6 +345,7 @@ export function NodePanel({
     </aside>
   );
 }
+
 
 
 

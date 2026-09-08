@@ -1599,10 +1599,30 @@ html.motion-off .edge-line { animation: none; }
   animation: np-in var(--dur-normal) var(--ease-decelerate);
 }
 
+/* 已被拖动/缩放过：改用 JS 计算的绝对坐标（style 内联），取消默认停靠与入场位移动画 */
+.node-panel.is-floating {
+  animation: none;
+}
+
 @keyframes np-in {
   from { opacity: 0; transform: translateX(16px); }
   to { opacity: 1; transform: translateX(0); }
 }
+
+/* 面板拖拽/拉伸手柄 */
+.np-resize {
+  position: absolute;
+  z-index: 5;
+  touch-action: none;
+}
+.np-resize-n { top: -3px; left: 8px; right: 8px; height: 8px; cursor: ns-resize; }
+.np-resize-s { bottom: -3px; left: 8px; right: 8px; height: 8px; cursor: ns-resize; }
+.np-resize-e { right: -3px; top: 8px; bottom: 8px; width: 8px; cursor: ew-resize; }
+.np-resize-w { left: -3px; top: 8px; bottom: 8px; width: 8px; cursor: ew-resize; }
+.np-resize-ne { top: -4px; right: -4px; width: 14px; height: 14px; cursor: nesw-resize; }
+.np-resize-nw { top: -4px; left: -4px; width: 14px; height: 14px; cursor: nwse-resize; }
+.np-resize-se { bottom: -4px; right: -4px; width: 14px; height: 14px; cursor: nwse-resize; }
+.np-resize-sw { bottom: -4px; left: -4px; width: 14px; height: 14px; cursor: nesw-resize; }
 
 .np-head {
   display: flex;
@@ -1610,6 +1630,11 @@ html.motion-off .edge-line { animation: none; }
   justify-content: space-between;
   padding: 12px 14px;
   border-bottom: var(--border-node) solid var(--border-color);
+  cursor: grab;
+  touch-action: none;
+}
+.np-head:active {
+  cursor: grabbing;
 }
 
 .np-kicker {
@@ -2400,5 +2425,6 @@ html.motion-off .edge-line { animation: none; }
 .drop-hint-busy {
   background: var(--text-secondary);
 }
+
 
 

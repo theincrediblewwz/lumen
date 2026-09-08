@@ -1,21 +1,15 @@
-fix(macos): use native window decorations to restore traffic-light buttons
+feat(ui): draggable AI FAB + movable & resizable node panel
 
-Root cause of the missing red/yellow/green buttons: decorations:false
-removes the native traffic lights AND rounded corners on macOS. The
-v0.1.2 CSS corner hack worked around the corners but the buttons were
-still gone.
+Fixes two overlap/interaction complaints:
+1. The AI FAB now drags anywhere (position persisted); a small movement
+   threshold distinguishes drag from click, so it no longer sits on top
+   of the node panel's delete button — move either one out of the way.
+2. The node panel is now movable (drag its header) and resizable from
+   all four edges and corners (drag an edge to grow that side). Position
+   and size persist to localStorage and are clamped to the viewport.
 
-Switch macOS to native decorations (decorations:true + titleBarStyle
-Overlay + hiddenTitle), which brings back the traffic lights, native
-rounded corners and window shadow in one shot. Windows keeps the
-borderless custom titlebar buttons.
-
-- add src-tauri/tauri.macos.conf.json (platform override for main window)
-- aiWindow/windowManager: decorations/transparent = isMac (runtime
-  platform check via api.appInfo); native decorations for AI & reader
-  windows on macOS too
-- styles.css: drop the platform-macos CSS corner/clip hack (native
-  decorations handle corners now)
-- bump version to 0.1.3
-
-typecheck + vite build green.
+- AiFab.tsx: pointer-drag with right/bottom anchoring + persistence
+- NodePanel.tsx: floating rect state, header move handle, 8 resize
+  handles, min size + viewport clamping, persistence
+- styles.css: .np-resize handles, grab cursor on header, is-floating
+- bump version to 0.1.4
