@@ -70,6 +70,9 @@ export async function pickStorageDir(): Promise<string | null> {
 export const api = {
   appInfo: () => invoke<AppInfo>('get_app_info'),
 
+  /** macOS：给当前窗口应用原生材质 + 圆角（无边框窗口自绘圆角用）。非 macOS 空操作。 */
+  applyWindowCorners: () => invoke<void>('apply_window_corners'),
+
   configGet: () => invoke<AppConfig>('config_get'),
   configSetRoot: (root: string) => invoke<AppConfig>('config_set_storage_root', { root }),
 
@@ -172,6 +175,7 @@ export async function pickMarkdownFiles(): Promise<string[]> {
   if (picked == null) return [];
   return Array.isArray(picked) ? picked : [picked];
 }
+
 
 
 

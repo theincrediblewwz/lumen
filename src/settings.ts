@@ -82,6 +82,9 @@ export function applySettings(s: Settings, platform = ''): void {
   const root = document.documentElement;
   root.dataset.theme = s.theme;
   const isMac = platform === 'macos';
+  // 平台类：供 CSS 做平台特定外观（如 macOS 无边框窗口需前端自绘圆角，
+  // Windows 11 系统会自动给无边框窗口加圆角，见 styles.css）。
+  root.classList.toggle('platform-macos', isMac);
   let mode: GlassMode = s.glass ? s.glassMode : 'off';
   // 原生材质仅 macOS 支持；其它平台上"原生"退化为纯实色主题（Win11 Mica 会
   // 取壁纸色且焦点变色，观感不佳，故不在 Windows/Linux 启用，见 ADR-019）。
@@ -99,6 +102,7 @@ export function applySettings(s: Settings, platform = ''): void {
   root.style.setProperty('--glass-alpha', alpha.toFixed(3));
   root.style.setProperty('--glass-blur', `${blur.toFixed(1)}px`);
 }
+
 
 
 

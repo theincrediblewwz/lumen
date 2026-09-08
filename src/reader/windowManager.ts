@@ -80,6 +80,8 @@ export async function openReaderWindow(a: OpenReaderArgs): Promise<void> {
     // 阅读窗口与主窗一致：隐藏系统装饰，改用应用自绘标题栏（跟随软件主体，
     // 不再出现 Windows 原生标题栏那种割裂感）。macOS 用 Overlay 保留红绿灯。
     decorations: false,
+    // macOS 无边框窗口需透明 + 前端自绘圆角，否则四角为锋利直角（见 App 主窗）
+    transparent: true,
     titleBarStyle: 'overlay',
     hiddenTitle: true,
   });
@@ -90,5 +92,6 @@ export async function openReaderWindow(a: OpenReaderArgs): Promise<void> {
     window.dispatchEvent(new CustomEvent<OpenReaderArgs>(OPEN_READER_EVENT, { detail: a }));
   });
 }
+
 
 

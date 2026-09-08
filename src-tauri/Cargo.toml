@@ -1,6 +1,6 @@
 [package]
 name = "lumen"
-version = "0.1.1"
+version = "0.1.2"
 description = "脉络 Lumen — 本地优先的极简白板"
 authors = ["theincrediblewwz"]
 edition = "2021"
@@ -36,5 +36,6 @@ keyring = { version = "3", features = ["apple-native", "windows-native", "sync-s
 # dev 分支，故用 git 依赖；稳定后可切回 crates.io 版本。
 [target."cfg(target_os = \"macos\")".dependencies]
 window-vibrancy = { git = "https://github.com/tauri-apps/window-vibrancy", branch = "dev" }
+
 
 

@@ -26,13 +26,15 @@ export function ReaderApp() {
   // 应用软件主体的主题到本窗口（不启用原生玻璃：阅读窗用系统装饰、纯实色更稳），
   // 并跨窗口跟随主窗口的实时主题切换（M6-1）
   useEffect(() => {
-    applySettings({ ...loadSettings(), glass: false });
-    return subscribeSettings((s) => applySettings({ ...s, glass: false }));
-  }, []);
+    applySettings({ ...loadSettings(), glass: false }, platform);
+    return subscribeSettings((s) => applySettings({ ...s, glass: false }, platform));
+  }, [platform]);
 
   // 取平台：决定自绘标题栏用 macOS 红绿灯留白还是 Windows 三键
   useEffect(() => {
     api.appInfo().then((i) => setPlatform(i.platform)).catch(() => {});
+    // macOS：本窗口无边框，需应用原生材质+圆角（非 macOS 为空操作）
+    void api.applyWindowCorners?.().catch(() => {});
   }, []);
 
   useEffect(() => {
@@ -64,4 +66,5 @@ export function ReaderApp() {
     />
   );
 }
+
 

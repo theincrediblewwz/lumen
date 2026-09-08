@@ -63,6 +63,8 @@ export async function openAiWindow(a: OpenAiArgs): Promise<void> {
     resizable: true,
     center: true,
     decorations: false,
+    // macOS 无边框窗口需透明 + 前端自绘圆角，否则四角为锋利直角（见 App 主窗）
+    transparent: true,
     titleBarStyle: 'overlay',
     hiddenTitle: true,
   });
@@ -72,3 +74,4 @@ export async function openAiWindow(a: OpenAiArgs): Promise<void> {
     window.dispatchEvent(new CustomEvent<OpenAiArgs>(OPEN_AI_EVENT, { detail: a }));
   });
 }
+

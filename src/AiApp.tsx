@@ -18,14 +18,17 @@ export function AiApp() {
     document.title = `AI 助手 · ${boardName} — 脉络 Lumen`;
   }, [boardName]);
 
-  // 应用主题，并跨窗口跟随主窗口的实时切换（M6-1，AI 窗不启用原生玻璃）
+  // 应用主题，并跨窗口跟随主窗口的实时切换（M6-1，AI 窗不启用原生玻璃）。
+  // 传入 platform 以便 macOS 下加 platform-macos 类做窗口圆角自绘。
   useEffect(() => {
-    applySettings({ ...loadSettings(), glass: false });
-    return subscribeSettings((s) => applySettings({ ...s, glass: false }));
-  }, []);
+    applySettings({ ...loadSettings(), glass: false }, platform);
+    return subscribeSettings((s) => applySettings({ ...s, glass: false }, platform));
+  }, [platform]);
 
   useEffect(() => {
     api.appInfo().then((i) => setPlatform(i.platform)).catch(() => {});
+    // macOS：本窗口无边框，需应用原生材质+圆角（非 macOS 为空操作）
+    void api.applyWindowCorners?.().catch(() => {});
   }, []);
 
   return (
@@ -38,4 +41,5 @@ export function AiApp() {
     />
   );
 }
+
 

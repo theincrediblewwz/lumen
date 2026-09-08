@@ -179,6 +179,35 @@ html.glass-on body {
   height: 100%;
 }
 
+/* ── macOS 窗口圆角 ──
+   无边框窗口（decorations:false）在 macOS 上会连系统圆角一起丢失、变成锋利直角
+   （Tauri issue #12042：Windows 11 会自动给无边框窗口补圆角，macOS 不会）。
+   窗口本身已是 transparent，这里让最外层透明、由 .board-surface 自绘圆角并裁切内容，
+   露出的圆角缺口透出桌面，配合系统窗口阴影即得与原生一致的圆角外观。
+   原生材质层圆角在 Rust 侧同步设为 10px（apply_liquid_glass/apply_vibrancy 的 radius）。 */
+html.platform-macos,
+html.platform-macos body,
+html.platform-macos #root {
+  background: transparent !important;
+}
+
+html.platform-macos .board-surface {
+  border-radius: 10px;
+  overflow: hidden;
+}
+
+/* 全屏时铺满屏幕，取消圆角避免四角黑边 */
+html.platform-macos .board-surface.is-fullscreen {
+  border-radius: 0;
+}
+
+/* AI 窗 / 阅读窗（独立无边框窗口）同样自绘圆角并裁切内容 */
+html.platform-macos .ai-root.is-standalone,
+html.platform-macos .reader.is-standalone {
+  border-radius: 10px;
+  overflow: hidden;
+}
+
 /* ==========================================================================
    自定义标题栏（native_mac 策略）+ 右键菜单
    - macOS：titleBarStyle=Overlay 保留系统红绿灯，左侧留安全区
@@ -2394,3 +2423,4 @@ html.motion-off .edge-line { animation: none; }
 .drop-hint-busy {
   background: var(--text-secondary);
 }
+

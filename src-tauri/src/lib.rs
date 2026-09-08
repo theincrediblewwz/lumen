@@ -16,15 +16,29 @@ fn apply_native_material(window: &tauri::WebviewWindow) {
         apply_liquid_glass, apply_vibrancy, LiquidGlassOptions, NSGlassEffectViewStyle,
         NSVisualEffectMaterial,
     };
-    let opts = LiquidGlassOptions::new(NSGlassEffectViewStyle::Regular).radius(0.0);
+    // 圆角需与前端 .board-surface 的 border-radius 一致（10px），否则背后这层原生
+    // 玻璃材质仍是方角，会从窗口圆角缺口露出直角。
+    const CORNER_RADIUS: f64 = 10.0;
+    let opts = LiquidGlassOptions::new(NSGlassEffectViewStyle::Regular).radius(CORNER_RADIUS);
     if apply_liquid_glass(window, opts).is_err() {
         let _ = apply_vibrancy(
             window,
             NSVisualEffectMaterial::UnderWindowBackground,
             None,
-            None,
+            Some(CORNER_RADIUS),
         );
     }
+}
+
+/// 供前端调用：给「当前调用的窗口」应用 macOS 原生材质 + 圆角。
+/// AI 窗 / 阅读窗在运行时由 JS 动态创建（decorations:false），需要它们创建后
+/// 自行调用本命令，才能和主窗一样获得圆角与原生窗口阴影。非 macOS 为空操作。
+#[tauri::command]
+fn apply_window_corners(window: tauri::WebviewWindow) {
+    #[cfg(target_os = "macos")]
+    apply_native_material(&window);
+    #[cfg(not(target_os = "macos"))]
+    let _ = window;
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -76,10 +90,12 @@ pub fn run() {
             commands::snapshot_delete,
             ai::ai_chat_stream,
             ai::ai_cancel,
+            apply_window_corners,
         ])
         .run(tauri::generate_context!())
         .expect("failed to launch Lumen");
 }
+
 
 
 
