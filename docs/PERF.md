@@ -31,6 +31,8 @@
 > Windows 打包实测（本机 `npm run tauri:build`，2026-09-08）：release 编译约 1m45s，产出 MSI + NSIS 两种安装包。安装包体积远低于目标，得益于 Tauri 复用系统 WebView2（无需内嵌 Chromium）。
 >
 > Release `v0.1.0`（GitHub Actions，2026-09-08 已 Publish）产物实测：macOS aarch64 dmg **5.38 MB**、Windows NSIS setup **4.04 MB**、MSI **5.34 MB**（CI 构建体积与本机略有差异，均远低于目标）。macOS 一期为 ad-hoc 未签名，首次打开需右键「打开」绕过 Gatekeeper。
+>
+> Release `v0.1.5`（GitHub Actions，2026-09-08 已 Publish，置为 Latest）产物实测：macOS aarch64 dmg **5.32 MB**（5,576,060 B）、app zip **5.24 MB**（5,498,906 B）、`app.tar.gz` 更新包 **5.24 MB**（5,496,313 B）、Windows NSIS setup **4.04 MB**（4,232,111 B）、MSI **5.34 MB**（5,595,136 B）。与 v0.1.0 基本持平，均远低于目标。
 
 ---
 
