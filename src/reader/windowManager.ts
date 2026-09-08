@@ -22,6 +22,17 @@ function inTauri(): boolean {
   return typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window;
 }
 
+/** 是否 macOS（决定新窗口用原生装饰还是无边框自绘）。失败时保守按非 mac。 */
+async function onMacOS(): Promise<boolean> {
+  try {
+    const { api } = await import('../api');
+    const info = await api.appInfo();
+    return info.platform === 'macos';
+  } catch {
+    return false;
+  }
+}
+
 /** 供浏览器回退用的事件名。 */
 export const OPEN_READER_EVENT = 'lumen:open-reader';
 
@@ -40,6 +51,9 @@ export async function openReaderWindow(a: OpenReaderArgs): Promise<void> {
 
   const { WebviewWindow } = await import('@tauri-apps/api/webviewWindow');
   const label = readerLabel(a);
+
+  // macOS 用原生装饰（系统红绿灯 + 圆角 + 阴影）；Windows/Linux 无边框自绘按钮。
+  const isMac = await onMacOS();
 
   // 已有同文档窗口则前置复用：先取消最小化、显示、置顶再聚焦，
   // 否则窗口在后台/最小化时只 setFocus 常常不会浮到最前，用户以为「点了没反应」。
@@ -77,11 +91,10 @@ export async function openReaderWindow(a: OpenReaderArgs): Promise<void> {
     minHeight: 400,
     resizable: true,
     center: true,
-    // 阅读窗口与主窗一致：隐藏系统装饰，改用应用自绘标题栏（跟随软件主体，
-    // 不再出现 Windows 原生标题栏那种割裂感）。macOS 用 Overlay 保留红绿灯。
-    decorations: false,
-    // macOS 无边框窗口需透明 + 前端自绘圆角，否则四角为锋利直角（见 App 主窗）
-    transparent: true,
+    // macOS：原生装饰 + Overlay 标题栏（红绿灯/圆角/阴影由系统提供）；
+    // Windows/Linux：无边框，右侧自绘窗口按钮。
+    decorations: isMac,
+    transparent: isMac,
     titleBarStyle: 'overlay',
     hiddenTitle: true,
   });
@@ -92,6 +105,7 @@ export async function openReaderWindow(a: OpenReaderArgs): Promise<void> {
     window.dispatchEvent(new CustomEvent<OpenReaderArgs>(OPEN_READER_EVENT, { detail: a }));
   });
 }
+
 
 
 

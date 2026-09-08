@@ -16,6 +16,17 @@ function inTauri(): boolean {
   return typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window;
 }
 
+/** 是否 macOS（决定新窗口用原生装饰还是无边框自绘）。失败时保守按非 mac。 */
+async function onMacOS(): Promise<boolean> {
+  try {
+    const { api } = await import('../api');
+    const info = await api.appInfo();
+    return info.platform === 'macos';
+  } catch {
+    return false;
+  }
+}
+
 export const OPEN_AI_EVENT = 'lumen:open-ai';
 
 function aiLabel(a: OpenAiArgs): string {
@@ -31,6 +42,9 @@ export async function openAiWindow(a: OpenAiArgs): Promise<void> {
 
   const { WebviewWindow } = await import('@tauri-apps/api/webviewWindow');
   const label = aiLabel(a);
+
+  // macOS 用原生装饰（系统红绿灯 + 圆角 + 阴影）；Windows/Linux 无边框自绘按钮。
+  const isMac = await onMacOS();
 
   const existing = await WebviewWindow.getByLabel(label);
   if (existing) {
@@ -62,9 +76,10 @@ export async function openAiWindow(a: OpenAiArgs): Promise<void> {
     minHeight: 420,
     resizable: true,
     center: true,
-    decorations: false,
-    // macOS 无边框窗口需透明 + 前端自绘圆角，否则四角为锋利直角（见 App 主窗）
-    transparent: true,
+    // macOS：原生装饰 + Overlay 标题栏（红绿灯/圆角/阴影由系统提供）；
+    // 其它平台：无边框，右侧自绘窗口按钮。
+    decorations: isMac,
+    transparent: isMac,
     titleBarStyle: 'overlay',
     hiddenTitle: true,
   });
@@ -74,4 +89,5 @@ export async function openAiWindow(a: OpenAiArgs): Promise<void> {
     window.dispatchEvent(new CustomEvent<OpenAiArgs>(OPEN_AI_EVENT, { detail: a }));
   });
 }
+
 
