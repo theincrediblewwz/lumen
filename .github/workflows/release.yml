@@ -45,6 +45,7 @@ jobs:
         run: npm install
 
       - name: 构建并发布
+        id: tauri
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -60,8 +61,31 @@ jobs:
           releaseBody: |
             脉络 Lumen 构建产物。
 
-            - macOS：Apple Silicon (arm64) dmg。未签名，首次运行请右键 → 打开。
-            - Windows：NSIS 安装包。未签名，SmartScreen 提示时选择「仍要运行」。
+            - macOS：Apple Silicon (arm64)。两种取用方式，二选一：
+              - `Lumen_<版本>_aarch64.zip` —— 解压即得 `Lumen.app`，拖进「应用程序」即可（推荐，无需装 dmg）。
+              - `Lumen_<版本>_aarch64.dmg` —— 传统磁盘映像。
+              未签名，首次运行请右键 →「打开」，或执行 `xattr -dr com.apple.quarantine /Applications/Lumen.app`。
+            - Windows：NSIS 安装包 / MSI。未签名，SmartScreen 提示时选择「仍要运行」。
           releaseDraft: true
           prerelease: false
           args: ${{ matrix.args }}
+
+      # macOS：把 .app 用官方推荐的 ditto 打成 zip（Finder 双击直接出 App，
+      # 保留权限与 quarantine 之外的元数据），并挂到同一个 release。
+      - name: 打包 macOS .app 为 zip 并上传
+        if: matrix.platform == 'macos-latest'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          APP_PATH=$(find src-tauri/target/${{ matrix.rust_target }}/release/bundle/macos -maxdepth 1 -name '*.app' | head -n1)
+          if [ -z "$APP_PATH" ]; then echo "未找到 .app 产物"; exit 1; fi
+          APP_NAME=$(basename "$APP_PATH" .app)
+          ARCH=$(echo "${{ matrix.rust_target }}" | cut -d- -f1)
+          VERSION="${GITHUB_REF_NAME#v}"
+          ZIP_NAME="${APP_NAME}_${VERSION}_${ARCH}.zip"
+          echo "打包 $APP_PATH -> $ZIP_NAME"
+          ditto -c -k --sequesterRsrc --keepParent "$APP_PATH" "$ZIP_NAME"
+          # 草稿 release 用 --clobber 覆盖同名资产，按 tag 定位
+          gh release upload "${GITHUB_REF_NAME}" "$ZIP_NAME" --clobber --repo "${GITHUB_REPOSITORY}"
+
