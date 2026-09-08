@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { api } from './api';
 import { AiChat } from './components/AiChat';
-import { loadSettings, applySettings } from './settings';
+import { loadSettings, applySettings, subscribeSettings } from './settings';
 
 /**
  * 独立 AI 对话窗口根组件（M5-1）。从 URL query 读取 project/board/name，
@@ -15,9 +15,14 @@ export function AiApp() {
   const [platform, setPlatform] = useState('');
 
   useEffect(() => {
-    applySettings({ ...loadSettings(), glass: false });
     document.title = `AI 助手 · ${boardName} — 脉络 Lumen`;
   }, [boardName]);
+
+  // 应用主题，并跨窗口跟随主窗口的实时切换（M6-1，AI 窗不启用原生玻璃）
+  useEffect(() => {
+    applySettings({ ...loadSettings(), glass: false });
+    return subscribeSettings((s) => applySettings({ ...s, glass: false }));
+  }, []);
 
   useEffect(() => {
     api.appInfo().then((i) => setPlatform(i.platform)).catch(() => {});
@@ -33,3 +38,4 @@ export function AiApp() {
     />
   );
 }
+

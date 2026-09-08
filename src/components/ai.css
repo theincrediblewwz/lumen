@@ -41,7 +41,7 @@
 .ai-overlay-panel {
   width: min(460px, 92vw);
   height: 100%;
-  background: var(--bg-app, #fff);
+  background: var(--bg-canvas, #fff);
   box-shadow: -8px 0 30px rgba(0, 0, 0, 0.2);
   animation: ai-slide-in 0.2s ease;
 }
@@ -59,7 +59,7 @@
   display: flex;
   flex-direction: column;
   height: 100%;
-  background: var(--bg-app, #fbfdfc);
+  background: var(--bg-canvas, #fbfdfc);
   color: var(--text-primary, #1c2b26);
   overflow: hidden;
 }
@@ -184,8 +184,8 @@
 .ai-history-item {
   width: 100%;
   text-align: left;
-  border: 1px solid var(--border, rgba(0, 0, 0, 0.08));
-  background: var(--bg-card, #fff);
+  border: 1px solid var(--border-color, rgba(0, 0, 0, 0.08));
+  background: var(--bg-node, #fff);
   border-radius: 8px;
   padding: 9px 11px;
   cursor: pointer;
@@ -284,7 +284,7 @@
 .ai-md > *:last-child { margin-bottom: 0; }
 .ai-md pre {
   overflow-x: auto;
-  background: var(--bg-code, #f2f5f3);
+  background: var(--accent-soft, #f2f5f3);
   padding: 10px 12px;
   border-radius: 8px;
   font-size: 12.5px;
@@ -516,3 +516,4 @@
   border: 1px solid var(--border-color, #d6e0db);
   color: var(--text-primary, #1c2b26);
 }
+

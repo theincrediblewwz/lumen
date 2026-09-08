@@ -4,6 +4,28 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>脉络 Lumen</title>
+    <script>
+      // 防主题闪烁（M6-1）：在任何渲染发生前，从 localStorage 同步应用主题到 <html>，
+      // 避免深色/纸感用户开窗先闪一帧默认浅色（FOUC）。主窗口与 ?reader/?ai 子窗口
+      // 共用本文件，故三套窗口都受益。这里只碰 data-theme（视觉底色由 CSS 变量决定），
+      // 玻璃/动效等其余设置仍由 React 端 applySettings 精细接管。
+      (function () {
+        try {
+          var raw = localStorage.getItem('lumen.settings.v2');
+          var theme = 'light';
+          if (raw) {
+            var t = JSON.parse(raw).theme;
+            if (t === 'light' || t === 'paper' || t === 'dark') theme = t;
+          }
+          document.documentElement.dataset.theme = theme;
+          // 动效开关也提前置位，避免首帧动画（motion:false 时）
+          var motion = raw ? JSON.parse(raw).motion : true;
+          if (motion === false) document.documentElement.classList.add('motion-off');
+        } catch (e) {
+          document.documentElement.dataset.theme = 'light';
+        }
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>

@@ -63,6 +63,20 @@ export function saveSettings(s: Settings): void {
   }
 }
 
+/**
+ * 订阅设置的跨窗口变更（M6-1）：主窗口改主题/玻璃/动效后，其它已打开的独立窗口
+ * （AI 窗、阅读窗）通过浏览器 `storage` 事件收到通知并实时套用，无需重开。
+ * 返回取消订阅函数。
+ */
+export function subscribeSettings(cb: (s: Settings) => void): () => void {
+  const handler = (e: StorageEvent) => {
+    if (e.key !== KEY) return;
+    cb(loadSettings());
+  };
+  window.addEventListener('storage', handler);
+  return () => window.removeEventListener('storage', handler);
+}
+
 /** 把设置映射到 <html> 上的 data-theme / class / CSS 变量。 */
 export function applySettings(s: Settings, platform = ''): void {
   const root = document.documentElement;
@@ -85,6 +99,7 @@ export function applySettings(s: Settings, platform = ''): void {
   root.style.setProperty('--glass-alpha', alpha.toFixed(3));
   root.style.setProperty('--glass-blur', `${blur.toFixed(1)}px`);
 }
+
 
 
 

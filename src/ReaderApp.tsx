@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { api } from './api';
 import { ReaderView } from './components/ReaderView';
-import { loadSettings, applySettings } from './settings';
+import { loadSettings, applySettings, subscribeSettings } from './settings';
 
 /**
  * 独立阅读窗口的根组件（M4-4）。从 URL query 读取 project/board/path，
@@ -23,10 +23,12 @@ export function ReaderApp() {
     { kind: 'loading' } | { kind: 'ok'; md: string } | { kind: 'error'; msg: string }
   >({ kind: 'loading' });
 
-  // 应用软件主体的主题到本窗口（不启用原生玻璃：阅读窗用系统装饰、纯实色更稳）
+  // 应用软件主体的主题到本窗口（不启用原生玻璃：阅读窗用系统装饰、纯实色更稳），
+  // 并跨窗口跟随主窗口的实时主题切换（M6-1）
   useEffect(() => {
-    applySettings({ ...settings, glass: false });
-  }, [settings]);
+    applySettings({ ...loadSettings(), glass: false });
+    return subscribeSettings((s) => applySettings({ ...s, glass: false }));
+  }, []);
 
   // 取平台：决定自绘标题栏用 macOS 红绿灯留白还是 Windows 三键
   useEffect(() => {
@@ -62,3 +64,4 @@ export function ReaderApp() {
     />
   );
 }
+
