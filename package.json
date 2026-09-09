@@ -1,7 +1,7 @@
 {
   "name": "lumen",
   "private": true,
-  "version": "0.1.5",
+  "version": "0.1.6",
   "type": "module",
   "description": "脉络 Lumen — 本地优先的极简白板，把 AI 辅助学习的过程结构化为问题树",
   "scripts": {

@@ -1,6 +1,6 @@
 [package]
 name = "lumen"
-version = "0.1.5"
+version = "0.1.6"
 description = "脉络 Lumen — 本地优先的极简白板"
 authors = ["theincrediblewwz"]
 edition = "2021"
