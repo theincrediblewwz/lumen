@@ -3,7 +3,7 @@
 > **开工前先读本文件；每完成一件事就更新本文件。**
 > 本文件只记录「进度」。计划与任务清单见 [PLAN.md](./PLAN.md)，设计与决策见 [DESIGN.md](./DESIGN.md)。
 
-**最后更新**：2026-09-09 (Asia/Shanghai) · **修阅读器目录栏不可调宽（ADR-043）+ Markdown 表格不渲染（ADR-044）**；此前 v0.1.7 修 macOS 拖拽导入（ADR-042）、v0.1.5 修面板定位（ADR-041）
+**最后更新**：2026-09-09 (Asia/Shanghai) · **v0.1.8 已发布：目录栏可拖动调宽（ADR-043）+ Markdown 表格渲染修复（ADR-044）**；此前 v0.1.7 修 macOS 拖拽导入（ADR-042）、v0.1.5 修面板定位（ADR-041）
 
 ---
 
@@ -101,6 +101,7 @@
 | **阅读器目录栏可拖动调宽（ADR-043）** | 用户报目录条目文字被省略号截断、只有悬停才看得到全貌，而宽度写死 232px。改：`ReaderPrefs` 增 `tocWidth`（180–640px，`clampToc` 夹紧，非法值回退默认）；在目录与正文之间插入 8px 拖拽把手（**同级 flex 项**，不做成目录内的绝对定位子元素——目录是 `overflow-y:auto` 的滚动容器，后者会随内容滚动并被裁切）；pointer 事件 + `setPointerCapture`，拖动中只跟手更新本地 state、**松手才写 prefs**；键盘 `←/→` 微调（Shift 加速）、`Home` 或双击复位；双页模式下把 `tocWidth` 并入重分页依赖 |
 | **Markdown 表格不渲染（ADR-044）** | 用户报导出的规范表格在软件里「压根没渲染」。两个独立成因：① **guessMath 吃掉分隔行**（主因，导入文档默认开启）——`looksLikeMath` 的绝对值规则 `/\|[^\|]+\|/` 命中 `|---|---|`，被包成 `$|---|---|$` 后整表降级成段落（ADR-037 只在 AI 回答里绕开 guessMath，导入文档仍中招）；② 形近/不可见字符（零宽空格 U+200B、形近竖线 U+2223/U+2502/U+FF5C、形近横线 U+2212 等）。改：新增 `normalizeTablePipes()`（始终执行，跳过代码围栏/行内代码，形近横线只在分隔行里换），guessMath 加表格分支（分隔行原样放过、数据行按单元格猜测）；顺带修「单元格里的竖线导致整格内容被丢弃」——按表头列数把多余单元格并回末格并转义成 `\|`。新增 `src/reader/table.test.ts`（14 用例） |
 | **发 v0.1.7（Release 已 Publish）** | 提交 `0264256`(fix + 11 单测 + 文档) → `d79ed2e`(bump 0.1.6) → `3d4577d`(Release 工作流) → `fc1ed57`(bump 0.1.7 + 发版自检步骤)。tag `v0.1.7` 触发 Release 工作流 run `34300100599`（macOS 4m32s ✓ / Windows 8m24s ✓，两 job 全绿）。产物：dmg 5.31MB / zip 5.24MB / NSIS 4.03MB / MSI 5.33MB / app.tar.gz 5.24MB，**已 Publish** → https://github.com/theincrediblewwz/lumen/releases/tag/v0.1.7 。注：v0.1.6 那版只发到内部验证、tag 已删除，正式对外版本直接跳到 0.1.7 |
+| **发 v0.1.8（Release 已 Publish）** | 提交 `2ba04c6`（目录栏拖宽 + 表格渲染修复 + ADR-043/044）→ `ef9a798`（bump 0.1.8 + 修回被版本脚本写坏的 package-lock.json）。tag `v0.1.8` 触发 Release run `34303061035`：mac 4m30s / win 8m39s，**两个 job 的产物都传成功了**；mac job 末尾的「校验 Release 产物」步骤因 `gh api --jq` 表达式用双引号、jq 收到少了引号的 `.tag_name==v0.1.8` 而报 invalid token 标红，**不影响产物**（该步骤已修）。5 个产物齐全，已 Publish → https://github.com/theincrediblewwz/lumen/releases/tag/v0.1.8 |
 | **发 v0.1.5（Release 已 Publish）** | 提交 `5cf4769`(fix) + `59cc847`(chore: bump 0.1.5)；tag `v0.1.5` 推送触发 Release 工作流（run `34237288809`：macOS 4m59s ✓ / Windows 6m52s ✓）；产物 dmg 5.32MB / zip 5.24MB / NSIS 4.04MB / MSI 5.34MB / app.tar.gz 5.24MB；**Release 已 Publish 并置为 Latest** → https://github.com/theincrediblewwz/lumen/releases/tag/v0.1.5 。同批 CI(`34237267520`) 双 job 全绿：Rust 单测 1m5s ✓ / 类型检查·密钥扫描 23s ✓ |
 
 ## 三、进行中
@@ -210,6 +211,9 @@
 | **CI 里建 release：别用 `gh release create`，直接打 REST** | 本机 gh 2.92.0 的 `release create <tag>` 在该 tag 尚无 release 时报 "no matches found for `<tag>`"（带 `--verify-tag` 时同样报错），而在已有同名 release 时反而能建成第二个（于是出现重复 release）。可靠写法：`gh api -X POST /repos/<o>/<r>/releases --input <json>`，再按 **id** 上传产物 `gh api -X POST https://uploads.github.com/repos/<o>/<r>/releases/<id>/assets?name=<文件名> -H "Content-Type: application/octet-stream" --input <文件>`，最后 `PATCH` 置 `draft=false` 发布。注意 `gh api` 要写完整 URL，`--repo` 不被 `api` 子命令接受 |
 | **Windows runner 的默认 shell 是 PowerShell** | 在 `runs-on: windows-latest` 的 job 里写 `run: |` 的 bash 脚本会直接 `ParserError: Missing '(' after 'if'`（日志里能看到 `pwsh.EXE -command`）。凡是要跑 bash 的步骤，都得显式加 `shell: bash`（macOS/Ubuntu 默认就是 bash，加了也无害） |
 | **本机 `gh` 认不出仓库（git remote 是 ghproxy 镜像）** | remote 指向 `https://ghproxy.net/https://github.com/...`，gh 报「none of the git remotes configured for this repository point to a known GitHub host」。应对：除 `gh api` 外的子命令都加 `gh --repo theincrediblewwz/lumen ...`；**`gh api` 不支持 `--repo`**，必须写完整 URL：`gh api https://api.github.com/repos/theincrediblewwz/lumen/...` |
+| **CI 里 `gh api --jq` 的表达式必须用单引号** | 写成 `--jq ".[] | select(.tag_name==\"${TAG}\") | .id"` 时，里面的 `\"` 会被 YAML→bash 逐层吃掉，jq 实际收到 `.tag_name==v0.1.8`（少了引号）→ `invalid token`，v0.1.8 发版因此被标红。正确写法：jq 表达式一律用**单引号**包（`--jq '.[] | "\(.id) \(.tag_name)"'`），需要按变量过滤就交给 `awk -v t="$TAG" '$2==t { print $1; exit }'`。另外，**自检类步骤不要 `exit 1`**——产物已经传出去了，为一个提示把整个 Release 标红不划算 |
+| **read_file 的返回带首行说明，写回前必须去掉** | MCP `read_file` 的返回以 `--- <路径> --- (N lines)` 开头。拿它改两笔再 `write_file` 写回，会把这行一并写进文件；YAML 里 `---` 是文档分隔符，文件当场变成非法 YAML（PyYAML 报 expected '<document start>'）。脚本里读进来先做 `while lines and lines[0].startswith('--- '): lines.pop(0)`，写完再用 PyYAML 验一遍 |
+| **版本 bump 脚本会悄悄改坏文件** | 给 package-lock.json 改版本号时，匹配串里含了行尾逗号、替换串却没写回去，文件从 v0.1.6 起就是**非法 JSON**（依赖树实际没被锁定，而 npm 遇到坏 lock 会退化成按 package.json 重新解析，所以 CI 一直没报错）。教训：bump 脚本改完必须 `JSON.parse` 校验；替换串里不要丢掉匹配串捕获之外的字符 |
 | **「猜测渲染」类启发式必须先排除结构性语法** | guessMath 把「看起来像数学」的裸片段包成 `$…$`，但 GFM 表格分隔行 `|---|---|` 会命中它的绝对值/范数规则 → 整张表降级成段落，表现为「功能没有实现」而非「渲染偏差」，极易误判。凡是这类**事后启发式**，都要先把结构性语法（表格分隔行、代码围栏、行内代码、已有公式区）排除在外；同理，启发式输出若含转义字符（如合并单元格产生的 `\|`），就不要再喂给 KaTeX，否则会标红报错。已固化为 `src/reader/table.test.ts` |
 | **复制粘贴带来的形近/不可见字符** | 从 PDF、网页、部分 AI 输出复制的 Markdown 常混入零宽空格 U+200B（「阶段」变「阶<ZWSP>段」，影响搜索/复制/断行）、形近竖线 U+2223/U+2502/U+FF5C、形近横线 U+2212/U+2013/U+2500。markdown-it 只认 ASCII `|` 与 `-`，用了它们表格就整块失效。处理原则：**不可见字符与形近竖线可全局替换（正文里没有正当用途），形近横线只在分隔行里替换**（否则会误伤正文的减号/破折号）；代码围栏与行内代码一律跳过 |
 | **浮动面板的坐标系必须和定位方式对齐** | `getBoundingClientRect()` 给的是**视口坐标**，`position:absolute` 的 `left/top` 却是**容器坐标**。给画布内的浮动面板写坐标前，要么改 `position:fixed`（推荐），要么手动减去容器 rect。混用的症状：容器尺寸一变元素就漂移，且每次重新测量都会再叠加一次偏移（表现为「每次拖动都往下跳一截」）。改 `fixed` 前务必确认祖先链上没有 transform/filter/backdrop-filter/contain——否则 fixed 会被该祖先重新锚定，bug 原样复发（ADR-041） |

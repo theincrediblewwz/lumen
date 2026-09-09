@@ -109,6 +109,12 @@ jobs:
       #    要在 CI 里建 release，直接用 REST：POST /releases（tag_name 必填）。
       # 3) Windows runner 的默认 shell 是 PowerShell，bash 脚本必须显式写
       #    `shell: bash`，否则 ParserError。
+      # 4) `gh api --jq` 的表达式必须用单引号包起来：写成双引号时里面的 \" 会被
+      #    逐层吃掉，jq 收到的是 `.tag_name==v0.1.8`（少了引号）→ invalid token，
+      #    直接把发版跑红（v0.1.8 踩过）。需要插值时用 \(.field) 配单引号，或把
+      #    过滤交给 awk/grep，别在双引号里拼正则。
+      # 5) 这一步只提示、绝不 exit 1：产物已经传出去了，为一个自检告警把整个
+      #    Release 标红不划算（同样是 v0.1.8 的教训）。
       - name: 校验 Release 产物
         if: matrix.platform == 'macos-latest'
         shell: bash
@@ -118,10 +124,10 @@ jobs:
           set -euo pipefail
           TAG="${GITHUB_REF_NAME}"
           VERSION="${TAG#v}"
-          REL=$(gh api "repos/${GITHUB_REPOSITORY}/releases" --jq ".[] | select(.tag_name=="${TAG}") | .id" | head -n1)
+          REL=$(gh api "repos/${GITHUB_REPOSITORY}/releases" --jq '.[] | "\(.id) \(.tag_name)"' | awk -v t="$TAG" '$2==t { print $1; exit }')
           if [ -z "$REL" ]; then
-            echo "::error::找不到 tag ${TAG} 对应的 release"
-            exit 1
+            echo "::warning::按 tag_name 找不到 ${TAG} 对应的 release（draft 阶段按 tag 查会 404，属正常现象）"
+            exit 0
           fi
           ASSETS=$(gh api "repos/${GITHUB_REPOSITORY}/releases/${REL}" --jq '.assets[].name')
           echo "release ${TAG}（id ${REL}）现有产物："
