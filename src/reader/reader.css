@@ -135,12 +135,45 @@
 }
 
 .reader-toc {
-  flex: 0 0 232px;
+  flex: 0 0 var(--toc-w, 232px);
   overflow-y: auto;
   padding: 16px 8px 24px;
   border-right: 1px solid var(--border-color);
   background: var(--bg-chrome);
 }
+/* 目录栏右边缘把手：拖动调宽（双击复位、方向键微调）。
+   做成 .reader-main 的同级 flex 项，而不是 .reader-toc 的绝对定位子元素——
+   否则会被目录自身的滚动容器裁掉、并跟着目录一起滚动。 */
+.reader-toc-resizer {
+  flex: 0 0 8px;
+  position: relative;
+  cursor: col-resize;
+  touch-action: none; /* 触摸拖动交给 pointer 事件，别被纵向滚动吞掉 */
+  background: transparent;
+  z-index: 2;
+}
+.reader-toc-resizer::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 3px;
+  width: 2px;
+  border-radius: 2px;
+  background: transparent;
+  transition: background 140ms ease;
+}
+.reader-toc-resizer:hover::after,
+.reader-toc-resizer:focus-visible::after,
+.reader-toc-resizer.is-dragging::after {
+  background: var(--accent);
+  opacity: 0.6;
+}
+.reader-toc-resizer:focus-visible { outline: none; }
+/* 拖动中：整栏保持 col-resize 光标，并禁止选中文字（否则会选到目录条目） */
+.reader.is-resizing { cursor: col-resize; user-select: none; }
+.reader.is-resizing .reader-toc-item button { cursor: col-resize; }
+
 .reader-toc-head {
   padding: 0 10px 8px;
   font-size: 11.5px;

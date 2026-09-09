@@ -1,4 +1,12 @@
-import { useEffect, useMemo, useRef, useState, useCallback } from 'react';
+import {
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  useCallback,
+  type PointerEvent as ReactPointerEvent,
+  type KeyboardEvent as ReactKeyboardEvent,
+} from 'react';
 import { renderMarkdown, type TocItem } from '../reader/engine';
 import { typesetMath, scrollToSlug } from '../reader/reader';
 import {
@@ -10,6 +18,10 @@ import {
   FONT_MIN,
   FONT_MAX,
   FONT_STEP,
+  TOC_MIN,
+  TOC_MAX,
+  TOC_DEFAULT,
+  clampToc,
   PAGE_MIN,
   PAGE_MAX,
   PAGE_STEP,
@@ -58,6 +70,10 @@ export function ReaderView({
   const [activeSlug, setActiveSlug] = useState<string>('');
   const [pageInfo, setPageInfo] = useState<{ pages: number; current: number }>({ pages: 1, current: 1 });
   const [isFullscreen, setIsFullscreen] = useState(false);
+  // 目录栏宽度：拖动时只更新本地 state 跟手，松手才写进 prefs（避免每帧写 localStorage）
+  const [tocW, setTocW] = useState<number>(prefs.tocWidth ?? TOC_DEFAULT);
+  const [resizing, setResizing] = useState(false);
+  const tocDragRef = useRef<{ startX: number; startW: number } | null>(null);
   const rootRef = useRef<HTMLDivElement>(null);
   const bodyRef = useRef<HTMLDivElement>(null);
   const contentRef = useRef<HTMLDivElement>(null); // 单页正文 / 双页测量源
@@ -241,7 +257,7 @@ export function ReaderView({
     collectBack();
     paginate();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [prefs.fontScale, prefs.pageScale]);
+  }, [prefs.fontScale, prefs.pageScale, prefs.tocWidth]);
 
   // 全屏状态跟随（全屏后双页需重排）
   useEffect(() => {
@@ -296,6 +312,57 @@ export function ReaderView({
   const setMode = (mode: ReaderMode) => setPrefs((p) => ({ ...p, mode }));
   const toggleToc = () => setPrefs((p) => ({ ...p, tocCollapsed: !p.tocCollapsed }));
 
+  /** 提交目录宽度：夹紧后同时更新本地 state 与 prefs（落盘） */
+  const commitTocWidth = useCallback((w: number) => {
+    const next = clampToc(w);
+    setTocW(next);
+    setPrefs((p) => ({ ...p, tocWidth: next }));
+  }, []);
+
+  // 目录栏右边缘拖动：pointer 事件 + setPointerCapture，
+  // 指针移出把手甚至移出窗口也照样跟手（鼠标 / 触控板 / 触摸通用）
+  const onTocPointerDown = (e: ReactPointerEvent<HTMLDivElement>) => {
+    if (e.pointerType === 'mouse' && e.button !== 0) return;
+    e.preventDefault();
+    e.currentTarget.setPointerCapture(e.pointerId);
+    tocDragRef.current = { startX: e.clientX, startW: tocW };
+    setResizing(true);
+  };
+
+  const onTocPointerMove = (e: ReactPointerEvent<HTMLDivElement>) => {
+    const d = tocDragRef.current;
+    if (!d) return;
+    setTocW(clampToc(d.startW + (e.clientX - d.startX)));
+  };
+
+  const onTocPointerUp = (e: ReactPointerEvent<HTMLDivElement>) => {
+    const d = tocDragRef.current;
+    if (!d) return;
+    tocDragRef.current = null;
+    setResizing(false);
+    try {
+      e.currentTarget.releasePointerCapture(e.pointerId);
+    } catch {
+      /* 指针已释放 */
+    }
+    commitTocWidth(d.startW + (e.clientX - d.startX));
+  };
+
+  /** 键盘可达：← / → 调宽（Shift 加速），Home 复位 */
+  const onTocKeyDown = (e: ReactKeyboardEvent<HTMLDivElement>) => {
+    const step = e.shiftKey ? 48 : 16;
+    if (e.key === 'ArrowLeft') {
+      e.preventDefault();
+      commitTocWidth(tocW - step);
+    } else if (e.key === 'ArrowRight') {
+      e.preventDefault();
+      commitTocWidth(tocW + step);
+    } else if (e.key === 'Home') {
+      e.preventDefault();
+      commitTocWidth(TOC_DEFAULT);
+    }
+  };
+
   const jump = (slug: string) => {
     const el = bodyRef.current;
     if (!el) return;
@@ -336,8 +403,11 @@ export function ReaderView({
       ref={rootRef}
       className={`reader${standalone ? ' is-standalone' : ''}${double ? ' is-double' : ' is-single'}${
         isFullscreen ? ' is-fullscreen' : ''
-      }`}
-      style={{ ['--reader-font-scale' as string]: String(prefs.fontScale / 100) }}
+      }${resizing ? ' is-resizing' : ''}`}
+      style={{
+        ['--reader-font-scale' as string]: String(prefs.fontScale / 100),
+        ['--toc-w' as string]: `${tocW}px`,
+      }}
     >
       <header
         className={`reader-bar${standalone ? ' is-standalone-bar' : ''}${isMac && standalone ? ' is-mac' : ''}`}
@@ -466,7 +536,7 @@ export function ReaderView({
 
       <div className="reader-main">
         {showToc && (
-          <nav className="reader-toc" aria-label="目录" ref={tocRef}>
+          <nav className="reader-toc" aria-label="目录" ref={tocRef} style={{ flexBasis: `${tocW}px` }}>
             <div className="reader-toc-head">目录</div>
             <ul className="reader-toc-list">
               {toc.map((item: TocItem, i) => (
@@ -486,6 +556,25 @@ export function ReaderView({
           </nav>
         )}
 
+        {showToc && (
+          <div
+            className={`reader-toc-resizer${resizing ? ' is-dragging' : ''}`}
+            role="separator"
+            aria-orientation="vertical"
+            aria-label="拖动调整目录宽度"
+            aria-valuemin={TOC_MIN}
+            aria-valuemax={TOC_MAX}
+            aria-valuenow={tocW}
+            tabIndex={0}
+            title="拖动调整目录宽度（双击复位，方向键微调）"
+            onPointerDown={onTocPointerDown}
+            onPointerMove={onTocPointerMove}
+            onPointerUp={onTocPointerUp}
+            onPointerCancel={onTocPointerUp}
+            onDoubleClick={() => commitTocWidth(TOC_DEFAULT)}
+            onKeyDown={onTocKeyDown}
+          />
+        )}
         <div className="reader-stage">
           <div ref={bodyRef} className="reader-body" onScroll={onScroll}>
             {/* 单页正文 / 双页测量源（双页时隐藏用于量块高） */}

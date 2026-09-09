@@ -210,6 +210,88 @@ function convertDelimsOutsideCode(text: string): string {
     .join('');
 }
 
+/* ── 表格归一化：把「用了形近/不可见字符」的表格救回来（M4-9） ── */
+
+/**
+ * 从 PDF / 网页 / 部分 AI 输出里复制出来的 Markdown，表格常被这些字符污染：
+ *  - 不可见字符（零宽空格 U+200B、词连接符 U+2060、BOM U+FEFF、软连字符 U+00AD）：
+ *    混在字里行间，「阶段」变成「阶<ZWSP>段」，复制、搜索、断行都受影响；
+ *  - 形近竖线 ∣ │ ｜ ❙：markdown-it 只认 ASCII `|`，用了它们就拆不出单元格；
+ *  - 形近横线 − – — ─ － ‐ ‑：分隔行 `∣−−−∣` 不合法 → 整张表降级成普通段落。
+ *
+ * 处理策略（保守）：
+ *  - 代码围栏 ``` 与行内代码 `…` 内原样保留；
+ *  - 不可见字符与形近竖线全局替换（它们在正文里没有正当用途）；
+ *  - 形近横线只在「分隔行」里替换，避免误伤正文里的减号/破折号；
+ *  - 表头与分隔行之间若夹了空行（AI 导出常见），去掉空行让表格重新成立。
+ */
+const INVISIBLE_CHARS = /[\u200B\u2060\uFEFF\u00AD]/g;
+const PIPE_ALIKE = /[\u2223\u2502\uFF5C\u2758]/g;
+const DASH_ALIKE = /[\u2212\u2013\u2014\u2500\uFF0D\u2010\u2011]/g;
+/** 分隔行：只含竖线、冒号、空白与各种横线，如 `|---|` `| :---: |---:|` */
+const DELIM_ROW = /^\|?[\s:|\-−–—─－‐‑]*\|[\s:|\-−–—─－‐‑]*$/;
+const HAS_DASH = /[\-−–—─－‐‑]/;
+
+export function normalizeTablePipes(src: string): string {
+  const parts = src.split(/(```[\s\S]*?```|~~~[\s\S]*?~~~)/g);
+  return parts.map((part, i) => (i % 2 === 1 ? part : normalizeTableOutsideCode(part))).join('');
+}
+
+function normalizeTableOutsideCode(text: string): string {
+  const segs = text.split(/(`[^`\n]*`)/g);
+  return segs.map((s, i) => (i % 2 === 1 ? s : normalizeTableLines(s))).join('');
+}
+
+function normalizeTableLines(text: string): string {
+  const lines = text.split('\n').map((line) => {
+    const clean = line.replace(INVISIBLE_CHARS, '').replace(PIPE_ALIKE, '|');
+    const t = clean.trim();
+    return DELIM_ROW.test(t) && HAS_DASH.test(t) ? clean.replace(DASH_ALIKE, '-') : clean;
+  });
+  // 表头与分隔行之间夹了空行（AI 导出常见）→ 去掉空行，让表格重新成立
+  for (let i = 0; i + 2 < lines.length; i++) {
+    if (lines[i].trimStart().startsWith('|') && lines[i + 1].trim() === '' && DELIM_ROW.test(lines[i + 2].trim())) {
+      lines.splice(i + 1, 1);
+    }
+  }
+  // 单元格里含未转义竖线（数学范数 |r[h]| 之类）时，多出来的单元格会被
+  // markdown-it 直接丢弃 → 整格内容凭空消失。按表头列数并回最后一格。
+  for (let i = 0; i + 1 < lines.length; i++) {
+    if (!lines[i].trimStart().startsWith('|')) continue;
+    if (!DELIM_ROW.test(lines[i + 1].trim())) continue;
+    const cols = Math.min(splitTableRow(lines[i]).cells.length, splitTableRow(lines[i + 1]).cells.length);
+    if (cols < 1) continue;
+    for (let j = i + 2; j < lines.length; j++) {
+      if (!isTableRowShape(lines[j])) break;
+      lines[j] = mergeExtraCells(lines[j], cols);
+    }
+  }
+  return lines.join('\n');
+}
+
+/** 数据行 / 表头行：首尾至少一端带竖线（分隔行不算） */
+function isTableRowShape(line: string): boolean {
+  const s = line.trim();
+  if (!s || DELIM_ROW.test(s)) return false;
+  return s.startsWith('|') || s.endsWith('|');
+}
+
+/**
+ * 把超出列数的单元格并回最后一格，多出来的竖线转义成 `\|`：
+ * 结构保住、内容一个字不少，渲染出来仍是原本的 `|r[h]|`。
+ * 例（3 列）：`| 71 | 证… | |r[h]|≤γ(δ)|h| |` → `| 71 | 证… | \|r[h]\|≤γ(δ)\|h\| |`
+ */
+function mergeExtraCells(line: string, cols: number): string {
+  const { head, cells, tail } = splitTableRow(line);
+  if (cells.length <= cols) return line;
+  const keep = cells.slice(0, cols - 1);
+  const merged = cells
+    .slice(cols - 1)
+    .join('\\|')
+    .trim();
+  return head + keep.concat(merged).join('|') + tail;
+}
+
 /* ── 猜测渲染：识别未用 $ 分界符、但明显是数学的行内片段 ── */
 
 /**
@@ -282,7 +364,8 @@ export function preprocessGuessMath(src: string): string {
       inMathBlock = true;
       continue;
     }
-    out.push(guessInline(line));
+    // 表格行走专用分支：分隔行必须原样放过，否则表格降级成段落
+    out.push(isTableLine(line) ? guessTableRow(line) : guessInline(line));
   }
   return out.join('\n');
 }
@@ -304,6 +387,67 @@ function guessInline(line: string): string {
   return segments
     .map((seg) => (seg.protect ? seg.text : wrapMathTokens(seg.text)))
     .join('');
+}
+
+/* ── 表格行的猜测渲染：先保结构，再在单元格里猜公式 ── */
+
+/** 判断一行是不是表格行：分隔行 `|---|`，或首尾带竖线的数据行 `| a | b |` */
+function isTableLine(line: string): boolean {
+  const s = line.trim();
+  if (!s.includes('|')) return false;
+  if (DELIM_ROW.test(s)) return true;
+  return s.startsWith('|') || s.endsWith('|');
+}
+
+/**
+ * 表格行的猜测渲染。**分隔行必须原样放过**——一旦 `|---|---|` 被 looksLikeMath
+ * 当成「绝对值/范数」包成 `$|---|---|$`，整张表就降级成段落（用户报「表格
+ * 压根没渲染」的主因）。数据行则按单元格逐个猜测：既保住 `|` 结构，单元格
+ * 里的裸公式照样能渲染。
+ */
+function guessTableRow(line: string): string {
+  if (DELIM_ROW.test(line.trim())) return line;
+  const { head, cells, tail } = splitTableRow(line);
+  if (!cells.length) return line;
+  // 含转义竖线 `\|` 的单元格是「合并回来的内容」，别再往里塞 $ —— 交给 KaTeX 会报错标红
+  return head + cells.map((c) => (c.includes('\\|') ? c : guessInline(c))).join('|') + tail;
+}
+
+/** 按未转义的 `|` 切分表格行，保留首尾竖线与 `\|` 转义。 */
+function splitTableRow(line: string): { head: string; cells: string[]; tail: string } {
+  let i = 0;
+  let head = '';
+  if (line[i] === '|') {
+    head = '|';
+    i = 1;
+  }
+  const cells: string[] = [];
+  let buf = '';
+  let tail = '';
+  while (i < line.length) {
+    const c = line[i];
+    // 转义竖线 `\|` 属于单元格内容，不参与切分
+    if (c === '\\' && line[i + 1] === '|') {
+      buf += '\\|';
+      i += 2;
+      continue;
+    }
+    // 末尾竖线（后面只剩空白）→ 收尾竖线，不是分隔符
+    if (c === '|' && /^\s*$/.test(line.slice(i + 1))) {
+      tail = line.slice(i);
+      break;
+    }
+    if (c === '|') {
+      cells.push(buf);
+      buf = '';
+      i += 1;
+      continue;
+    }
+    buf += c;
+    i += 1;
+  }
+  if (buf !== '' || cells.length === 0) cells.push(buf);
+  return { head, cells, tail };
 }
 
 /**
@@ -377,7 +521,9 @@ export interface RenderOptions {
 export function renderMarkdown(src: string, engine?: MD, opts?: RenderOptions): RenderResult {
   const md = engine ?? createEngine();
   // 始终先归一化 \(\) \[\] 定界符（修复公式标红不渲染）；再按需猜测渲染
-  const normalized = normalizeMathDelims(src);
+  // 两步归一化，与 guessMath 无关、始终执行：
+  // 先救数学定界符 \(\) \[\]，再救表格（分隔用了形近字符时整张表会降级成段落）
+  const normalized = normalizeTablePipes(normalizeMathDelims(src));
   const source = opts?.guessMath ? preprocessGuessMath(normalized) : normalized;
   const env = {};
   const tokens = md.parse(source, env);

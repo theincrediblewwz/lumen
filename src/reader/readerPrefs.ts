@@ -14,6 +14,8 @@ export interface ReaderPrefs {
   mode: ReaderMode;
   /** 目录是否收起 */
   tocCollapsed?: boolean;
+  /** 目录栏宽度（px），可拖动右边缘调整 */
+  tocWidth?: number;
   /** 双页时整个跨页占可用宽度的百分比（60–100，100=铺满） */
   pageScale?: number;
 }
@@ -29,11 +31,28 @@ export const PAGE_MIN = 60;
 export const PAGE_MAX = 100;
 export const PAGE_STEP = 10;
 
+/** 目录栏宽度上下限与默认值（px） */
+export const TOC_MIN = 180;
+export const TOC_MAX = 640;
+export const TOC_DEFAULT = 232;
+
+export function clampToc(v: number): number {
+  // prefs 来自 localStorage 的 JSON，可能是被手改坏的 NaN/undefined
+  if (!Number.isFinite(v)) return TOC_DEFAULT;
+  return Math.max(TOC_MIN, Math.min(TOC_MAX, Math.round(v)));
+}
+
 export function clampPage(v: number): number {
   return Math.max(PAGE_MIN, Math.min(PAGE_MAX, Math.round(v / PAGE_STEP) * PAGE_STEP));
 }
 
-const DEFAULT_PREFS: ReaderPrefs = { fontScale: 100, mode: 'single', tocCollapsed: false, pageScale: 100 };
+const DEFAULT_PREFS: ReaderPrefs = {
+  fontScale: 100,
+  mode: 'single',
+  tocCollapsed: false,
+  pageScale: 100,
+  tocWidth: TOC_DEFAULT,
+};
 
 export function loadPrefs(): ReaderPrefs {
   try {
@@ -46,6 +65,7 @@ export function loadPrefs(): ReaderPrefs {
       fontScale: clampFont(typeof p.fontScale === 'number' ? p.fontScale : 100),
       mode,
       tocCollapsed: !!p.tocCollapsed,
+      tocWidth: clampToc(typeof p.tocWidth === 'number' ? p.tocWidth : TOC_DEFAULT),
       pageScale: clampPage(typeof p.pageScale === 'number' ? p.pageScale : 100),
     };
   } catch {

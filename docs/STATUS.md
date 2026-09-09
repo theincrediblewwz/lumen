@@ -3,7 +3,7 @@
 > **开工前先读本文件；每完成一件事就更新本文件。**
 > 本文件只记录「进度」。计划与任务清单见 [PLAN.md](./PLAN.md)，设计与决策见 [DESIGN.md](./DESIGN.md)。
 
-**最后更新**：2026-09-09 (Asia/Shanghai) · **v0.1.7：修 macOS 拖拽导入（ADR-042）+ Release 工作流发版自检**；此前 v0.1.5 修节点面板定位两 bug（ADR-041）
+**最后更新**：2026-09-09 (Asia/Shanghai) · **修阅读器目录栏不可调宽（ADR-043）+ Markdown 表格不渲染（ADR-044）**；此前 v0.1.7 修 macOS 拖拽导入（ADR-042）、v0.1.5 修面板定位（ADR-041）
 
 ---
 
@@ -98,6 +98,8 @@
 | **阅读体验** | 连续滚动/双页(无缝+页码+翻页)、全屏 |
 | **修节点面板定位两 bug（ADR-041，发 v0.1.5）** | 用户报：① 展开「项目/白板」侧栏时节点面板被挤出可视区；② 按住面板标题栏起拖时面板突然下移一截。根因是**坐标系串味**——面板是 `.board-canvas` 内的 `position:absolute`，却把 `getBoundingClientRect()` 的**视口坐标**写进 `style.left/top`：侧栏展开使画布左边界右移 224/448px，面板随容器被推出屏幕；画布上方还有 44px 标题栏，每次起拖重新测量都会再叠加一次偏移，于是每拖一次下移 44px。改：浮动态 `.node-panel.is-floating` 用 `position:fixed`，测量与写入口径统一为视口；首次测量即 `clamp`；监听 `resize` 重新夹紧；`.np-head` 提层盖住顶边 `np-resize-n` 拉伸条（防误触发「从顶边缩小」）；四角手柄 `z-index:7` 保留拉伸；新增双击标题栏复位。验证：tsc EXIT=0 / vitest **221 passed(15 files)** / vite build ✓ / **cargo check ✓(lumen v0.1.5)** / check:secrets 净。**待用户实机验收** |
 | **修 macOS 拖 .md 到节点失灵（ADR-042；Windows 核对后确认本来就是对的，未改）** | 用户报「Mac 端没有『拖 Markdown 到节点/面板导入』的功能」。根因不在前端逻辑，而在**原生拖放坐标的跨平台口径不一致**：wry 的 Windows 后端走 `ScreenToClient` 上报**物理像素**（webview2/drag_drop.rs:167,184），macOS 后端用 NSPoint/NSRect 算 `(x, frame.height - y)` 上报**逻辑点**（wkwebview/drag_drop.rs:42）；两边到 `tauri-runtime-wry/lib.rs:4872` 都被原样包成 `PhysicalPosition` 且不缩放，契约却声明为物理像素（tauri-runtime/window.rs:103）。旧代码一律 `/ devicePixelRatio`，于是 Retina(dpr=2) 上坐标被砍半、命中测试全部落空 → 症状正是「Mac 没反应、Windows 正常」。改：新增纯逻辑 `src/canvas/dropPoint.ts`（按平台选口径 + 越界时自动切另一口径兜底）+ **11 单测**；`BoardCanvas.hitNodeAtPhysical` 改用它。顺带支持**拖到「问题节点面板」上**= 导入到面板当前展示的节点（面板 `position:fixed` 浮在最上层，命中判定时先判面板再判画布节点）。验证：tsc ✓ / vitest **232 passed(16 files)** / vite build ✓ / cargo check ✓ / 密钥扫描净。**待 Mac 实机验收落点精度** |
+| **阅读器目录栏可拖动调宽（ADR-043）** | 用户报目录条目文字被省略号截断、只有悬停才看得到全貌，而宽度写死 232px。改：`ReaderPrefs` 增 `tocWidth`（180–640px，`clampToc` 夹紧，非法值回退默认）；在目录与正文之间插入 8px 拖拽把手（**同级 flex 项**，不做成目录内的绝对定位子元素——目录是 `overflow-y:auto` 的滚动容器，后者会随内容滚动并被裁切）；pointer 事件 + `setPointerCapture`，拖动中只跟手更新本地 state、**松手才写 prefs**；键盘 `←/→` 微调（Shift 加速）、`Home` 或双击复位；双页模式下把 `tocWidth` 并入重分页依赖 |
+| **Markdown 表格不渲染（ADR-044）** | 用户报导出的规范表格在软件里「压根没渲染」。两个独立成因：① **guessMath 吃掉分隔行**（主因，导入文档默认开启）——`looksLikeMath` 的绝对值规则 `/\|[^\|]+\|/` 命中 `|---|---|`，被包成 `$|---|---|$` 后整表降级成段落（ADR-037 只在 AI 回答里绕开 guessMath，导入文档仍中招）；② 形近/不可见字符（零宽空格 U+200B、形近竖线 U+2223/U+2502/U+FF5C、形近横线 U+2212 等）。改：新增 `normalizeTablePipes()`（始终执行，跳过代码围栏/行内代码，形近横线只在分隔行里换），guessMath 加表格分支（分隔行原样放过、数据行按单元格猜测）；顺带修「单元格里的竖线导致整格内容被丢弃」——按表头列数把多余单元格并回末格并转义成 `\|`。新增 `src/reader/table.test.ts`（14 用例） |
 | **发 v0.1.7（Release 已 Publish）** | 提交 `0264256`(fix + 11 单测 + 文档) → `d79ed2e`(bump 0.1.6) → `3d4577d`(Release 工作流) → `fc1ed57`(bump 0.1.7 + 发版自检步骤)。tag `v0.1.7` 触发 Release 工作流 run `34300100599`（macOS 4m32s ✓ / Windows 8m24s ✓，两 job 全绿）。产物：dmg 5.31MB / zip 5.24MB / NSIS 4.03MB / MSI 5.33MB / app.tar.gz 5.24MB，**已 Publish** → https://github.com/theincrediblewwz/lumen/releases/tag/v0.1.7 。注：v0.1.6 那版只发到内部验证、tag 已删除，正式对外版本直接跳到 0.1.7 |
 | **发 v0.1.5（Release 已 Publish）** | 提交 `5cf4769`(fix) + `59cc847`(chore: bump 0.1.5)；tag `v0.1.5` 推送触发 Release 工作流（run `34237288809`：macOS 4m59s ✓ / Windows 6m52s ✓）；产物 dmg 5.32MB / zip 5.24MB / NSIS 4.04MB / MSI 5.34MB / app.tar.gz 5.24MB；**Release 已 Publish 并置为 Latest** → https://github.com/theincrediblewwz/lumen/releases/tag/v0.1.5 。同批 CI(`34237267520`) 双 job 全绿：Rust 单测 1m5s ✓ / 类型检查·密钥扫描 23s ✓ |
 
@@ -153,6 +155,8 @@
 
 | 事项 | 命令 | 说明 |
 | --- | --- | --- |
+| **验收：目录栏拖动调宽** | 打开任意文档 → 鼠标移到目录右边缘出现 `col-resize` 光标 → 左右拖动 → 关掉再开，宽度应记住；双击把手或按 `Home` 复位 | 拖宽后长标题应能完整显示；建议顺手试试键盘 `←/→` |
+| **验收：表格渲染** | 打开含表格的文档（尤其是从 PDF/网页复制来的、或 AI 生成的），表格应正常渲染，不再是一整段 `\|` 竖线文本 | 若还有不渲染的表格，把那段 md 原文发我，我按原文补用例 |
 | （可选）实机验收 M1 | 应用若仍在运行，直接操作：选目录 → 建项目 → 建白板 | 有问题告诉我，我来改 |
 | （可选）本地跑单测 | `npm test` | 验证 CanvasEngine 换算内核（30 用例） |
 | **Mac 实机验收：拖 .md 导入** | 从访达拖一个 .md 到节点上（应高亮并显示「松开鼠标，把文档嵌入该节点」）→ 松手导入；再试拖到右侧「问题节点面板」上，应导入到面板当前节点 | 需 Mac 构建：**v0.1.7 产物**（https://github.com/theincrediblewwz/lumen/releases/tag/v0.1.7 里的 `Lumen_0.1.7_aarch64.zip`）或 `npm run tauri:dev`；**验证前务必先关掉 DevTools**，开着控制台会让 macOS 的 `onDragDropEvent` 坐标失真 |
@@ -206,6 +210,8 @@
 | **CI 里建 release：别用 `gh release create`，直接打 REST** | 本机 gh 2.92.0 的 `release create <tag>` 在该 tag 尚无 release 时报 "no matches found for `<tag>`"（带 `--verify-tag` 时同样报错），而在已有同名 release 时反而能建成第二个（于是出现重复 release）。可靠写法：`gh api -X POST /repos/<o>/<r>/releases --input <json>`，再按 **id** 上传产物 `gh api -X POST https://uploads.github.com/repos/<o>/<r>/releases/<id>/assets?name=<文件名> -H "Content-Type: application/octet-stream" --input <文件>`，最后 `PATCH` 置 `draft=false` 发布。注意 `gh api` 要写完整 URL，`--repo` 不被 `api` 子命令接受 |
 | **Windows runner 的默认 shell 是 PowerShell** | 在 `runs-on: windows-latest` 的 job 里写 `run: |` 的 bash 脚本会直接 `ParserError: Missing '(' after 'if'`（日志里能看到 `pwsh.EXE -command`）。凡是要跑 bash 的步骤，都得显式加 `shell: bash`（macOS/Ubuntu 默认就是 bash，加了也无害） |
 | **本机 `gh` 认不出仓库（git remote 是 ghproxy 镜像）** | remote 指向 `https://ghproxy.net/https://github.com/...`，gh 报「none of the git remotes configured for this repository point to a known GitHub host」。应对：除 `gh api` 外的子命令都加 `gh --repo theincrediblewwz/lumen ...`；**`gh api` 不支持 `--repo`**，必须写完整 URL：`gh api https://api.github.com/repos/theincrediblewwz/lumen/...` |
+| **「猜测渲染」类启发式必须先排除结构性语法** | guessMath 把「看起来像数学」的裸片段包成 `$…$`，但 GFM 表格分隔行 `|---|---|` 会命中它的绝对值/范数规则 → 整张表降级成段落，表现为「功能没有实现」而非「渲染偏差」，极易误判。凡是这类**事后启发式**，都要先把结构性语法（表格分隔行、代码围栏、行内代码、已有公式区）排除在外；同理，启发式输出若含转义字符（如合并单元格产生的 `\|`），就不要再喂给 KaTeX，否则会标红报错。已固化为 `src/reader/table.test.ts` |
+| **复制粘贴带来的形近/不可见字符** | 从 PDF、网页、部分 AI 输出复制的 Markdown 常混入零宽空格 U+200B（「阶段」变「阶<ZWSP>段」，影响搜索/复制/断行）、形近竖线 U+2223/U+2502/U+FF5C、形近横线 U+2212/U+2013/U+2500。markdown-it 只认 ASCII `|` 与 `-`，用了它们表格就整块失效。处理原则：**不可见字符与形近竖线可全局替换（正文里没有正当用途），形近横线只在分隔行里替换**（否则会误伤正文的减号/破折号）；代码围栏与行内代码一律跳过 |
 | **浮动面板的坐标系必须和定位方式对齐** | `getBoundingClientRect()` 给的是**视口坐标**，`position:absolute` 的 `left/top` 却是**容器坐标**。给画布内的浮动面板写坐标前，要么改 `position:fixed`（推荐），要么手动减去容器 rect。混用的症状：容器尺寸一变元素就漂移，且每次重新测量都会再叠加一次偏移（表现为「每次拖动都往下跳一截」）。改 `fixed` 前务必确认祖先链上没有 transform/filter/backdrop-filter/contain——否则 fixed 会被该祖先重新锚定，bug 原样复发（ADR-041） |
 
 
