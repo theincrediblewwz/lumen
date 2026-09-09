@@ -97,13 +97,19 @@ jobs:
           # 草稿 release 用 --clobber 覆盖同名资产，按 tag 定位
           gh release upload "${GITHUB_REF_NAME}" "$ZIP_NAME" --clobber --repo "${GITHUB_REPOSITORY}"
 
-      # ── 发版自检：release 是否真的挂到了 tag 上（只告警，不阻断构建）────
-      # 已知问题：本仓库用 API 建 release 会得到「没挂到 tag 上」的 release
-      # （html_url 是 /releases/tag/untagged-xxxx，按 tag 查 404；v0.1.5、
-      #  v0.1.6 两次复现）。draft 转正式后用户仍无法通过 /releases/tag/<tag>
-      #  访问，且 gh release upload <tag> 可能抓不到它——因此必须显式校验。
-      # 根因待查，命中告警时的处置步骤见 docs/STATUS.md「踩过的坑」。
-      - name: 校验 Release 是否挂在 tag 上
+      # ── 发版自检：release 建出来了吗？产物齐了吗？（只告警，不阻断构建）──
+      # 踩坑记录（v0.1.7 排查所得，勿再重复排查）：
+      # 1) draft 状态下，API 返回的 html_url 是 /releases/tag/untagged-xxxx，
+      #    按 tag 查（GET /releases/tags/<tag>）会 404，gh release view/delete
+      #    也因此报错；**发布（draft=false）之后 html_url 会自动变回
+      #    /releases/tag/<tag>，按 tag 查也恢复正常**。所以不要拿
+      #    html_url 判断 release「有没有挂到 tag 上」，那是 draft 的正常表现。
+      # 2) gh 2.92.0 的 `release create <tag>` 在该 tag 尚无 release 时会报
+      #    "no matches found for `<tag>`"，加 --verify-tag 时也报同样的错。
+      #    要在 CI 里建 release，直接用 REST：POST /releases（tag_name 必填）。
+      # 3) Windows runner 的默认 shell 是 PowerShell，bash 脚本必须显式写
+      #    `shell: bash`，否则 ParserError。
+      - name: 校验 Release 产物
         if: matrix.platform == 'macos-latest'
         shell: bash
         env:
@@ -111,11 +117,19 @@ jobs:
         run: |
           set -euo pipefail
           TAG="${GITHUB_REF_NAME}"
-          URL=$(gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${TAG}" --jq .html_url 2>/dev/null || true)
-          if [ -z "$URL" ]; then
-            echo "::warning::release ${TAG} 没挂到 tag 上（按 tag 查不到），按 docs/STATUS.md 的踩坑记录手工重建"
-          else
-            echo "release ${TAG} 已挂在 tag 上：${URL}"
+          VERSION="${TAG#v}"
+          REL=$(gh api "repos/${GITHUB_REPOSITORY}/releases" --jq ".[] | select(.tag_name=="${TAG}") | .id" | head -n1)
+          if [ -z "$REL" ]; then
+            echo "::error::找不到 tag ${TAG} 对应的 release"
+            exit 1
           fi
+          ASSETS=$(gh api "repos/${GITHUB_REPOSITORY}/releases/${REL}" --jq '.assets[].name')
+          echo "release ${TAG}（id ${REL}）现有产物："
+          echo "$ASSETS"
+          for n in "Lumen_${VERSION}_aarch64.dmg" "Lumen_${VERSION}_aarch64.zip" "Lumen_aarch64.app.tar.gz"; do
+            if ! echo "$ASSETS" | grep -qx "$n"; then
+              echo "::warning::产物缺失：${n}"
+            fi
+          done
 
 
