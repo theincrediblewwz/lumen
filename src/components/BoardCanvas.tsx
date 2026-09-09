@@ -14,6 +14,7 @@ import {
 import { edgeGeometry, straightPath, boxContains, type Box, type EdgeStyle } from '../canvas/geometry';
 import { computeTreeLayout } from '../canvas/autoLayout';
 import { matchShortcut, isEditableTarget, shortcut } from '../canvas/shortcuts';
+import { dropPointToClient, detectMacOS } from '../canvas/dropPoint';
 import { api, pickMarkdownFiles, type BoardFile, type BoardNode, type BoardEdge, type DocRef } from '../api';
 import { openReaderWindow } from '../reader/windowManager';
 import { NodeCard } from './NodeCard';
@@ -80,6 +81,9 @@ export function BoardCanvas({
   const [editingEdge, setEditingEdge] = useState<string | null>(null);
   const [menu, setMenu] = useState<ContextMenuState | null>(null);
   const [panelId, setPanelId] = useState<string | null>(null);
+  /** 面板当前对应的节点（ref 版）：原生拖放监听只订阅一次，需要读最新值 */
+  const panelIdRef = useRef<string | null>(null);
+  panelIdRef.current = panelId;
   const [hoverNode, setHoverNode] = useState<string | null>(null);
   /** OS 文件拖放（拖 .md 到节点）悬停命中的节点 id；null 表示未悬停在任何节点上 */
   const [dropTargetId, setDropTargetId] = useState<string | null>(null);
@@ -135,27 +139,51 @@ export function BoardCanvas({
     }
   }, []);
 
-  /** 把一个物理(设备)像素坐标命中到某节点 id（用于原生拖放事件定位） */
-  const hitNodeAtPhysical = useCallback(
-    (physX: number, physY: number): string | null => {
-      const wrap = wrapRef.current;
-      if (!wrap) return null;
-      const dpr = window.devicePixelRatio || 1;
-      // 原生拖放坐标是相对窗口的物理像素；转成 CSS 像素后再减去画布容器位置
-      const clientX = physX / dpr;
-      const clientY = physY / dpr;
-      const r = wrap.getBoundingClientRect();
-      if (clientX < r.left || clientX > r.right || clientY < r.top || clientY > r.bottom) return null;
-      const world = engineRef.current.toWorld({ x: clientX - r.left, y: clientY - r.top });
-      for (const nn of graphRef.current.nodes) {
-        const s = sizesRef.current[nn.id];
-        const box = { x: nn.x, y: nn.y, w: s?.w ?? nn.w ?? DEFAULT_NODE_W, h: s?.h ?? FALLBACK_NODE_H };
-        if (boxContains(box, world)) return nn.id;
+  /**
+   * 原生拖放坐标 → 命中的节点 id（拖 .md 到节点、或拖到「问题节点面板」上时用）。
+   *
+   * ⚠ 平台坐标口径不一致（已核对本机 tauri 2.11.5 / wry 0.55.1 源码）：
+   *   - Windows：wry/webview2 先 ScreenToClient(pt) 再上报 → **物理像素**
+   *     （webview2/drag_drop.rs:167,184  position: (pt.x, pt.y)）
+   *   - macOS  ：wry/wkwebview 用 NSPoint/NSRect 算 (x, frame.height - y) → **逻辑点**
+   *     （wkwebview/drag_drop.rs:42）
+   *   两边到 tauri-runtime-wry 都被原样包成 `PhysicalPosition` 且不做缩放
+   *   （lib.rs:4872），契约上却声明为物理像素（tauri-runtime/window.rs:103）。
+   *   于是 macOS 上再除一次 devicePixelRatio 就会把坐标砍半（Retina dpr=2），
+   *   命中测试全部落空 —— 症状正是「Mac 上拖文件没反应，Windows 却正常」。
+   */
+  const hitNodeAtPhysical = useCallback((rawX: number, rawY: number): string | null => {
+    const wrap = wrapRef.current;
+    if (!wrap) return null;
+    // 平台口径差异与兜底都收敛在 dropPoint（纯逻辑，src/canvas/dropPoint.test.ts 有覆盖）
+    const { x: clientX, y: clientY } = dropPointToClient(rawX, rawY, {
+      isMac: detectMacOS(),
+      dpr: window.devicePixelRatio || 1,
+      viewportW: window.innerWidth,
+      viewportH: window.innerHeight,
+    });
+
+    // ① 先判「问题节点面板」：它浮在最上层（position:fixed），
+    //    落在面板上就当作落到面板正在展示的那个节点上。
+    const panel = wrap.querySelector('.node-panel');
+    if (panel) {
+      const pr = panel.getBoundingClientRect();
+      if (clientX >= pr.left && clientX <= pr.right && clientY >= pr.top && clientY <= pr.bottom) {
+        return panelIdRef.current;
       }
-      return null;
-    },
-    [],
-  );
+    }
+
+    // ② 再判画布里的节点（换算到世界坐标后做盒子命中）
+    const r = wrap.getBoundingClientRect();
+    if (clientX < r.left || clientX > r.right || clientY < r.top || clientY > r.bottom) return null;
+    const world = engineRef.current.toWorld({ x: clientX - r.left, y: clientY - r.top });
+    for (const nn of graphRef.current.nodes) {
+      const s = sizesRef.current[nn.id];
+      const box = { x: nn.x, y: nn.y, w: s?.w ?? nn.w ?? DEFAULT_NODE_W, h: s?.h ?? FALLBACK_NODE_H };
+      if (boxContains(box, world)) return nn.id;
+    }
+    return null;
+  }, []);
 
   /* ── OS 文件拖放到节点（拖 .md 进来直接嵌入该节点） ──
      用 Tauri 原生 webview 拖放事件（tauri://drag-drop），只订阅一次，逻辑走 ref。 */

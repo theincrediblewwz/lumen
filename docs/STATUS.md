@@ -97,6 +97,7 @@
 | **设置滚动修复** | 头部固定不随滚动消失 + 圆角自定义滚动条 |
 | **阅读体验** | 连续滚动/双页(无缝+页码+翻页)、全屏 |
 | **修节点面板定位两 bug（ADR-041，发 v0.1.5）** | 用户报：① 展开「项目/白板」侧栏时节点面板被挤出可视区；② 按住面板标题栏起拖时面板突然下移一截。根因是**坐标系串味**——面板是 `.board-canvas` 内的 `position:absolute`，却把 `getBoundingClientRect()` 的**视口坐标**写进 `style.left/top`：侧栏展开使画布左边界右移 224/448px，面板随容器被推出屏幕；画布上方还有 44px 标题栏，每次起拖重新测量都会再叠加一次偏移，于是每拖一次下移 44px。改：浮动态 `.node-panel.is-floating` 用 `position:fixed`，测量与写入口径统一为视口；首次测量即 `clamp`；监听 `resize` 重新夹紧；`.np-head` 提层盖住顶边 `np-resize-n` 拉伸条（防误触发「从顶边缩小」）；四角手柄 `z-index:7` 保留拉伸；新增双击标题栏复位。验证：tsc EXIT=0 / vitest **221 passed(15 files)** / vite build ✓ / **cargo check ✓(lumen v0.1.5)** / check:secrets 净。**待用户实机验收** |
+| **修 macOS 拖 .md 到节点失灵（ADR-042；Windows 核对后确认本来就是对的，未改）** | 用户报「Mac 端没有『拖 Markdown 到节点/面板导入』的功能」。根因不在前端逻辑，而在**原生拖放坐标的跨平台口径不一致**：wry 的 Windows 后端走 `ScreenToClient` 上报**物理像素**（webview2/drag_drop.rs:167,184），macOS 后端用 NSPoint/NSRect 算 `(x, frame.height - y)` 上报**逻辑点**（wkwebview/drag_drop.rs:42）；两边到 `tauri-runtime-wry/lib.rs:4872` 都被原样包成 `PhysicalPosition` 且不缩放，契约却声明为物理像素（tauri-runtime/window.rs:103）。旧代码一律 `/ devicePixelRatio`，于是 Retina(dpr=2) 上坐标被砍半、命中测试全部落空 → 症状正是「Mac 没反应、Windows 正常」。改：新增纯逻辑 `src/canvas/dropPoint.ts`（按平台选口径 + 越界时自动切另一口径兜底）+ **11 单测**；`BoardCanvas.hitNodeAtPhysical` 改用它。顺带支持**拖到「问题节点面板」上**= 导入到面板当前展示的节点（面板 `position:fixed` 浮在最上层，命中判定时先判面板再判画布节点）。验证：tsc ✓ / vitest **232 passed(16 files)** / vite build ✓ / cargo check ✓ / 密钥扫描净。**待 Mac 实机验收落点精度** |
 | **发 v0.1.5（Release 已 Publish）** | 提交 `5cf4769`(fix) + `59cc847`(chore: bump 0.1.5)；tag `v0.1.5` 推送触发 Release 工作流（run `34237288809`：macOS 4m59s ✓ / Windows 6m52s ✓）；产物 dmg 5.32MB / zip 5.24MB / NSIS 4.04MB / MSI 5.34MB / app.tar.gz 5.24MB；**Release 已 Publish 并置为 Latest** → https://github.com/theincrediblewwz/lumen/releases/tag/v0.1.5 。同批 CI(`34237267520`) 双 job 全绿：Rust 单测 1m5s ✓ / 类型检查·密钥扫描 23s ✓ |
 
 ## 三、进行中
@@ -153,6 +154,7 @@
 | --- | --- | --- |
 | （可选）实机验收 M1 | 应用若仍在运行，直接操作：选目录 → 建项目 → 建白板 | 有问题告诉我，我来改 |
 | （可选）本地跑单测 | `npm test` | 验证 CanvasEngine 换算内核（30 用例） |
+| **Mac 实机验收：拖 .md 导入** | 从访达拖一个 .md 到节点上（应高亮并显示「松开鼠标，把文档嵌入该节点」）→ 松手导入；再试拖到右侧「问题节点面板」上，应导入到面板当前节点 | 需 Mac 构建：v0.1.6 产物或 `npm run tauri:dev` |
 | **实机验收 v0.1.5 面板定位** | 开白板 → 点节点出面板 → 展开/收起侧栏，面板应纹丝不动 → 拖标题栏，起拖不再下跳 → 双击标题栏可复位 | 装 v0.1.5 或 `npm run tauri:dev` |
 
 > 注：推送等我已能自行完成（凭据已缓存，且走 ghproxy 镜像），不再需要用户代劳。
@@ -198,6 +200,7 @@
 | MCP `apply_patch` 对 JSON 上下文不稳 | 给 `package.json` 打小补丁时报「patched」却未生效（同尺寸）；改用 `write_file` 全量覆盖更可靠 |
 | **在 Windows 上跑出 GUI 不代表平台错了** | Tauri 用系统 WebView（Win=WebView2 / mac=WKWebView），同一套 React 代码在开发机（本机是 Windows，故产物为 `lumen.exe`）即可调试；「主目标 macOS」指最终发布用 mac 构建。macOS 的 `.app`/`.dmg` 必须在 mac 或 CI mac runner 上 `tauri build` |
 | **自定义标题栏控件必须退出拖拽区** | 整条 titlebar 设 `-webkit-app-region: drag` 后，内部按钮要加 `no-drag`，否则点击被窗口拖拽吞掉 |
+| **Tauri 原生拖放坐标：macOS 报逻辑点、Windows 报物理像素** | `tauri://drag-drop` 的 `payload.position` 契约写的是 `PhysicalPosition`，但 wry 的 macOS 后端（wkwebview/drag_drop.rs:42，用 NSPoint/NSRect 按「点」计算）给的其实是**逻辑点**，Windows 后端（webview2/drag_drop.rs:167,184，`ScreenToClient` 之后）给的才是物理像素 —— 而 tauri-runtime-wry 一律原样透传、不做缩放。于是「统一除以 devicePixelRatio」在 Windows 正确、在 Retina Mac 上把坐标砍半，表现为拖放**完全没反应**（不是「落点偏一点」，是整块失灵，很容易被误判成「某个平台没实现这个功能」）。**凡是按平台分叉的坐标换算，都要抽成纯函数并配单测**；升级 tauri/wry 后若上游修正了这个不一致，单测会立刻报警（ADR-042） |
 | **tauri-action 偶尔会产出「untagged」Release** | v0.1.5 那次 Release 工作流双 job 全绿，但产出的 release 没挂到 tag 上：`html_url` 是 `/releases/tag/untagged-5a81498f…`，`GET /releases/tags/v0.1.5` 返回 404（v0.1.0~v0.1.4 都正常），PATCH `tag_name` 修不回来。解法：`gh api -X DELETE .../releases/<id>` 删掉悬空 release，再用 `gh release create v0.1.5 <产物...> --title ... --notes-file ...` 在已有 tag 上重建并重新上传；产物可先 `gh api .../releases/assets/<id> -H "Accept: application/octet-stream"` 下载回来（**务必按 size 校验**，网络抖动会静默截断）。**发版后必查**：`gh release view <tag>` 的 url 必须是 `/releases/tag/<tag>` |
 | **本机 `gh` 认不出仓库（git remote 是 ghproxy 镜像）** | remote 指向 `https://ghproxy.net/https://github.com/...`，gh 报「none of the git remotes configured for this repository point to a known GitHub host」。应对：除 `gh api` 外的子命令都加 `gh --repo theincrediblewwz/lumen ...`；**`gh api` 不支持 `--repo`**，必须写完整 URL：`gh api https://api.github.com/repos/theincrediblewwz/lumen/...` |
 | **浮动面板的坐标系必须和定位方式对齐** | `getBoundingClientRect()` 给的是**视口坐标**，`position:absolute` 的 `left/top` 却是**容器坐标**。给画布内的浮动面板写坐标前，要么改 `position:fixed`（推荐），要么手动减去容器 rect。混用的症状：容器尺寸一变元素就漂移，且每次重新测量都会再叠加一次偏移（表现为「每次拖动都往下跳一截」）。改 `fixed` 前务必确认祖先链上没有 transform/filter/backdrop-filter/contain——否则 fixed 会被该祖先重新锚定，bug 原样复发（ADR-041） |
