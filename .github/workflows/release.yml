@@ -44,6 +44,48 @@ jobs:
       - name: 安装前端依赖
         run: npm install
 
+      # ── 预建 Release（关键，勿删）──────────────────────────────────
+      # tauri-action 自己 createRelease 时会同时传 tag_name 与 target_commitish，
+      # 本仓库稳定产出「没挂到 tag 上」的 release：html_url 变成
+      # /releases/tag/untagged-xxxx，按 tag 查 404（v0.1.5、v0.1.6 均复现），
+      # 草稿发布后用户也无法通过 /releases/tag/<tag> 访问。
+      # 但 tauri-action 在创建前会先在 release 列表里找同名 draft
+      # （见其 src/create-release.ts: getOrCreateRelease），找到就只上传产物。
+      # 所以这里先用 gh 在 tag 上建好 draft release，tauri-action 便会直接复用，
+      # 从根上保证 release 一定挂在 tag 上。
+      - name: 预建 Release（确保挂在 tag 上）
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_NOTES: |
+            脉络 Lumen 构建产物。
+
+            - macOS：Apple Silicon (arm64)。两种取用方式，二选一：
+              - `Lumen_<版本>_aarch64.zip` —— 解压即得 `Lumen.app`，拖进「应用程序」即可（推荐，无需装 dmg）。
+              - `Lumen_<版本>_aarch64.dmg` —— 传统磁盘映像。
+              已做 ad-hoc 自签名（未做 Apple 公证）：首次运行请右键 →「打开」→ 确认；
+              若仍被拦，执行 `xattr -dr com.apple.quarantine /Applications/Lumen.app` 后再打开。
+            - Windows：NSIS 安装包 / MSI。未签名，SmartScreen 提示时选择「仍要运行」。
+        run: |
+          set -euo pipefail
+          TAG="${GITHUB_REF_NAME}"
+          VERSION="${TAG#v}"
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "release $TAG 已存在，跳过预建"
+            exit 0
+          fi
+          if ! gh release create "$TAG" --draft --verify-tag \
+               --title "Lumen v${VERSION}" --notes "$RELEASE_NOTES" >/dev/null; then
+            # 可能已被并行的另一个矩阵 job 抢先创建
+            if gh release view "$TAG" >/dev/null 2>&1; then
+              echo "release $TAG 已被其他 job 抢先创建，继续"
+            else
+              echo "::error::预建 release 失败"
+              exit 1
+            fi
+          fi
+          echo "已预建 draft release $TAG"
+
       - name: 构建并发布
         id: tauri
         uses: tauri-apps/tauri-action@v0
