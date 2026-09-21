@@ -1,6 +1,7 @@
 import { useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import type { Settings, ThemeName, GlassMode, EdgeStyle } from '../settings';
+import { SyncSettings } from './SyncSettings';
 
 const THEMES: { id: ThemeName; label: string }[] = [
   { id: 'light', label: '浅色' },
@@ -60,6 +61,7 @@ export function SettingsPanel({
         </div>
 
         <div className="settings-body">
+        <SyncSettings />
         <section className="settings-section">
           <label className="settings-label">主题</label>
           <div className="seg">

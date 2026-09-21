@@ -8,7 +8,10 @@
 //!
 //! 前端只在内存里短暂持有明文用于发请求，落盘一律走这里。
 
+#[cfg(not(feature = "isolated-preview"))]
 const SERVICE: &str = "lumen.ai";
+#[cfg(feature = "isolated-preview")]
+const SERVICE: &str = "lumen.sync.preview";
 
 fn entry(account: &str) -> Result<keyring::Entry, String> {
     keyring::Entry::new(SERVICE, account).map_err(|e| format!("凭据库初始化失败: {e}"))

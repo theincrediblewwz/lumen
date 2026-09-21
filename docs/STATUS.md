@@ -3,10 +3,17 @@
 > **开工前先读本文件；每完成一件事就更新本文件。**
 > 本文件只记录「进度」。计划与任务清单见 [PLAN.md](./PLAN.md)，设计与决策见 [DESIGN.md](./DESIGN.md)。
 
-**最后更新**：2026-09-09 (Asia/Shanghai) · **v0.1.8 已发布：目录栏可拖动调宽（ADR-043）+ Markdown 表格渲染修复（ADR-044）**；此前 v0.1.7 修 macOS 拖拽导入（ADR-042）、v0.1.5 修面板定位（ADR-041）
+**最后更新**：2026-09-22 · Android 融合与同步预览代码完成，原生验收待主任务；上次正式发布：2026-09-09 (Asia/Shanghai) · **v0.1.8 已发布：目录栏可拖动调宽（ADR-043）+ Markdown 表格渲染修复（ADR-044）**；此前 v0.1.7 修 macOS 拖拽导入（ADR-042）、v0.1.5 修面板定位（ADR-041）
 
 ---
 
+## 2026-09-22 Android 融合与 WebDAV 同步预览
+
+- 用户已批准安卓融合与 Windows/macOS 共同同步，并明确对话可保存为文档和新节点。当前隔离分支 `codex/android-sync`，尚未提交或推送。
+- 已实现：共享行协议与精确 vendored core、持久 outbox、HTTPS WebDAV/OS 凭据、原始附件、未知字段、冲突分支与引用保护；磁盘 CAS、IO 互斥、可恢复多文件事务、常规文件替换不再先删旧文件。
+- 对话支持单条/所选/全部已完成消息保存，原会话、文档、节点与来源同事务写入，Android 共享 selection_key 幂等，支持可点回链与可选父连线。
+- 已验：双向真实 domain fixture（Android SQLite 实际投影和 recapture）、前端测试、类型检查/构建、Rust 单元测试、密钥扫描。最新数值和限制见 `docs/ANDROID-SYNC-PREVIEW.md` 与任务证据目录。
+- 已构建隔离 Windows debug/no-bundle 本地预览；主任务已复测启动/响应、WebView 的 exe 旁路径、正常关闭；首次 C 盘缓存偏离保留记录。预览库采用 exe 相对路径可搬移，用户绝对路径设置保持原样。全部原生交互与真实三端联调未完成。未使用真实资料、Provider 或 WebDAV 账户；Mac 实机尚未验证。
 ## 一、已定案的决策（不再重复询问）
 
 | 项 | 决定 |

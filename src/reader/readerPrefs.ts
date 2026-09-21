@@ -103,6 +103,13 @@ export function getProgress(docKey: string): number {
   return typeof v === 'number' && v >= 0 && v <= 1 ? v : 0;
 }
 
+export async function loadProgress(docKey:string):Promise<number> {
+  if(typeof window==='undefined'||!('__TAURI_INTERNALS__' in window))return getProgress(docKey);
+  const [projectId,boardId,...parts]=docKey.split('/');
+  try { const {invoke}=await import('@tauri-apps/api/core');return (await invoke<number|null>('reading_position_get',{projectId,boardId,path:parts.join('/')}))??getProgress(docKey); }
+  catch { return getProgress(docKey); }
+}
+
 export function setProgress(docKey: string, ratio: number) {
   const m = readProgressMap();
   m[docKey] = Math.max(0, Math.min(1, ratio));
@@ -110,6 +117,10 @@ export function setProgress(docKey: string, ratio: number) {
     localStorage.setItem(PROGRESS_KEY, JSON.stringify(m));
   } catch {
     /* 忽略 */
+  }
+  if(typeof window!=='undefined'&&'__TAURI_INTERNALS__' in window){
+    const [projectId,boardId,...parts]=docKey.split('/');
+    void import('@tauri-apps/api/core').then(({invoke})=>invoke('reading_position_set',{projectId,boardId,path:parts.join('/'),ratio:Math.max(0,Math.min(1,ratio))})).catch(()=>{});
   }
 }
 

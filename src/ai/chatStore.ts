@@ -9,6 +9,7 @@
  */
 
 export interface StoredMessage {
+  id?: string;
   role: 'user' | 'assistant';
   content: string;
   /** 出错的助手消息（不参与后续上下文） */
@@ -47,7 +48,8 @@ export function parseChats(raw: string): ChatsFile {
             title: String(c.title ?? '未命名对话'),
             createdAt: String(c.createdAt ?? new Date().toISOString()),
             updatedAt: String(c.updatedAt ?? new Date().toISOString()),
-            messages: (c.messages || []).map((m) => ({
+            messages: (c.messages || []).map((m, index) => ({
+              id: m.id ?? `${c.id}_m_${index}`,
               role: m.role === 'assistant' ? 'assistant' : 'user',
               content: String(m.content ?? ''),
               error: !!m.error,
@@ -109,7 +111,7 @@ export async function saveBoardChats(
       localStorage.setItem(LS_KEY(projectId, boardId), raw);
     }
   } catch (e) {
-    console.warn('保存对话历史失败', e);
+    throw new Error(`保存对话历史失败：${String(e)}`);
   }
 }
 

@@ -48,6 +48,7 @@ export type BoardEdge = {
 };
 
 export type BoardFile = {
+  _disk_revision?: string;
   version: number;
   id: string;
   name: string;
@@ -59,7 +60,26 @@ export type BoardFile = {
   edges: BoardEdge[];
 };
 
-export type AppInfo = { name: string; version: string; platform: string };
+const boardRevisions = new Map<string, string>();
+const chatRevisions = new Map<string,string>();
+let chatQueue:Promise<unknown>=Promise.resolve();
+let saveQueue: Promise<unknown> = Promise.resolve();
+async function loadBoard(projectId: string, boardId: string): Promise<BoardFile> {
+  const board = await invoke<BoardFile>('board_load', { projectId, boardId });
+  if (board._disk_revision) boardRevisions.set(boardId, board._disk_revision);
+  return board;
+}
+function saveBoard(board: BoardFile): Promise<void> {
+  const save = saveQueue.then(async () => {
+    const expectedRevision = boardRevisions.get(board.id) ?? board._disk_revision ?? '';
+    const revision = await invoke<string>('board_save', { board, expectedRevision });
+    boardRevisions.set(board.id, revision);
+  });
+  saveQueue = save.catch(() => {});
+  return save;
+}
+
+export type AppInfo = { name: string; version: string; platform: string; preview_data_dir?:string|null };
 
 /** 打开系统目录选择框（tauri-plugin-dialog） */
 export async function pickStorageDir(): Promise<string | null> {
@@ -85,9 +105,8 @@ export const api = {
   boardsList: (projectId: string) => invoke<BoardMeta[]>('boards_list', { projectId }),
   boardCreate: (projectId: string, name: string) =>
     invoke<BoardMeta>('board_create', { projectId, name }),
-  boardLoad: (projectId: string, boardId: string) =>
-    invoke<BoardFile>('board_load', { projectId, boardId }),
-  boardSave: (board: BoardFile) => invoke<void>('board_save', { board }),
+  boardLoad: loadBoard,
+  boardSave: saveBoard,
   boardDelete: (projectId: string, boardId: string) =>
     invoke<void>('board_delete', { projectId, boardId }),
   boardRename: (projectId: string, boardId: string, name: string) =>
@@ -111,9 +130,11 @@ export const api = {
 
   /* ── AI 对话历史持久化（M5，存白板 chats.json） ── */
   chatsRead: (projectId: string, boardId: string) =>
-    invoke<string>('chats_read', { projectId, boardId }),
-  chatsWrite: (projectId: string, boardId: string, content: string) =>
-    invoke<void>('chats_write', { projectId, boardId, content }),
+    invoke<{content:string;revision:string}>('chats_read', { projectId, boardId }).then(result=>{chatRevisions.set(boardId,result.revision);return result.content;}),
+  chatsWrite: (projectId: string, boardId: string, content: string):Promise<void> => {
+    const save=chatQueue.then(async()=>{const revision=await invoke<string>('chats_write',{projectId,boardId,content,expectedRevision:chatRevisions.get(boardId)??''});chatRevisions.set(boardId,revision);});
+    chatQueue=save.catch(()=>{});return save;
+  },
 
   /* ── API Key 安全存储（M5-7，走 OS 凭据库，明文不落盘） ── */
   secretSet: (account: string, secret: string) =>
@@ -137,7 +158,7 @@ export const api = {
   snapshotCreate: (projectId: string, boardId: string, backup = false) =>
     invoke<string | null>('snapshot_create', { projectId, boardId, backup }),
   snapshotRestore: (projectId: string, boardId: string, file: string) =>
-    invoke<BoardFile>('snapshot_restore', { projectId, boardId, file }),
+    invoke<BoardFile>('snapshot_restore', { projectId, boardId, file }).then(()=>loadBoard(projectId,boardId)),
   snapshotDelete: (projectId: string, boardId: string, file: string) =>
     invoke<void>('snapshot_delete', { projectId, boardId, file }),
 };

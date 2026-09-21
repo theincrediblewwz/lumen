@@ -12,7 +12,6 @@
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use std::fs;
-use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -156,30 +155,7 @@ pub fn safe_id(id: &str) -> Result<&str, String> {
 /// 原子写：先写临时文件并 fsync，再改名替换。
 /// 断电/崩溃时不会留下半截 JSON（DESIGN §6.5）。
 pub fn atomic_write(path: &Path, content: &str) -> Result<(), String> {
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent)
-            .map_err(|e| format!("创建目录失败 {}: {e}", parent.display()))?;
-    }
-
-    let tmp = path.with_file_name(format!(
-        "{}.tmp",
-        path.file_name().and_then(|s| s.to_str()).unwrap_or("file")
-    ));
-
-    {
-        let mut f = fs::File::create(&tmp).map_err(|e| format!("创建临时文件失败: {e}"))?;
-        f.write_all(content.as_bytes())
-            .map_err(|e| format!("写入失败: {e}"))?;
-        f.sync_all().map_err(|e| format!("刷盘失败: {e}"))?;
-    }
-
-    // Windows 的 rename 不允许覆盖已存在文件，先删除再改名。
-    // 严格意义上这一步不是原子的，但窗口极小且已是平台上的通用做法。
-    if path.exists() {
-        fs::remove_file(path).map_err(|e| format!("删除旧文件失败: {e}"))?;
-    }
-    fs::rename(&tmp, path).map_err(|e| format!("原子替换失败: {e}"))?;
-    Ok(())
+    crate::sync::atomic_bytes(path, content.as_bytes())
 }
 
 fn write_json<T: Serialize>(path: &Path, value: &T) -> Result<(), String> {
@@ -1350,6 +1326,3 @@ mod tests {
         fs::remove_dir_all(&root).ok();
     }
 }
-
-
-

@@ -10,6 +10,7 @@ export interface OpenAiArgs {
   projectId: string;
   boardId: string;
   boardName: string;
+  conversationId?: string;
 }
 
 function inTauri(): boolean {
@@ -17,13 +18,13 @@ function inTauri(): boolean {
 }
 
 /** 是否 macOS（决定新窗口用原生装饰还是无边框自绘）。失败时保守按非 mac。 */
-async function onMacOS(): Promise<boolean> {
+async function windowEnvironment(): Promise<{isMac:boolean;dataDirectory?:string}> {
   try {
     const { api } = await import('../api');
     const info = await api.appInfo();
-    return info.platform === 'macos';
+    return {isMac:info.platform === 'macos',dataDirectory:info.preview_data_dir??undefined};
   } catch {
-    return false;
+    return {isMac:false};
   }
 }
 
@@ -44,10 +45,11 @@ export async function openAiWindow(a: OpenAiArgs): Promise<void> {
   const label = aiLabel(a);
 
   // macOS 用原生装饰（系统红绿灯 + 圆角 + 阴影）；Windows/Linux 无边框自绘按钮。
-  const isMac = await onMacOS();
+  const {isMac,dataDirectory} = await windowEnvironment();
 
   const existing = await WebviewWindow.getByLabel(label);
   if (existing) {
+    if(a.conversationId){const {emitTo}=await import('@tauri-apps/api/event');await emitTo(label,'lumen://open-conversation',{boardId:a.boardId,conversationId:a.conversationId});}
     try {
       if (await existing.isMinimized()) await existing.unminimize();
       await existing.show();
@@ -66,8 +68,9 @@ export async function openAiWindow(a: OpenAiArgs): Promise<void> {
     board: a.boardId,
     name: a.boardName,
   });
+  if(a.conversationId)params.set('conversation',a.conversationId);
 
-  const win = new WebviewWindow(label, {
+  const options = {
     url: `index.html?${params.toString()}`,
     title: `AI 助手 · ${a.boardName} — 脉络 Lumen`,
     width: 520,
@@ -80,9 +83,12 @@ export async function openAiWindow(a: OpenAiArgs): Promise<void> {
     // 其它平台：无边框，右侧自绘窗口按钮。
     decorations: isMac,
     transparent: isMac,
-    titleBarStyle: 'overlay',
+    titleBarStyle: 'overlay' as const,
     hiddenTitle: true,
-  });
+  };
+  const win = dataDirectory
+    ? await (await import('../previewWindow')).openPreviewWindow(label, options)
+    : new WebviewWindow(label, options);
 
   win.once('tauri://error', (e) => {
     console.error('AI 窗口创建失败，回退浮层：', e);

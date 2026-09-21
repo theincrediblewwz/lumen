@@ -23,13 +23,13 @@ function inTauri(): boolean {
 }
 
 /** 是否 macOS（决定新窗口用原生装饰还是无边框自绘）。失败时保守按非 mac。 */
-async function onMacOS(): Promise<boolean> {
+async function windowEnvironment(): Promise<{isMac:boolean;dataDirectory?:string}> {
   try {
     const { api } = await import('../api');
     const info = await api.appInfo();
-    return info.platform === 'macos';
+    return {isMac:info.platform === 'macos',dataDirectory:info.preview_data_dir??undefined};
   } catch {
-    return false;
+    return {isMac:false};
   }
 }
 
@@ -53,7 +53,7 @@ export async function openReaderWindow(a: OpenReaderArgs): Promise<void> {
   const label = readerLabel(a);
 
   // macOS 用原生装饰（系统红绿灯 + 圆角 + 阴影）；Windows/Linux 无边框自绘按钮。
-  const isMac = await onMacOS();
+  const {isMac,dataDirectory} = await windowEnvironment();
 
   // 已有同文档窗口则前置复用：先取消最小化、显示、置顶再聚焦，
   // 否则窗口在后台/最小化时只 setFocus 常常不会浮到最前，用户以为「点了没反应」。
@@ -82,7 +82,7 @@ export async function openReaderWindow(a: OpenReaderArgs): Promise<void> {
     title: a.title,
   });
 
-  const win = new WebviewWindow(label, {
+  const options = {
     url: `index.html?${params.toString()}`,
     title: `${a.title} — 脉络 Lumen`,
     width: 860,
@@ -95,9 +95,12 @@ export async function openReaderWindow(a: OpenReaderArgs): Promise<void> {
     // Windows/Linux：无边框，右侧自绘窗口按钮。
     decorations: isMac,
     transparent: isMac,
-    titleBarStyle: 'overlay',
+    titleBarStyle: 'overlay' as const,
     hiddenTitle: true,
-  });
+  };
+  const win = dataDirectory
+    ? await (await import('../previewWindow')).openPreviewWindow(label, options)
+    : new WebviewWindow(label, options);
 
   win.once('tauri://error', (e) => {
     // 新窗口创建失败时回退到应用内浮层，至少不让用户点了没反应

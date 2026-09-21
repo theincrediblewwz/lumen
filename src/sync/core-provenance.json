@@ -1,0 +1,10 @@
+{
+  "source": "LearnStuffQuickly/android-app/sync/core",
+  "files": {
+    "codec.ts": "637aeadc649e14f47c9991a7ef65c21afb5b0fdd540e15c5f4824a5843cf2949",
+    "engine.ts": "4d77e1fd49be17465ebf2c461265ba6a3ca52007e28a9cd39b46db36bea0621d",
+    "index.ts": "abdbf3de3fd51c9f02c6e9174fa92fcabed49ea5a835dcc676fa3e83905594fd",
+    "types.ts": "8aa5059283c8b27d20d33a1ca5f1d291363cd0ec36415911cf7ad5f2dfcbea7b",
+    "webdav.ts": "82a6185fdd6c3c7a4478041aeb284965d78e3de039a4af1a822f6c34a08a1f0c"
+  }
+}

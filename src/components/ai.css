@@ -517,3 +517,6 @@
   color: var(--text-primary, #1c2b26);
 }
 
+.ai-capture-actions { display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin:8px 0; font-size:12px; }
+.ai-capture-actions label { display:flex; align-items:center; gap:4px; }
+.ai-capture-actions select { min-width:120px; max-width:230px; color:inherit; background:var(--bg-surface); border:1px solid var(--border); border-radius:6px; padding:6px; }
