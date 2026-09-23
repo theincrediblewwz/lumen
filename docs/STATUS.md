@@ -3,9 +3,17 @@
 > **开工前先读本文件；每完成一件事就更新本文件。**
 > 本文件只记录「进度」。计划与任务清单见 [PLAN.md](./PLAN.md)，设计与决策见 [DESIGN.md](./DESIGN.md)。
 
-**最后更新**：2026-09-22 · Android 融合与同步预览代码完成，原生验收待主任务；上次正式发布：2026-09-09 (Asia/Shanghai) · **v0.1.8 已发布：目录栏可拖动调宽（ADR-043）+ Markdown 表格渲染修复（ADR-044）**；此前 v0.1.7 修 macOS 拖拽导入（ADR-042）、v0.1.5 修面板定位（ADR-041）
+**最后更新**：2026-09-23 · Android 2.1.0-preview.3 公开预览版准备发布；桌面正式版仍为 2026-09-09 的 v0.1.8。发布结果以 GitHub Release 与本页后续记录核实。
 
 ---
+
+## 2026-09-23 Android 公开预览发布
+
+- 用户明确要求将 Android 端作为 Lumen 的安卓版提交到本公开仓库，并制作安装包和 GitHub Release。基于桌面同步适配提交 `875440d` 与 Android 已验收提交 `52ddd83`，仅提取 Android 的 182 个已跟踪文件；不带入 LearnStuffQuickly 的私有历史、其他治理文件、验收数据库或用户资料。
+- 新增仓库入口、安装/签名/数据边界文档、Android CI 合同检查以及共享同步核心的跨平台摘要核验；原有 `v*` 桌面 Release 工作流保持不变，Android 标签采用 `android-v2.1.0-preview.3`。
+- 安装包复用此前已完成 Android 15 合成模拟器验收的 APK。版本 `2.1.0-preview.3` / code 18 / DB v14；调试证书签名，因此作为 GitHub **预览版**，不能宣称应用商店正式签名或不同证书安装的原位升级。
+- 公开前要求：桌面/Android 自动测试、类型/lint/构建、密钥扫描、文件来源一致性、APK 签名/校验和与 CI 全绿。真实 WebDAV 三端、Mac 原生、物理 Android 和 TalkBack 仍未验证，见 [Android 说明](./ANDROID-PREVIEW.md)。
+- 当前状态：本地公开集成与验证中；推送、标签、附件、Release 发布后以实际 URL、提交号和结果补记。GitHub 出问题时保留本地提交与安装包；不改写原有桌面标签或删除用户数据。
 
 ## 2026-09-22 Android 融合与 WebDAV 同步预览
 

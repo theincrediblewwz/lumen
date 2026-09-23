@@ -1,6 +1,6 @@
 # Android 融合与跨端同步预览
 
-2026-09-22；分支 `codex/android-sync`；基线 `cf3ed4f`。本次为用户批准的 Android / Windows / macOS 共同协议适配，未发布、未推送、未打 tag。
+2026-09-22 的历史验收记录；原分支 `codex/android-sync`、基线 `cf3ed4f`。记录当时未发布的适配结果。当前公开 Android 预览版及剩余限制见 [ANDROID-PREVIEW.md](./ANDROID-PREVIEW.md)。
 
 ## 已实现
 

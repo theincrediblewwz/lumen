@@ -1,0 +1,319 @@
+{
+  "entities": [
+    {
+      "id": "b_fixture",
+      "kind": "projects",
+      "boardId": "b_fixture",
+      "data": {
+        "id": "b_fixture",
+        "title": "学习图谱",
+        "source_text": "",
+        "created_at": "2026-09-22T00:00:00Z",
+        "updated_at": "2026-09-22T00:00:00Z",
+        "layout_direction": "vertical",
+        "topic_id": null,
+        "mode": "learning",
+        "explanation_style": "plain_language",
+        "detail_level": "detailed",
+        "allow_outside_knowledge": 1,
+        "graph_kind": "free",
+        "_lumen_project": {
+          "id": "p_fixture",
+          "name": "桌面夹",
+          "created_at": "2026-09-22T00:00:00Z"
+        },
+        "_lumen_viewport": {
+          "x": 0,
+          "y": 0,
+          "zoom": 1
+        }
+      }
+    },
+    {
+      "id": "doc_9bf4dbdd1959bea1415c30bd87529c325aa8883cf4fb244dbcfcb0588419b3d1",
+      "kind": "documents",
+      "boardId": "b_fixture",
+      "data": {
+        "id": "doc_9bf4dbdd1959bea1415c30bd87529c325aa8883cf4fb244dbcfcb0588419b3d1",
+        "project_id": "b_fixture",
+        "path": "docs/answer.md",
+        "title": "回答",
+        "body": "# 回答\n\n电脑编辑后的正文\n\n$E=mc^2$",
+        "origin": "source",
+        "created_at": "2026-09-22T00:00:00Z",
+        "updated_at": "2026-09-22T00:00:00Z",
+        "_lumen_path": "docs/answer.md"
+      }
+    },
+    {
+      "id": "doc_8d5063dc8381690edea6ab66d03dee1e747e88bc12c7085faefe5def0ee0842c",
+      "kind": "documents",
+      "boardId": "b_fixture",
+      "data": {
+        "id": "doc_8d5063dc8381690edea6ab66d03dee1e747e88bc12c7085faefe5def0ee0842c",
+        "project_id": "b_fixture",
+        "path": "docs/note.md",
+        "title": "补充笔记",
+        "body": "# 补充笔记\n\n|a|b|\n|-|-|\n|1|2|",
+        "origin": "source",
+        "created_at": "2026-09-22T00:00:00Z",
+        "updated_at": "2026-09-22T00:00:00Z",
+        "_lumen_path": "docs/note.md"
+      }
+    },
+    {
+      "id": "doc_2cab26c60f692637c66f9aa3b4aaa9d9b9de0490803c658d8fe99ab341302401",
+      "kind": "documents",
+      "boardId": "b_fixture",
+      "data": {
+        "id": "doc_2cab26c60f692637c66f9aa3b4aaa9d9b9de0490803c658d8fe99ab341302401",
+        "project_id": "b_fixture",
+        "path": "docs/chat.md",
+        "title": "对话笔记",
+        "body": "# 对话笔记\n\n来自回答。",
+        "origin": "source",
+        "created_at": "2026-09-22T00:00:00Z",
+        "updated_at": "2026-09-22T00:00:00Z",
+        "_lumen_path": "docs/chat.md"
+      }
+    },
+    {
+      "id": "doc_089b92dbbbbddf3239805981ff0288b8df78b5859f49470fca1793bb2cfa759b",
+      "kind": "documents",
+      "boardId": "b_fixture",
+      "data": {
+        "id": "doc_089b92dbbbbddf3239805981ff0288b8df78b5859f49470fca1793bb2cfa759b",
+        "project_id": "b_fixture",
+        "path": "docs/asset_note_asset_532d52192ab8ca900fab2b07226870e053d4685b82a0f998f7a4c2222a4ede7c.md",
+        "title": "image.png",
+        "body": "# image.png\n\n原始附件已保存。",
+        "origin": "source",
+        "created_at": "2026-09-22T00:00:00Z",
+        "updated_at": "2026-09-22T00:00:00Z",
+        "_lumen_path": "docs/asset_note_asset_532d52192ab8ca900fab2b07226870e053d4685b82a0f998f7a4c2222a4ede7c.md"
+      }
+    },
+    {
+      "id": "asset_532d52192ab8ca900fab2b07226870e053d4685b82a0f998f7a4c2222a4ede7c",
+      "kind": "source_items",
+      "boardId": "b_fixture",
+      "data": {
+        "id": "asset_532d52192ab8ca900fab2b07226870e053d4685b82a0f998f7a4c2222a4ede7c",
+        "project_id": "b_fixture",
+        "title": "image.png",
+        "kind": "image",
+        "original_name": "image.png",
+        "media_type": "image/png",
+        "source_url": null,
+        "content_hash": "5ec770aa8b97e5faafa2f01dcab2aed7d090c5685a47c4bc90db867b9bf6c3a4",
+        "byte_size": 8,
+        "extraction_status": "ready",
+        "extraction_error": null,
+        "derived_document_id": "doc_089b92dbbbbddf3239805981ff0288b8df78b5859f49470fca1793bb2cfa759b",
+        "asset_blob": {
+          "sha256": "5ec770aa8b97e5faafa2f01dcab2aed7d090c5685a47c4bc90db867b9bf6c3a4",
+          "size": 8,
+          "mediaType": "image/png"
+        },
+        "created_at": "2026-09-22T00:00:00Z",
+        "updated_at": "2026-09-22T00:00:00Z",
+        "_lumen_path": "docs/image.png"
+      }
+    },
+    {
+      "id": "n_fixture_1",
+      "kind": "nodes",
+      "boardId": "b_fixture",
+      "data": {
+        "id": "n_fixture_1",
+        "project_id": "b_fixture",
+        "title": "编辑后的主问题",
+        "subtitle": "来源问题",
+        "x": 1,
+        "y": 2,
+        "importance": 5,
+        "status": "learning",
+        "sort_order": 0,
+        "document_id": "doc_9bf4dbdd1959bea1415c30bd87529c325aa8883cf4fb244dbcfcb0588419b3d1",
+        "_lumen_w": 240,
+        "_lumen_color": null,
+        "_lumen_created_at": "2026-09-22T00:00:00Z",
+        "_lumen_updated_at": "2026-09-22T00:00:00Z"
+      }
+    },
+    {
+      "id": "link-n_fixture_1-doc_9bf4dbdd1959bea1415c30bd87529c325aa8883cf4fb244dbcfcb0588419b3d1",
+      "kind": "node_documents",
+      "boardId": "b_fixture",
+      "data": {
+        "id": "link-n_fixture_1-doc_9bf4dbdd1959bea1415c30bd87529c325aa8883cf4fb244dbcfcb0588419b3d1",
+        "node_id": "n_fixture_1",
+        "document_id": "doc_9bf4dbdd1959bea1415c30bd87529c325aa8883cf4fb244dbcfcb0588419b3d1",
+        "sort_order": 0
+      }
+    },
+    {
+      "id": "link-n_fixture_1-doc_8d5063dc8381690edea6ab66d03dee1e747e88bc12c7085faefe5def0ee0842c",
+      "kind": "node_documents",
+      "boardId": "b_fixture",
+      "data": {
+        "id": "link-n_fixture_1-doc_8d5063dc8381690edea6ab66d03dee1e747e88bc12c7085faefe5def0ee0842c",
+        "node_id": "n_fixture_1",
+        "document_id": "doc_8d5063dc8381690edea6ab66d03dee1e747e88bc12c7085faefe5def0ee0842c",
+        "sort_order": 1
+      }
+    },
+    {
+      "id": "n_fixture_2",
+      "kind": "nodes",
+      "boardId": "b_fixture",
+      "data": {
+        "id": "n_fixture_2",
+        "project_id": "b_fixture",
+        "title": "后续问题",
+        "subtitle": "来自讨论",
+        "x": 300,
+        "y": 100,
+        "importance": 5,
+        "status": "learning",
+        "sort_order": 1,
+        "document_id": "doc_2cab26c60f692637c66f9aa3b4aaa9d9b9de0490803c658d8fe99ab341302401",
+        "_lumen_w": 240,
+        "_lumen_color": null,
+        "_lumen_created_at": "2026-09-22T00:00:00Z",
+        "_lumen_updated_at": "2026-09-22T00:00:00Z"
+      }
+    },
+    {
+      "id": "link-n_fixture_2-doc_2cab26c60f692637c66f9aa3b4aaa9d9b9de0490803c658d8fe99ab341302401",
+      "kind": "node_documents",
+      "boardId": "b_fixture",
+      "data": {
+        "id": "link-n_fixture_2-doc_2cab26c60f692637c66f9aa3b4aaa9d9b9de0490803c658d8fe99ab341302401",
+        "node_id": "n_fixture_2",
+        "document_id": "doc_2cab26c60f692637c66f9aa3b4aaa9d9b9de0490803c658d8fe99ab341302401",
+        "sort_order": 0
+      }
+    },
+    {
+      "id": "doc_b91afab75d7ec2d788e1bf99d33c46a9762bfbc2242af4f9bd5ca77c0a57f66b",
+      "kind": "documents",
+      "boardId": "b_fixture",
+      "data": {
+        "id": "doc_b91afab75d7ec2d788e1bf99d33c46a9762bfbc2242af4f9bd5ca77c0a57f66b",
+        "project_id": "b_fixture",
+        "path": "docs/edge_e_fixture.md",
+        "title": "进一步讨论",
+        "body": "进一步讨论",
+        "origin": "learner",
+        "created_at": "2026-09-22T00:00:00Z",
+        "updated_at": "2026-09-22T00:00:00Z",
+        "_lumen_path": "docs/edge_e_fixture.md"
+      }
+    },
+    {
+      "id": "e_fixture",
+      "kind": "edges",
+      "boardId": "b_fixture",
+      "data": {
+        "id": "e_fixture",
+        "project_id": "b_fixture",
+        "source_id": "n_fixture_1",
+        "target_id": "n_fixture_2",
+        "relation": "support",
+        "importance": 5,
+        "document_id": "doc_b91afab75d7ec2d788e1bf99d33c46a9762bfbc2242af4f9bd5ca77c0a57f66b",
+        "relation_kind": "related",
+        "directed": 1,
+        "label": "进一步讨论",
+        "_lumen_created_at": "2026-09-22T00:00:00Z"
+      }
+    },
+    {
+      "id": "c_fixture",
+      "kind": "conversations",
+      "boardId": "b_fixture",
+      "data": {
+        "id": "c_fixture",
+        "project_id": "b_fixture",
+        "node_id": null,
+        "title": "学习讨论",
+        "created_at": "2026-09-22T00:00:00Z",
+        "updated_at": "2026-09-22T00:00:00Z"
+      }
+    },
+    {
+      "id": "m_fixture_1",
+      "kind": "conversation_messages",
+      "boardId": "b_fixture",
+      "data": {
+        "id": "m_fixture_1",
+        "conversation_id": "c_fixture",
+        "role": "user",
+        "body": "解释它",
+        "status": "complete",
+        "ordinal": 0,
+        "request_id": null,
+        "actual_model": null,
+        "created_at": "2026-09-22T00:00:00Z",
+        "updated_at": "2026-09-22T00:00:00Z"
+      }
+    },
+    {
+      "id": "m_fixture_2",
+      "kind": "conversation_messages",
+      "boardId": "b_fixture",
+      "data": {
+        "id": "m_fixture_2",
+        "conversation_id": "c_fixture",
+        "role": "assistant",
+        "body": "# 完整回答\n\n这是说明。",
+        "status": "complete",
+        "ordinal": 1,
+        "request_id": null,
+        "actual_model": null,
+        "created_at": "2026-09-22T00:00:00Z",
+        "updated_at": "2026-09-22T00:00:00Z"
+      }
+    },
+    {
+      "id": "capture_fixture",
+      "kind": "conversation_documents",
+      "boardId": "b_fixture",
+      "data": {
+        "id": "capture_fixture",
+        "conversation_id": "c_fixture",
+        "source_answer_id": null,
+        "node_id": "n_fixture_2",
+        "message_ids_json": "[\"m_fixture_1\",\"m_fixture_2\"]",
+        "selection_key": "fixture_selection",
+        "created_at": "2026-09-22T00:00:00Z",
+        "document_id": "doc_2cab26c60f692637c66f9aa3b4aaa9d9b9de0490803c658d8fe99ab341302401"
+      }
+    },
+    {
+      "id": "doc_9bf4dbdd1959bea1415c30bd87529c325aa8883cf4fb244dbcfcb0588419b3d1",
+      "kind": "reading_positions",
+      "boardId": "b_fixture",
+      "data": {
+        "id": "doc_9bf4dbdd1959bea1415c30bd87529c325aa8883cf4fb244dbcfcb0588419b3d1",
+        "document_id": "doc_9bf4dbdd1959bea1415c30bd87529c325aa8883cf4fb244dbcfcb0588419b3d1",
+        "anchor": "answer",
+        "ratio": 0.63,
+        "updated_at": "2026-09-22T00:00:00Z"
+      }
+    }
+  ],
+  "blobs": {
+    "5ec770aa8b97e5faafa2f01dcab2aed7d090c5685a47c4bc90db867b9bf6c3a4": [
+      137,
+      80,
+      78,
+      71,
+      0,
+      1,
+      2,
+      255
+    ]
+  }
+}

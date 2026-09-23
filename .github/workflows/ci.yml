@@ -36,6 +36,9 @@ jobs:
       - name: 密钥扫描
         run: npm run check:secrets
 
+      - name: 验证 Android 与桌面同步核心一致
+        run: node scripts/verify-sync-core.mjs
+
   # Rust 侧存储层单测（Linux，便宜，不产出安装包）
   rust-test:
     name: Rust 单元测试
@@ -58,4 +61,26 @@ jobs:
 
       - name: cargo test（storage 等纯逻辑）
         run: cargo test --manifest-path src-tauri/Cargo.toml
+
+  android-check:
+    name: Android 类型 · lint · 合同测试
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: android-app
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: 'npm'
+          cache-dependency-path: android-app/package-lock.json
+      - name: 安装 Android 客户端依赖
+        run: npm ci
+      - name: 类型检查
+        run: npm run typecheck
+      - name: lint
+        run: npm run lint
+      - name: 合同测试
+        run: npm run test:contracts
 
