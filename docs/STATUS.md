@@ -3,7 +3,7 @@
 > **开工前先读本文件；每完成一件事就更新本文件。**
 > 本文件只记录「进度」。计划与任务清单见 [PLAN.md](./PLAN.md)，设计与决策见 [DESIGN.md](./DESIGN.md)。
 
-**最后更新**：2026-09-23 · Android 2.1.0-preview.3 公开预览版准备发布；桌面正式版仍为 2026-09-09 的 v0.1.8。发布结果以 GitHub Release 与本页后续记录核实。
+**最后更新**：2026-09-23 · Android 2.1.0-preview.3 已公开发布为 GitHub 预览版；桌面正式版仍为 2026-09-09 的 v0.1.8。
 
 ---
 
@@ -13,7 +13,9 @@
 - 新增仓库入口、安装/签名/数据边界文档、Android CI 合同检查以及共享同步核心的跨平台摘要核验；原有 `v*` 桌面 Release 工作流保持不变，Android 标签采用 `android-v2.1.0-preview.3`。
 - 安装包复用此前已完成 Android 15 合成模拟器验收的 APK。版本 `2.1.0-preview.3` / code 18 / DB v14；调试证书签名，因此作为 GitHub **预览版**，不能宣称应用商店正式签名或不同证书安装的原位升级。
 - 公开前要求：桌面/Android 自动测试、类型/lint/构建、密钥扫描、文件来源一致性、APK 签名/校验和与 CI 全绿。真实 WebDAV 三端、Mac 原生、物理 Android 和 TalkBack 仍未验证，见 [Android 说明](./ANDROID-PREVIEW.md)。
-- 当前状态：本地公开集成与验证中；推送、标签、附件、Release 发布后以实际 URL、提交号和结果补记。GitHub 出问题时保留本地提交与安装包；不改写原有桌面标签或删除用户数据。
+- 当前状态：PR [#1](https://github.com/theincrediblewwz/lumen/pull/1) 已在三项检查全绿后合入 `main`，合并提交 `77f4a46e0ebc2f0ff1c48b936442433cbfeefb19`。主分支 CI [35867048535](https://github.com/theincrediblewwz/lumen/actions/runs/35867048535) 的桌面类型/测试/构建/密钥扫描、Android 类型/lint/220 项测试及 Rust 单测全绿。
+- 标签 `android-v2.1.0-preview.3` 指向上述合并提交；[Release](https://github.com/theincrediblewwz/lumen/releases/tag/android-v2.1.0-preview.3) 已公开且标记为 prerelease。三项附件均为 `uploaded`：APK 95,057,093 字节，SHA-256 `7d064dec08bcf273152a2cd835df55f326996d1ec261f1bc522c82af38d6af88`；`SHA256SUMS.txt` 和 `BUILD-INFO.txt` 的 GitHub 摘要与本地逐项一致。公开页面可见，旧桌面 `v*` 标签及 Release 未改。
+- 下一步：用用户选定的 HTTPS WebDAV 服务和合成资料完成 Android/Windows/Mac 真实往返与冲突恢复，在 Mac 和物理 Android 上验收；在正式签名前确定私钥保管、升级和备份恢复方案。没有真实服务/设备证据之前，预览状态保持不变。
 
 ## 2026-09-22 Android 融合与 WebDAV 同步预览
 
