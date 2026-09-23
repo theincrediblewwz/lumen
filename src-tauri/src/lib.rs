@@ -3,6 +3,7 @@ mod ai;
 mod config;
 mod secrets;
 mod storage;
+mod sync;
 
 /// 应用原生窗口材质（仅 macOS）：
 /// - macOS 26+：Apple 原生 Liquid Glass（NSGlassEffectView）；
@@ -41,11 +42,61 @@ fn apply_window_corners(window: tauri::WebviewWindow) {
     let _ = window;
 }
 
+/// The preview must set the native builder field directly. Config/JS window
+/// options do not reliably carry an absolute data directory through Tauri.
+#[cfg(feature = "isolated-preview")]
+fn preview_webview_directory() -> Result<std::path::PathBuf, std::io::Error> {
+    let exe = std::env::current_exe()?;
+    let parent = exe.parent().ok_or_else(|| std::io::Error::other("预览程序目录无效"))?;
+    let directory = parent.join(".preview").join("webview");
+    std::fs::create_dir_all(&directory)?;
+    Ok(directory)
+}
+
+#[tauri::command]
+async fn preview_window_open(app: tauri::AppHandle, options: tauri::utils::config::WindowConfig) -> Result<(), String> {
+    #[cfg(feature = "isolated-preview")]
+    {
+        let valid_url = match &options.url {
+            tauri::WebviewUrl::App(path) => {
+                let url = path.to_string_lossy();
+                (options.label.starts_with("ai-") && url.starts_with("index.html?ai=1&"))
+                    || (options.label.starts_with("reader-") && url.starts_with("index.html?reader=1&"))
+            }
+            _ => false,
+        };
+        if !valid_url { return Err("预览窗口仅允许本地阅读和对话页面".into()); }
+        tauri::WebviewWindowBuilder::from_config(&app, &options)
+            .map_err(|e| e.to_string())?
+            .data_directory(preview_webview_directory().map_err(|e| e.to_string())?)
+            .build().map_err(|e| e.to_string())?;
+        Ok(())
+    }
+    #[cfg(not(feature = "isolated-preview"))]
+    { let _ = (app, options); Err("仅隔离预览支持此命令".into()) }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    let context = tauri::generate_context!();
+    #[cfg(feature = "isolated-preview")]
+    let context = {
+        let mut context = context;
+        // Prevent even a transient default-profile WebView before setup runs.
+        for window in &mut context.config_mut().app.windows { window.create = false; }
+        context
+    };
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .setup(|_app| {
+            #[cfg(feature = "isolated-preview")]
+            {
+                let options = _app.config().app.windows.iter().find(|w| w.label == "main")
+                    .ok_or_else(|| std::io::Error::other("缺少预览主窗口配置"))?.clone();
+                tauri::WebviewWindowBuilder::from_config(_app, &options)?
+                    .data_directory(preview_webview_directory()?)
+                    .build()?;
+            }
             #[cfg(target_os = "macos")]
             {
                 use tauri::Manager;
@@ -56,6 +107,14 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            sync::sync_settings_get,
+            sync::sync_settings_set,
+            sync::sync_snapshot,
+            sync::reading_position_get,
+            sync::reading_position_set,
+            sync::sync_apply,
+            sync::sync_http,
+            sync::chat_capture,
             commands::get_app_info,
             commands::config_get,
             commands::config_set_storage_root,
@@ -91,13 +150,8 @@ pub fn run() {
             ai::ai_chat_stream,
             ai::ai_cancel,
             apply_window_corners,
+            preview_window_open,
         ])
-        .run(tauri::generate_context!())
+        .run(context)
         .expect("failed to launch Lumen");
 }
-
-
-
-
-
-

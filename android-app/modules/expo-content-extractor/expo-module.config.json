@@ -1,0 +1,6 @@
+{
+  "platforms": ["android"],
+  "android": {
+    "modules": ["expo.modules.contentextractor.ExpoContentExtractorModule", "expo.modules.contentextractor.ExpoSelectionActionsModule"]
+  }
+}

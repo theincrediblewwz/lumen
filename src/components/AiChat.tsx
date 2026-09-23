@@ -26,6 +26,9 @@ import {
 } from '../ai/chatStore';
 import type { ChatMessage } from '../ai/provider';
 import type { BoardNode } from '../api';
+import { invoke } from '@tauri-apps/api/core';
+import { captureKey, conversationMarkdown, type CaptureMessage } from '../ai/chatCapture';
+import { requestEditorFlush, notifyLibraryChanged, releaseEditorLock } from '../sync/events';
 
 interface Props {
   projectId: string;
@@ -38,6 +41,8 @@ interface Props {
 }
 
 interface UiMessage {
+  id: string;
+  at: string;
   role: 'user' | 'assistant';
   content: string;
   /** 正在流式生成中 */
@@ -120,6 +125,11 @@ export function AiChat({ projectId, boardId, boardName, standalone, platform, on
   const [messages, setMessages] = useState<UiMessage[]>([]);
   const [input, setInput] = useState('');
   const [busy, setBusy] = useState(false);
+  const [selectedMessages, setSelectedMessages] = useState<Set<string>>(new Set());
+  const [captureParent, setCaptureParent] = useState('');
+  const [captureStatus, setCaptureStatus] = useState('');
+  const [savingCapture, setSavingCapture] = useState(false);
+  const captureLock = useRef(false);
   const [showSettings, setShowSettings] = useState(false);
   const [showHistory, setShowHistory] = useState(false);
   // 对话历史（长期存白板 chats.json）：全部会话 + 当前会话 id
@@ -161,10 +171,11 @@ export function AiChat({ projectId, boardId, boardName, standalone, platform, on
     loadBoardChats(projectId, boardId).then((loaded) => {
       if (!alive) return;
       setChats(loaded);
-      const last = loaded.conversations[loaded.conversations.length - 1];
+      const requested=new URLSearchParams(window.location.search).get('conversation');
+      const last = loaded.conversations.find(c=>c.id===requested)??loaded.conversations[loaded.conversations.length - 1];
       if (last) {
         setConvId(last.id);
-        setMessages(last.messages.map((m) => ({ role: m.role, content: m.content, error: m.error })));
+        setMessages(last.messages.map((m, i) => ({ ...m, id: m.id ?? `${last.id}_m_${i}` })));
       }
       loadedRef.current = true;
     });
@@ -180,10 +191,11 @@ export function AiChat({ projectId, boardId, boardName, standalone, platform, on
       const stored: StoredMessage[] = uiMsgs
         .filter((m) => !m.streaming && m.content)
         .map((m) => ({
+          id: m.id,
           role: m.role,
           content: m.content,
           error: m.error,
-          at: new Date().toISOString(),
+          at: m.at,
         }));
       if (stored.length === 0) return;
       setChats((prev) => {
@@ -200,7 +212,7 @@ export function AiChat({ projectId, boardId, boardName, standalone, platform, on
         if (idx >= 0) conversations[idx] = conv;
         else conversations.push(conv);
         const next = { version: 1 as const, conversations };
-        void saveBoardChats(projectId, boardId, next);
+        void saveBoardChats(projectId, boardId, next).catch(error=>setCaptureStatus(String(error)));
         return next;
       });
     },
@@ -211,6 +223,8 @@ export function AiChat({ projectId, boardId, boardName, standalone, platform, on
   const newConversation = useCallback(() => {
     setConvId(newId());
     setMessages([]);
+    setSelectedMessages(new Set());
+    setCaptureStatus('');
     setShowHistory(false);
     setShowSettings(false);
   }, []);
@@ -221,7 +235,9 @@ export function AiChat({ projectId, boardId, boardName, standalone, platform, on
       const conv = chats.conversations.find((c) => c.id === id);
       if (!conv) return;
       setConvId(id);
-      setMessages(conv.messages.map((m) => ({ role: m.role, content: m.content, error: m.error })));
+      setMessages(conv.messages.map((m, i) => ({ ...m, id: m.id ?? `${conv.id}_m_${i}` })));
+      setSelectedMessages(new Set());
+      setCaptureStatus('');
       setShowHistory(false);
       setShowSettings(false);
     },
@@ -272,8 +288,8 @@ export function AiChat({ projectId, boardId, boardName, standalone, platform, on
 
     setMessages((prev) => [
       ...prev,
-      { role: 'user', content: text },
-      { role: 'assistant', content: '', streaming: true },
+      { id: newId(), at: new Date().toISOString(), role: 'user', content: text },
+      { id: newId(), at: new Date().toISOString(), role: 'assistant', content: '', streaming: true },
     ]);
     setBusy(true);
 
@@ -339,14 +355,15 @@ export function AiChat({ projectId, boardId, boardName, standalone, platform, on
       const copy = prev.slice();
       for (let i = copy.length - 1; i >= 0; i--) {
         if (copy[i].role === 'assistant') {
-          copy[i] = { ...copy[i], streaming: false };
+          copy[i] = { ...copy[i], streaming: false, tool:undefined };
           break;
         }
       }
+      persist(copy);
       return copy;
     });
     setBusy(false);
-  }, []);
+  }, [persist]);
 
   const onKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
@@ -360,6 +377,45 @@ export function AiChat({ projectId, boardId, boardName, standalone, platform, on
     void saveAiSettings(s); // 异步：密钥进 OS 凭据库，非敏感字段进 localStorage
     setShowSettings(false);
   };
+
+  const saveSelection = async (ids: Set<string>) => {
+    if (captureLock.current || busy) return;
+    captureLock.current = true; setSavingCapture(true); setCaptureStatus('');
+    let editorLocked=false;
+    try {
+      const selected = messages.filter(m => ids.has(m.id) && !m.streaming && !m.error && m.content.trim()) as CaptureMessage[];
+      if (!selected.length) throw new Error('请选择已完成的消息');
+      await requestEditorFlush();
+      editorLocked=true;
+      const title = deriveTitle(selected[0].role === 'user' ? selected : [{ role:'user', content:selected[0].content.replace(/^#+\s*/,'').slice(0,60), at:selected[0].at }]);
+      const key = await captureKey(convId, selected);
+      const markdown = conversationMarkdown(title, convId, selected, captureParent || undefined,{projectId,boardId});
+      const now=new Date().toISOString();
+      const conversation={id:convId,title:deriveTitle(messages),createdAt:chats.conversations.find(c=>c.id===convId)?.createdAt??messages[0]?.at??now,updatedAt:now,messages:messages.filter(m=>!m.streaming&&m.content).map(({id,at,role,content,error})=>({id,at,role,content,error}))};
+      const next = await invoke<BoardFile>('chat_capture', { projectId, boardId, key, title, markdown, conversationId:convId, conversation, messageIds:selected.map(m=>m.id), parentId:captureParent || null });
+      const savedChats=await loadBoardChats(projectId,boardId);setChats(savedChats);
+      const savedConversation=savedChats.conversations.find(c=>c.id===convId);
+      if(savedConversation)setMessages(savedConversation.messages.map((m,i)=>({...m,id:m.id??`${convId}_m_${i}`})));
+      setBoard(next); setCaptureStatus('已保存文档并新建节点，原对话已保留');
+      await notifyLibraryChanged();
+    } catch (error) { setCaptureStatus(String(error)); }
+    finally { if(editorLocked)await releaseEditorLock(); captureLock.current = false; setSavingCapture(false); }
+  };
+
+  useEffect(()=>{
+    const open=async(id:string)=>{
+      if(busy)return;
+      const loaded=await loadBoardChats(projectId,boardId);const found=loaded.conversations.find(c=>c.id===id);if(!found)return;
+      setChats(loaded);setConvId(id);setMessages(found.messages.map((m,i)=>({...m,id:m.id??`${id}_m_${i}`})));setSelectedMessages(new Set());setShowHistory(false);setShowSettings(false);
+    };
+    const stops:(()=>void)[]=[];let disposed=false;
+    if('__TAURI_INTERNALS__' in window)void import('@tauri-apps/api/event').then(async({listen})=>{
+      const add=async(p:Promise<()=>void>)=>{const stop=await p;if(disposed)stop();else stops.push(stop);};
+      await add(listen<{boardId:string;conversationId:string}>('lumen://open-conversation',e=>{if(e.payload.boardId===boardId)void open(e.payload.conversationId);}));
+      await add(listen('lumen://library-changed',()=>{if(!busy)void open(convId);else setCaptureStatus('其他设备已更新资料；当前回答完成后可先保存为文档，再重新打开对话。');}));
+    });
+    return()=>{disposed=true;stops.forEach(stop=>stop());};
+  },[projectId,boardId,busy,convId]);
 
   return (
     <div
@@ -500,9 +556,13 @@ export function AiChat({ projectId, boardId, boardName, standalone, platform, on
                 </p>
               </div>
             )}
-            {messages.map((m, i) => (
-              <div key={i} className={`ai-msg ai-msg-${m.role}${m.error ? ' is-error' : ''}`}>
+            {messages.map((m) => (
+              <div key={m.id} className={`ai-msg ai-msg-${m.role}${m.error ? ' is-error' : ''}`}>
                 <div className="ai-msg-role">{m.role === 'user' ? '你' : 'AI'}</div>
+                {!m.streaming && !m.error && m.content && <div className="ai-capture-actions">
+                  <label><input type="checkbox" aria-label="选择这条消息" checked={selectedMessages.has(m.id)} onChange={() => setSelectedMessages(prev => { const next = new Set(prev); if (next.has(m.id)) next.delete(m.id); else next.add(m.id); return next; })} /> 选入笔记</label>
+                  {m.role === 'assistant' && <button type="button" className="ai-btn-secondary" disabled={busy || savingCapture} onClick={() => void saveSelection(new Set([m.id]))}>保存回答为节点</button>}
+                </div>}
                 {m.tool && (
                   <div className="ai-tool-status">
                     <span className="ai-tool-spinner" /> 正在{m.tool}…
@@ -523,6 +583,12 @@ export function AiChat({ projectId, boardId, boardName, standalone, platform, on
           </div>
 
           <div className="ai-composer">
+            {messages.length > 0 && <div className="ai-capture-actions">
+              <select aria-label="新节点的来源节点" value={captureParent} onChange={e=>setCaptureParent(e.target.value)}><option value="">独立节点</option>{board?.nodes.map(n=><option key={n.id} value={n.id}>接在：{n.title}</option>)}</select>
+              <button type="button" className="ai-btn-secondary" disabled={busy || savingCapture || !selectedMessages.size} onClick={() => void saveSelection(selectedMessages)}>保存所选 {selectedMessages.size || ''} 条</button>
+              <button type="button" className="ai-btn-secondary" disabled={busy || savingCapture} onClick={() => void saveSelection(new Set(messages.map(m=>m.id)))}>保存全部已完成消息</button>
+            </div>}
+            {captureStatus && <p role="status" className="ai-hint">{captureStatus}</p>}
             {!configured && (
               <div className="ai-warn">
                 尚未配置 AI，请先点右上角 ⚙ 填写接口地址与密钥。

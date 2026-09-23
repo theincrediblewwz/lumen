@@ -9,11 +9,12 @@ import {
 } from 'react';
 import { renderMarkdown, type TocItem } from '../reader/engine';
 import { typesetMath, scrollToSlug } from '../reader/reader';
+import { openAiWindow } from '../ai/aiWindow';
 import {
   loadPrefs,
   savePrefs,
   clampFont,
-  getProgress,
+  loadProgress,
   setProgress,
   FONT_MIN,
   FONT_MAX,
@@ -210,12 +211,13 @@ export function ReaderView({
     const tocHandle = tocRef.current ? typesetMath(tocRef.current, 60) : null;
     let cancelled = false;
 
-    handle.done.then(() => {
+    handle.done.then(async () => {
       if (cancelled) return;
       if (double) paginate();
       if (restoredRef.current) return;
       restoredRef.current = true;
-      const ratio = getProgress(docKey);
+      const ratio = await loadProgress(docKey);
+      if(cancelled)return;
       requestAnimationFrame(() => {
         const el = bodyRef.current;
         if (!el || ratio <= 0) return;
@@ -576,7 +578,11 @@ export function ReaderView({
           />
         )}
         <div className="reader-stage">
-          <div ref={bodyRef} className="reader-body" onScroll={onScroll}>
+          <div ref={bodyRef} className="reader-body" onScroll={onScroll} onClick={event=>{
+            const link=(event.target as HTMLElement).closest<HTMLAnchorElement>('a[href^="lumen://conversation/"]');if(!link)return;
+            event.preventDefault();const url=new URL(link.href);const [projectId,boardId]=docKey.split('/');
+            void openAiWindow({projectId:url.searchParams.get('project')??projectId,boardId:url.searchParams.get('board')??boardId,boardName:title,conversationId:decodeURIComponent(url.pathname.slice(1))});
+          }}>
             {/* 单页正文 / 双页测量源（双页时隐藏用于量块高） */}
             <div ref={contentRef} className="reader-content markdown-body" />
             {/* 双页：堆叠的纸行（由 JS 填充） */}

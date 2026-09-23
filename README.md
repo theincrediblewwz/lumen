@@ -3,6 +3,12 @@
 > **本地优先的极简白板，把 AI 辅助学习的过程结构化为「问题树」。**
 > 每个节点是一个你问过的问题，每条连线是一次思维的延伸，每篇文档是一次 AI 回答的原文。
 
+## Android 预览版
+
+Android 客户端现已与桌面端放在同一仓库：[源码与开发说明](./android-app/README.md)。它提供安静白板、节点 Markdown 阅读、持续讨论、划词提问、对话原文保存为文档及新节点。两端实现了共同的 WebDAV 同步协议；真实服务三端联调、Mac 原生和物理 Android 后台验收仍待完成。
+
+[下载 Android 预览 APK](https://github.com/theincrediblewwz/lumen/releases/tag/android-v2.1.0-preview.3) · [安装、签名和数据说明](./docs/ANDROID-PREVIEW.md)。此版本沿用 Android 既有应用身份 `com.learnstuffquickly.app`，安装图标名称仍为 LearnStuff，以便保留同签名预览版的数据。Android 使用独立 `android-v*` 标签；原有 `v*` 标签继续对应桌面构建。
+
 **当前状态**：M0–M6 完成 · 进入 M7 发布阶段（打包 / 端到端验收 / CI）。技术栈 Tauri 2.x + React 18 + TypeScript + Vite。
 
 ---

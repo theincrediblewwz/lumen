@@ -3,10 +3,25 @@
 > **开工前先读本文件；每完成一件事就更新本文件。**
 > 本文件只记录「进度」。计划与任务清单见 [PLAN.md](./PLAN.md)，设计与决策见 [DESIGN.md](./DESIGN.md)。
 
-**最后更新**：2026-09-09 (Asia/Shanghai) · **v0.1.8 已发布：目录栏可拖动调宽（ADR-043）+ Markdown 表格渲染修复（ADR-044）**；此前 v0.1.7 修 macOS 拖拽导入（ADR-042）、v0.1.5 修面板定位（ADR-041）
+**最后更新**：2026-09-23 · Android 2.1.0-preview.3 公开预览版准备发布；桌面正式版仍为 2026-09-09 的 v0.1.8。发布结果以 GitHub Release 与本页后续记录核实。
 
 ---
 
+## 2026-09-23 Android 公开预览发布
+
+- 用户明确要求将 Android 端作为 Lumen 的安卓版提交到本公开仓库，并制作安装包和 GitHub Release。基于桌面同步适配提交 `875440d` 与 Android 已验收提交 `52ddd83`，仅提取 Android 的 182 个已跟踪文件；不带入 LearnStuffQuickly 的私有历史、其他治理文件、验收数据库或用户资料。
+- 新增仓库入口、安装/签名/数据边界文档、Android CI 合同检查以及共享同步核心的跨平台摘要核验；原有 `v*` 桌面 Release 工作流保持不变，Android 标签采用 `android-v2.1.0-preview.3`。
+- 安装包复用此前已完成 Android 15 合成模拟器验收的 APK。版本 `2.1.0-preview.3` / code 18 / DB v14；调试证书签名，因此作为 GitHub **预览版**，不能宣称应用商店正式签名或不同证书安装的原位升级。
+- 公开前要求：桌面/Android 自动测试、类型/lint/构建、密钥扫描、文件来源一致性、APK 签名/校验和与 CI 全绿。真实 WebDAV 三端、Mac 原生、物理 Android 和 TalkBack 仍未验证，见 [Android 说明](./ANDROID-PREVIEW.md)。
+- 当前状态：本地公开集成与验证中；推送、标签、附件、Release 发布后以实际 URL、提交号和结果补记。GitHub 出问题时保留本地提交与安装包；不改写原有桌面标签或删除用户数据。
+
+## 2026-09-22 Android 融合与 WebDAV 同步预览
+
+- 用户已批准安卓融合与 Windows/macOS 共同同步，并明确对话可保存为文档和新节点。当前隔离分支 `codex/android-sync`，尚未提交或推送。
+- 已实现：共享行协议与精确 vendored core、持久 outbox、HTTPS WebDAV/OS 凭据、原始附件、未知字段、冲突分支与引用保护；磁盘 CAS、IO 互斥、可恢复多文件事务、常规文件替换不再先删旧文件。
+- 对话支持单条/所选/全部已完成消息保存，原会话、文档、节点与来源同事务写入，Android 共享 selection_key 幂等，支持可点回链与可选父连线。
+- 已验：双向真实 domain fixture（Android SQLite 实际投影和 recapture）、前端测试、类型检查/构建、Rust 单元测试、密钥扫描。最新数值和限制见 `docs/ANDROID-SYNC-PREVIEW.md` 与任务证据目录。
+- 已构建隔离 Windows debug/no-bundle 本地预览；主任务已复测启动/响应、WebView 的 exe 旁路径、正常关闭；首次 C 盘缓存偏离保留记录。预览库采用 exe 相对路径可搬移，用户绝对路径设置保持原样。全部原生交互与真实三端联调未完成。未使用真实资料、Provider 或 WebDAV 账户；Mac 实机尚未验证。
 ## 一、已定案的决策（不再重复询问）
 
 | 项 | 决定 |

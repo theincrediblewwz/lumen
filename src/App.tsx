@@ -14,6 +14,8 @@ import { ShortcutsHelp } from './components/ShortcutsHelp';
 import { matchShortcut, isEditableTarget, shortcut } from './canvas/shortcuts';
 import { exportMarkdown, exportHtml, exportSvg } from './canvas/boardExport';
 import { loadSettings, saveSettings, applySettings, type Settings } from './settings';
+import { registerEditorFlush,registerLibraryRefresh } from './sync/events';
+import { startForegroundSync } from './sync/service';
 
 type Phase = 'loading' | 'setup' | 'ready';
 
@@ -62,6 +64,14 @@ export default function App() {
   const [activeProject, setActiveProject] = useState<ProjectMeta | null>(null);
   const [activeBoard, setActiveBoard] = useState<BoardFile | null>(null);
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const pendingBoards = useRef(new Map<string,BoardFile>());
+  const pendingSave = useRef<Promise<void>>(Promise.resolve());
+  const activeBoardRef = useRef(activeBoard);
+  activeBoardRef.current = activeBoard;
+  const [boardGeneration,setBoardGeneration] = useState(0);
+  const [syncLocked,setSyncLocked] = useState(false);
+  const syncLockRef = useRef(false);
+  const pointerActiveRef = useRef(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -92,6 +102,86 @@ export default function App() {
     (patch: Partial<Settings>) => setSettings((s) => ({ ...s, ...patch })),
     [],
   );
+
+  const flushBoards = useCallback(async () => {
+    if(saveTimer.current)clearTimeout(saveTimer.current);
+    await pendingSave.current;
+    for(const [id,board] of [...pendingBoards.current]) {
+      const save=api.boardSave(board);pendingSave.current=save;
+      try { await save; if(pendingBoards.current.get(id)===board)pendingBoards.current.delete(id); }
+      finally { pendingSave.current=Promise.resolve(); }
+    }
+  },[]);
+  useEffect(()=>registerEditorFlush(async()=>{
+    if(syncLockRef.current)throw new Error('主窗口正在保存或同步，请稍后重试');
+    if(pointerActiveRef.current||isEditableTarget(document.activeElement))throw new Error('正在编辑内容，完成本次操作后会自动重试同步');
+    window.dispatchEvent(new CustomEvent('lumen:sync-edit-lock',{detail:true}));
+    try{await flushBoards();}catch(error){window.dispatchEvent(new CustomEvent('lumen:sync-edit-lock',{detail:false}));throw error;}
+  }),[flushBoards]);
+  useEffect(()=>{
+    const start=()=>{pointerActiveRef.current=true;};const end=()=>{pointerActiveRef.current=false;};
+    window.addEventListener('pointerdown',start);window.addEventListener('pointerup',end);window.addEventListener('pointercancel',end);window.addEventListener('blur',end);
+    return()=>{window.removeEventListener('pointerdown',start);window.removeEventListener('pointerup',end);window.removeEventListener('pointercancel',end);window.removeEventListener('blur',end);};
+  },[]);
+  useEffect(()=>{
+    if(!('__TAURI_INTERNALS__' in window))return;
+    let closing=false;let disposed=false;let stop:(()=>void)|undefined;
+    const nativeWindow=getCurrentWindow();
+    void nativeWindow.onCloseRequested(async event=>{
+      if(closing){event.preventDefault();return;}
+      closing=true;
+      // Tauri awaits this handler then destroys the window unless prevented.
+      try{(document.activeElement as HTMLElement|null)?.blur();await Promise.resolve();await flushBoards();}
+      catch(error){event.preventDefault();closing=false;setError(`未能保存当前编辑，窗口保留：${String(error)}`);}
+    }).then(unlisten=>{if(disposed)unlisten();else stop=unlisten;});
+    return()=>{disposed=true;stop?.();};
+  },[flushBoards]);
+  useEffect(()=>{if(phase==='ready')return startForegroundSync();},[phase,root]);
+  useEffect(()=>{
+    const lock=(value:boolean)=>{syncLockRef.current=value;setSyncLocked(value);};
+    const onLock=(event:Event)=>lock(!!(event as CustomEvent<boolean>).detail);
+    let generation=0;
+    const refresh=async()=>{
+      const request=++generation;
+      try {
+        await flushBoards();
+        const projects=await api.projectsList();
+        if(request!==generation)return;
+        setProjects(projects);
+        const current=activeBoardRef.current;
+        if(current) {
+          const project=projects.find(p=>p.id===current.projectId)??null;
+          setActiveProject(project);
+          const boards=project?await api.boardsList(project.id):[];
+          if(request!==generation)return;setBoards(boards);
+          const next=boards.some(b=>b.id===current.id)?await api.boardLoad(current.projectId,current.id):null;
+          if(request!==generation)return;
+          activeBoardRef.current=next;setActiveBoard(next);setBoardGeneration(n=>n+1);
+        }
+      }catch(error){setError(String(error));throw error;}
+    };
+    const unregisterRefresh=registerLibraryRefresh(refresh);
+    const onChanged=()=>{void refresh().catch(()=>{});};
+    window.addEventListener('lumen:sync-edit-lock',onLock);
+    window.addEventListener('lumen:library-changed',onChanged);
+    let disposed=false;const stops:(()=>void)[]=[];
+    if('__TAURI_INTERNALS__' in window)void import('@tauri-apps/api/event').then(async({listen,emit})=>{
+      const add=async(p:Promise<()=>void>)=>{const stop=await p;if(disposed)stop();else stops.push(stop);};
+      await add(listen<{requestId:string}>('lumen://flush-editor',async event=>{
+        let error:string|undefined;
+        if(syncLockRef.current||pointerActiveRef.current||isEditableTarget(document.activeElement))error='主窗口正在操作或同步，请稍后保存';
+        else {lock(true);try{await flushBoards();}catch(e){error=String(e);lock(false);}}
+        await emit('lumen://flush-complete',{requestId:event.payload.requestId,error});
+      }));
+      await add(listen('lumen://release-editor',()=>lock(false)));
+      await add(listen<{fromMain?:boolean;requestId?:string}>('lumen://library-changed',async event=>{
+        if(event.payload?.fromMain)return;
+        let error:string|undefined;try{await refresh();}catch(e){error=String(e);}
+        if(event.payload?.requestId)await emit('lumen://refresh-complete',{requestId:event.payload.requestId,error});
+      }));
+    });
+    return()=>{disposed=true;unregisterRefresh();stops.forEach(stop=>stop());window.removeEventListener('lumen:sync-edit-lock',onLock);window.removeEventListener('lumen:library-changed',onChanged);};
+  },[flushBoards]);
 
   /* 启动：读平台信息 + 配置 */
   useEffect(() => {
@@ -178,6 +268,7 @@ export default function App() {
     (projectId: string, boardId: string, nodeId: string | null) =>
       withBusy(async () => {
         // 若目标项目/白板不是当前的，切过去
+        await flushBoards();
         setActiveBoard((prevBoard) => {
           if (prevBoard && prevBoard.id === boardId) return prevBoard;
           return prevBoard; // 实际加载在下面 async
@@ -237,6 +328,7 @@ export default function App() {
     (projectId: string, boardId: string) =>
       withBusy(async () => {
         // 打开前自动存一份快照（DESIGN §FR-8.4：去重、保留最近 20 份）；失败不阻断打开
+        await flushBoards();
         api.snapshotCreate(projectId, boardId, false).catch(() => {});
         const bf = await api.boardLoad(projectId, boardId);
         setActiveBoard(bf);
@@ -247,17 +339,14 @@ export default function App() {
   /* ── 画布变更：本地即时更新 + 防抖落盘（DESIGN §6.5） ── */
   const onCanvasChange = useCallback(
     (nodes: BoardNode[], edges: BoardEdge[], viewport: Viewport) => {
-      setActiveBoard((prev) => {
-        if (!prev) return prev;
-        const next: BoardFile = { ...prev, nodes, edges, viewport };
-        if (saveTimer.current) clearTimeout(saveTimer.current);
-        saveTimer.current = setTimeout(() => {
-          api.boardSave(next).catch((e) => setError(String(e)));
-        }, 600);
-        return next;
-      });
+      if(syncLockRef.current)return;
+      const prev=activeBoardRef.current;if(!prev)return;
+      const next:BoardFile={...prev,nodes,edges,viewport};
+      activeBoardRef.current=next;setActiveBoard(next);pendingBoards.current.set(next.id,next);
+      if(saveTimer.current)clearTimeout(saveTimer.current);
+      saveTimer.current=setTimeout(()=>{void flushBoards().catch(e=>setError(String(e)));},600);
     },
-    [],
+    [flushBoards],
   );
 
   const withBusy = async (fn: () => Promise<void>) => {
@@ -277,6 +366,7 @@ export default function App() {
     withBusy(async () => {
       const picked = await pickStorageDir();
       if (!picked) return;
+      await flushBoards();
       const cfg = await api.configSetRoot(picked);
       setRoot(cfg.storage_root);
       setActiveProject(null);
@@ -308,7 +398,9 @@ export default function App() {
         if (activeProject?.id === cur.id) setActiveProject({ ...activeProject, name });
       } else if (cur.kind === 'rename-board') {
         if (!activeProject) return;
+        await flushBoards();
         await api.boardRename(activeProject.id, cur.id, name);
+        if(activeBoard?.id===cur.id)setActiveBoard(await api.boardLoad(activeProject.id,cur.id));
         await refreshBoards(activeProject.id);
       }
     });
@@ -609,7 +701,7 @@ export default function App() {
         {/* 画布区：挂 CanvasEngine（M2-2 / M2-3） */}
         {activeBoard ? (
           <BoardCanvas
-            key={activeBoard.id}
+            key={`${activeBoard.id}:${boardGeneration}`}
             board={activeBoard}
             onChange={onCanvasChange}
             edgeStyle={settings.edgeStyle ?? 'curved'}
@@ -628,6 +720,7 @@ export default function App() {
           </main>
         )}
       </div>
+      {syncLocked&&<div className="sync-edit-lock" role="status">正在保存并同步资料…</div>}
 
       {menu && <ContextMenu state={menu} onClose={() => setMenu(null)} />}
       <GlobalSearch open={searchOpen} onClose={() => setSearchOpen(false)} onJump={jumpTo} />
@@ -637,7 +730,7 @@ export default function App() {
         boardId={activeBoard?.id ?? null}
         boardName={activeBoard?.name ?? null}
         onClose={() => setSnapshotOpen(false)}
-        onRestored={(board) => setActiveBoard(board)}
+        onRestored={(board) => {pendingBoards.current.delete(board.id);setActiveBoard(board);setBoardGeneration(n=>n+1);}}
       />
       <ShortcutsHelp open={helpOpen} platform={platform} onClose={() => setHelpOpen(false)} />
       {settingsOpen && (

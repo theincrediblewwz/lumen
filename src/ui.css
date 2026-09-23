@@ -262,3 +262,8 @@
   color: var(--text-secondary);
 }
 
+.sync-settings label { display:grid; gap:5px; margin:10px 0; font-size:13px; }
+.sync-settings input { width:100%; padding:8px; border-radius:6px; border:1px solid var(--border); background:var(--bg-surface); color:inherit; }
+.sync-settings p { font-size:12px; line-height:1.6; }
+.sync-settings pre { max-height:220px; white-space:pre-wrap; overflow:auto; }
+.sync-edit-lock { position:fixed; inset:44px 0 0; z-index:9999; background:rgba(240,240,240,.4); display:flex; align-items:flex-start; justify-content:center; padding:24px; backdrop-filter:blur(1px); font-size:13px; color:#173329; }
