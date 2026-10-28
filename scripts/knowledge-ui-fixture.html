@@ -58,7 +58,14 @@ const fixtureBatch=(args)=>{
 const syntheticSecrets=JSON.parse(sessionStorage.getItem('lumen-fixture-secrets')??'{"apikey.openai":"synthetic-preview-only"}');
 window.__fixtureSecretAccounts=[];window.__fixtureSecretAccess=[];
 window.__fixtureWindowOptions=[];window.__fixtureEvents=[];
-window.__fixtureCatalogRequests=[];window.__fixtureTestRequests=[];window.__fixtureAiRequests=[];window.__fixtureAiCancelled=[];window.__fixtureRetryEvents=[];
+window.__fixtureCatalogRequests=[];window.__fixtureTestRequests=[];window.__fixtureAiRequests=[];window.__fixtureAiCancelled=[];window.__fixtureAiCompleted=[];window.__fixtureRetryEvents=[];
+const streamCompletionGates=new Map();window.__fixtureStreamCompletionGates=streamCompletionGates;
+window.__fixtureReleaseStreamCompletions=()=>{for(const release of [...streamCompletionGates.values()])release();};
+const waitForStreamCompletion=async requestId=>{
+ if(window.__fixtureAiCancelled.includes(requestId))return false;
+ if(window.__fixtureHoldStreamCompletion)await new Promise(resolve=>{streamCompletionGates.set(requestId,()=>{streamCompletionGates.delete(requestId);resolve();});});
+ return !window.__fixtureAiCancelled.includes(requestId);
+};
 const catalogueQuote='Model synthetic-next has a context window of 2097152 tokens and a maximum output of 262144 tokens.';
 const catalogueProposal={schema:'lumen.catalog-proposal/v1',summary:'合成官方样例：新增供应商和两百万上下文模型，等待用户应用。',providers:[{id:'synthetic-next',name:'合成目录供应商',baseUrl:'https://api.example.com/v1',docs:'https://example.com/model-docs',models:[{id:'synthetic-next',window:2097152,output:262144,temperature:1,omitTemperature:true,reasoning:{kind:'effort',levels:['low','high','max'],default:'high'}}],sources:[{url:'https://example.com/model-docs',quote:catalogueQuote}]}]};
 let callbackId=0;const callbacks=new Map(),listeners=new Map();
@@ -179,7 +186,7 @@ window.__TAURI_INTERNALS__={metadata:{currentWindow:{label:'main'},currentWebvie
   if(command==='plugin:event|unlisten'){listeners.delete(args.eventId);return;}
   if(command==='plugin:event|emit_to'||command==='plugin:event|emit'){window.__fixtureEvents.push({event:args.event,payload:args.payload});for(const [id,listener]of listeners)if(listener.event===args.event)callbacks.get(id)?.({event:args.event,id,payload:args.payload});return;}
   if(command.startsWith('plugin:event|'))return 1;
-  if(command==='ai_cancel'){window.__fixtureAiCancelled.push(args.requestId);return;}
+  if(command==='ai_cancel'){window.__fixtureAiCancelled.push(args.requestId);streamCompletionGates.get(args.requestId)?.();return;}
   if(command==='ai_chat_stream'){
     if(!fixtureParams.has('catalogQA')&&!fixtureParams.has('keychainQA')&&!fixtureParams.has('operationsQA')&&!fixtureParams.has('importQA'))throw Error('页面验收禁止 Provider 调用');
     const request=JSON.parse(args.body);window.__fixtureCatalogRequests.push(request);window.__fixtureAiRequests.push({requestId:args.requestId,request});if(window.__fixtureImportNeverReply)return;
@@ -214,12 +221,18 @@ window.__TAURI_INTERNALS__={metadata:{currentWindow:{label:'main'},currentWebvie
     }
     const delta=faithfulDelta??memoryDelta??(fixtureParams.has('retrievalQA')?retrievalDelta:fixtureParams.has('importQA')?{content:JSON.stringify(window.__fixtureImportDeep?{...importPlan,nodes:Array.from({length:window.__fixtureImportCount??32},(_,i)=>({reference:'level'+i,title:'层级 '+i,summary:'继续追问',markdown:'# 第'+i+'层\\n\\n$x_i$',parent:i?'level'+(i-1):null}))}:importPlan)}:fixtureParams.has('operationsQA')?(request.messages.filter(m=>m.role==='tool').length>=(window.__fixtureWriteBatches??1)?{content:'已完成整理。公式 $x_i^2$。'}:request.tools?.some(t=>t.function.name==='apply_board_operations')?{tool_calls:[{index:0,id:'create-synthetic-'+request.messages.filter(m=>m.role==='tool').length,type:'function',function:{name:'apply_board_operations',arguments:JSON.stringify({schema:'lumen.board-operations/v1',operations:[{type:'create_node',reference:'new_topic',title:'AI 生成的方向',parentId:'synthetic-node',markdown:'# 新的理解\n\n公式 $x_i^2$。'}]})}}]}:{content:'当前只读，尚未获得修改授权。'}):fixtureParams.has('keychainQA')?{content:'合成凭据验收通过，未调用真实模型。'}:request.messages.some(m=>m.role==='tool')?{content:JSON.stringify(catalogueProposal)}:{tool_calls:[{index:0,id:'catalog-read',type:'function',function:{name:'catalog_read',arguments:JSON.stringify({url:'https://example.com/model-docs'})}}]});
     if(window.__fixtureTokenDelay&&delta.content){
-      for(const piece of delta.content.match(/.{1,18}/gs)??[]){emitFixture('ai://chunk',{requestId:args.requestId,data:'data: '+JSON.stringify({choices:[{delta:{content:piece}}]})+'\n\n'});await new Promise(r=>setTimeout(r,window.__fixtureTokenDelay));}
+      for(const piece of delta.content.match(/.{1,18}/gs)??[]){if(window.__fixtureAiCancelled.includes(args.requestId))return;emitFixture('ai://chunk',{requestId:args.requestId,data:'data: '+JSON.stringify({choices:[{delta:{content:piece}}]})+'\n\n'});await new Promise(r=>setTimeout(r,window.__fixtureTokenDelay));}
+      if(!await waitForStreamCompletion(args.requestId))return;
       emitFixture('ai://chunk',{requestId:args.requestId,data:'data: '+JSON.stringify({choices:[{delta:{},finish_reason:'stop'}]})+'\n\ndata: [DONE]\n\n'});
+    }else if(window.__fixtureHoldStreamCompletion){
+      emitFixture('ai://chunk',{requestId:args.requestId,data:'data: '+JSON.stringify({choices:[{delta}]})+'\n\n'});
+      if(!await waitForStreamCompletion(args.requestId))return;
+      emitFixture('ai://chunk',{requestId:args.requestId,data:'data: '+JSON.stringify({choices:[{delta:{},finish_reason:delta.tool_calls?'tool_calls':'stop'}]})+'\n\ndata: [DONE]\n\n'});
     }else{
       const data='data: '+JSON.stringify({choices:[{delta,finish_reason:delta.tool_calls?'tool_calls':'stop'}]})+'\n\ndata: [DONE]\n\n';
       emitFixture('ai://chunk',{requestId:args.requestId,data});
     }
+    window.__fixtureAiCompleted.push(args.requestId);
     for(const [id,listener]of [...listeners])if(listener.event==='ai://done')callbacks.get(id)?.({event:listener.event,id,payload:{requestId:args.requestId}});
     return;
   }
