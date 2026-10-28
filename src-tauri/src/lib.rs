@@ -1,9 +1,26 @@
 mod commands;
+mod chat_generation;
+mod chat_history;
 mod ai;
 mod config;
 mod secrets;
+mod local_credentials;
 mod storage;
+mod documents;
+mod portable_documents;
+mod library_package;
+#[cfg(test)]
+mod library_package_tests;
 mod sync;
+mod knowledge;
+mod model_catalog;
+mod board_operations;
+mod conversation_import;
+mod share_reader;
+#[cfg(test)]
+mod native_acl_tests;
+#[cfg(test)]
+mod documents_tests;
 
 /// 应用原生窗口材质（仅 macOS）：
 /// - macOS 26+：Apple 原生 Liquid Glass（NSGlassEffectView）；
@@ -76,9 +93,15 @@ async fn preview_window_open(app: tauri::AppHandle, options: tauri::utils::confi
     { let _ = (app, options); Err("仅隔离预览支持此命令".into()) }
 }
 
+// Keep one macro expansion: on macOS each expansion embeds the Info.plist symbol.
+// Native ACL tests must use the same generated context as the shipping app.
+pub(crate) fn application_context() -> tauri::Context<tauri::Wry> {
+    tauri::generate_context!()
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    let context = tauri::generate_context!();
+    let context = application_context();
     #[cfg(feature = "isolated-preview")]
     let context = {
         let mut context = context;
@@ -88,6 +111,7 @@ pub fn run() {
     };
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
+        .on_window_event(|window,event|{if matches!(event,tauri::WindowEvent::Destroyed){chat_generation::release_owner(window.label());}})
         .setup(|_app| {
             #[cfg(feature = "isolated-preview")]
             {
@@ -107,9 +131,47 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            documents::attachment_source,
+            documents::attachment_attach,
+            documents::document_payload,
+            documents::document_asset_read,
+            documents::document_export,
+            portable_documents::board_package_export,
+            portable_documents::board_package_import,
+            library_package::library_package_export,
+            library_package::library_package_restore,
+            chat_generation::chat_generation_claim,
+            chat_generation::chat_generation_release,
+            chat_generation::chat_generation_validate,
+            chat_history::chat_history_delete,
+            chat_history::chat_history_restore,
+            share_reader::conversation_share_html,
+            share_reader::conversation_share_read,
+            share_reader::conversation_share_cancel,
+            conversation_import::conversation_import_context,
+            conversation_import::conversation_import_apply,
+            board_operations::board_write_policy_get,
+            board_operations::board_write_policy_set,
+            board_operations::board_operations_apply,
+            board_operations::chat_document_attach,
+            board_operations::chat_conversation_upsert,
+            board_operations::board_backups_list,
+            board_operations::board_backup_restore,
+            board_operations::doc_export_markdown,
+            board_operations::chat_transcript_export,
+            model_catalog::model_catalog_load,
+            model_catalog::model_catalog_apply,
+            model_catalog::model_catalog_rollback,
+            model_catalog::model_catalog_web_read,
+            model_catalog::model_catalog_search,
+            model_catalog::ai_connection_test,
             sync::sync_settings_get,
             sync::sync_settings_set,
             sync::sync_snapshot,
+            knowledge::knowledge_load,
+            knowledge::knowledge_save,
+            knowledge::knowledge_export,
+            knowledge::knowledge_import_read,
             sync::reading_position_get,
             sync::reading_position_set,
             sync::sync_apply,

@@ -4,6 +4,19 @@ import test from 'node:test';
 import { classifyContextQuestion, createContextPlan } from '../ai/context-plan';
 import type { ModelLearningContext } from '../ai/model-learning-context';
 
+test('knowledge versions remain exact in the dispatched plan and insufficient budgets stop before dispatch', () => {
+  const source = fixture('解释注意力');
+  source.knowledgeEvidence = [{ entryId: 'personal', revisionId: 'version', title: '我理解的注意力', kind: 'understanding', excerpt: '我的理解原文'.repeat(200), source: '学习时写下', authorship: 'user', truncated: false }];
+  const plan = createContextPlan(source);
+  assert.deepEqual(plan.modelContext.knowledgeEvidence, source.knowledgeEvidence);
+  assert.ok(plan.selected.some(row => row.kind === 'knowledge' && !row.truncated));
+  assert.throws(() => createContextPlan(source, { budget: { contextWindowTokens: 10240 } }), /知识引用.*预算/);
+  source.currentQuestion.text = '仅根据原文总结';
+  assert.deepEqual(createContextPlan(source).modelContext.knowledgeEvidence, []);
+  source.currentQuestion.text = '解释注意力'; source.contentPolicy.value.mode = 'summary'; source.contentPolicy.value.allowOutsideKnowledge = false;
+  assert.deepEqual(createContextPlan(source).modelContext.knowledgeEvidence, []);
+});
+
 function fixture(question: string): ModelLearningContext {
   return {
     mapPurpose: '个人学习图谱。',

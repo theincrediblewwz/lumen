@@ -145,6 +145,7 @@ export const NodeCard = memo(function NodeCard({
       }}
       onClick={(e) => {
         e.stopPropagation();
+        if(e.button!==0||e.ctrlKey)return;
         if (!editing) onOpen(node.id);
       }}
       onContextMenu={(e) => onContextMenu(e, node.id)}
@@ -211,7 +212,3 @@ export const NodeCard = memo(function NodeCard({
     </div>
   );
 });
-
-
-
-

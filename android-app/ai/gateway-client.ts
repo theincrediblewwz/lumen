@@ -66,7 +66,10 @@ export async function requestGraphExpansion(
     const payload = await readJson(response);
     if (!response.ok) {
       const details = getErrorDetails(payload);
-      const message = details.message ?? `AI Gateway 请求失败（HTTP ${response.status}）`;
+      const reason = details.message ?? `AI Gateway 请求失败（HTTP ${response.status}）`;
+      const message = response.status === 400 && context.project.knowledgeReferences?.length
+        ? `知识引用请求未被网关接受：${reason}。请使用支持独立知识库的网关，或在白板中关闭引用后重新发送。`
+        : reason;
       throw new AiGatewayError(
         message,
         details.code ?? `http_${response.status}`,
@@ -103,9 +106,16 @@ function sendExpansionRequest(
       'Content-Type': 'application/json',
       'X-Request-Id': context.requestId,
     },
-    body: JSON.stringify(context),
+    body: JSON.stringify(gatewayRequestContext(context)),
     signal,
   });
+}
+
+// Older strict gateways reject unknown fields even when their value is an empty array.
+export function gatewayRequestContext(context: ExpansionContext): ExpansionContext {
+  if (context.project.knowledgeReferences?.length) return context;
+  const { knowledgeReferences: _unused, ...project } = context.project;
+  return { ...context, project };
 }
 
 async function readJson(response: Response): Promise<unknown> {

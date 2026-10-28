@@ -18,7 +18,9 @@ export type ContextEvidenceKind =
   | 'connection'
   | 'conversation'
   | 'soul'
-  | 'favorite';
+  | 'favorite'
+  | 'knowledge';
+// Independent knowledge is retained separately from mastery and explanation preferences.
 
 export type FutureContextEvidence = {
   id: string;
@@ -47,7 +49,7 @@ export type ContextBudget = {
 
 export type ContextPlanItem = {
   id: string;
-  kind: ContextEvidenceKind;
+  kind: ContextEvidenceKind | 'knowledge';
   title: string;
   provenance: string;
   estimatedTokens: number;
@@ -137,6 +139,7 @@ export function createContextPlan(
       remaining -= candidate.estimatedTokens;
       continue;
     }
+    if (candidate.required && candidate.kind === 'knowledge') throw new Error('必要知识引用超出上下文预算，请减少指定内容后重新预览');
     if (candidate.required && remaining >= 64) {
       const fitted = fitCandidate(candidate, remaining);
       selected.push(fitted);
@@ -212,6 +215,13 @@ function buildCandidates(
       ['本轮问题依附于当前节点'],
     ),
   ];
+
+  const allowKnowledge = !(source.contentPolicy.value.mode === 'summary' && !source.contentPolicy.value.allowOutsideKnowledge) && !SOURCE_BOUND_PATTERN.test(question);
+  for (const ref of allowKnowledge ? source.knowledgeEvidence ?? [] : []) {
+    candidates.push(candidate(`knowledge:${ref.entryId}:${ref.revisionId}`, 'knowledge', ref.title,
+      `知识库 · ${ref.kind} · ${ref.revisionId}`, JSON.stringify(ref), 90, true,
+      ['本题经用户允许或指定的个人参考，保留实际版本'], null));
+  }
 
   if (source.sourceOrPriorUnderstanding) {
     const relevance = relevanceScore(question, source.sourceOrPriorUnderstanding.text);
@@ -324,6 +334,7 @@ function projectModelContext(
   const focusCandidate = selectedById.get('focus');
   return {
     ...source,
+    knowledgeEvidence: (source.knowledgeEvidence ?? []).filter(ref => selectedIds.has(`knowledge:${ref.entryId}:${ref.revisionId}`)),
     sourceOrPriorUnderstanding: selectedIds.has('source') && source.sourceOrPriorUnderstanding
       ? {
         ...source.sourceOrPriorUnderstanding,

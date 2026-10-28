@@ -1,6 +1,8 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import type { BoardNode } from '../api';
 import { DocPreview } from './DocPreview';
+import { MessageCircle } from 'lucide-react';
+import { openAiWindow } from '../ai/aiWindow';
 
 /** 可选的节点颜色标记（左边框色条），null = 默认（用主题强调色） */
 const COLOR_SWATCHES: { id: string | null; label: string; color: string }[] = [
@@ -89,6 +91,7 @@ export function NodePanel({
   guessMath?: boolean;
 }) {
   const [confirmDel, setConfirmDel] = useState(false);
+  const [actionStatus,setActionStatus]=useState('');
   const [importing, setImporting] = useState(false);
   useEffect(() => setConfirmDel(false), [node.id]);
 
@@ -284,6 +287,8 @@ export function NodePanel({
 
       <div className="np-body">
         <div className="np-top">
+        <button type="button" className="btn np-ask" onClick={()=>void openAiWindow({projectId,boardId,boardName:node.title,nodeId:node.id}).catch(e=>setActionStatus(String(e)))}><MessageCircle size={16} strokeWidth={1.7}/> 与 AI 对话</button>
+        {actionStatus && <p className="np-empty" role="status">{actionStatus}</p>}
         <label className="np-label">概括标题</label>
         <GrowArea
           className="np-title"
@@ -330,7 +335,7 @@ export function NodePanel({
           <button
             type="button"
             className="np-doc-add"
-            title="导入 Markdown 文档"
+            title="导入 Markdown、PDF 或 Markdown 图片 ZIP"
             disabled={importing}
             onClick={doImport}
           >
@@ -338,7 +343,7 @@ export function NodePanel({
           </button>
         </label>
         {docCount === 0 ? (
-          <p className="np-empty">暂无关联文档。点「＋ 导入」选择 GPT 导出的 .md，或拖到节点上。</p>
+          <p className="np-empty">将 Markdown、PDF 或含图片的 Markdown ZIP 拖到节点，也可以点「＋ 导入」。</p>
         ) : (
           <div className="np-doc-grid">
             {node.docs.map((d) => (
@@ -374,8 +379,3 @@ export function NodePanel({
     </aside>
   );
 }
-
-
-
-
-

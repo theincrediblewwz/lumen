@@ -1,0 +1,200 @@
+// Actual components, isolated browser context, synthetic native storage, no Provider calls.
+const { createRequire } = require('node:module');
+const { mkdirSync, writeFileSync } = require('node:fs');
+const path = require('node:path');
+const assert = require('node:assert/strict');
+const { chromium, webkit } = createRequire(__filename)(process.env.LSQ_PLAYWRIGHT_MODULE || 'playwright');
+const base = process.env.LSQ_UI_URL || 'http://127.0.0.1:5198';
+const output = path.resolve(process.env.LSQ_UI_EVIDENCE || 'mac-ui-evidence');
+mkdirSync(output, { recursive: true });
+const checks = [], errors = [];
+let browser, page;
+async function shot(page, name) { await page.screenshot({ path: path.join(output, name + '.png'), animations: 'disabled' }); }
+async function theme(page, value) { await page.evaluate(async value => { const { DEFAULT_SETTINGS, applySettings } = await import('/src/settings.ts'); applySettings({ ...DEFAULT_SETTINGS, theme: value, glass: false }, 'macos'); }, value); }
+async function snapshot(page, name) { writeFileSync(path.join(output, name + '-dom.txt'), await page.locator('body').ariaSnapshot()); }
+async function within(page, target) { const b = await target.boundingBox(), v = page.viewportSize(); assert.ok(b && b.x >= 0 && b.y >= 0 && b.x + b.width <= v.width + 1 && b.y + b.height <= v.height + 1, JSON.stringify(b)); }
+async function click(page, target) { await page.locator('body').ariaSnapshot(); await target.click(); }
+async function settings(page) { await click(page, page.getByRole('button', { name: '设置', exact: true })); await page.getByRole('form', { name: 'AI 设置', exact: true }).waitFor(); }
+async function profileState(page) { return page.evaluate(async () => { const { listAiProfiles, loadAiSettings } = await import('/src/ai/aiSettings.ts'); return { profiles: listAiProfiles(), activeId: loadAiSettings().profileId }; }); }
+(async () => {
+  const engine = process.env.LSQ_UI_BROWSER || 'chromium';
+  browser = await (engine === 'webkit' ? webkit : chromium).launch({ headless: true, ...(engine === 'chromium' && process.env.LSQ_UI_CHANNEL ? { channel: process.env.LSQ_UI_CHANNEL } : {}) });
+  const context = await browser.newContext({ viewport: { width: 1280, height: 820 } });
+  page = await context.newPage();
+  page.setDefaultTimeout(10000);
+  page.on('pageerror', e => errors.push(e.message));
+  page.on('console', m => { if (m.type() === 'error') errors.push(m.text()); });
+  const fixture = mode => `${base}/scripts/knowledge-ui-fixture.html?platform=macos&mode=${mode}&project=project&board=board&name=Mac学习白板`;
+  const projects = () => page.locator('.pane-projects .list-item').filter({ hasText: '桌面夹' });
+  const isOpen = () => page.locator('.sidebar').evaluate(el => !el.classList.contains('is-collapsed'));
+  await page.goto(fixture('main') + '&nodes=1'); await page.locator('.titlebar.is-mac').waitFor();
+  await click(page, projects());
+  await click(page, page.locator('.pane-boards .list-item').filter({ hasText: '合成学习白板' }));
+  await page.locator('.node-card').waitFor();
+  await theme(page, 'paper'); await shot(page, '04-after-board');
+  await click(page, projects()); await page.locator('.pane-boards').waitFor({ state: 'detached' });
+  assert.equal(await page.locator('.node-card').count(), 1);
+  await click(page, projects()); await page.locator('.pane-boards').waitFor();
+  await click(page, page.locator('.pane-projects').locator('.pane-head span'));
+  await page.locator('.pane-boards').waitFor({ state: 'detached' });
+  assert.equal(await page.locator('.node-card').count(), 1);
+  await click(page, projects()); await page.locator('.pane-boards').waitFor();
+  checks.push('selected project and project-pane background close only board list; current board stays mounted');
+  let box = await page.locator('.board-canvas-live').boundingBox();
+  await page.mouse.move(box.x + 30, box.y + 500); await page.mouse.down(); await page.mouse.move(box.x + 90, box.y + 510, { steps: 8 }); await page.mouse.up();
+  assert.equal(await isOpen(), true);
+  await click(page, page.locator('.node-card'));
+  assert.equal(await isOpen(), true);
+  const node = await page.locator('.node-card').boundingBox();
+  await page.mouse.move(node.x + 60, node.y + 24); await page.mouse.down(); await page.mouse.move(node.x + 100, node.y + 45, { steps: 8 }); await page.mouse.up();
+  assert.equal(await isOpen(), true);
+  await click(page, page.locator('.canvas-toolbar button:not(:disabled)').last());
+  assert.equal(await isOpen(), true);
+  await page.locator('.board-canvas-live').click({ button: 'right', position: { x: 30, y: 500 } }); await page.locator('.ctx-menu').waitFor();
+  assert.equal(await isOpen(), true); await page.keyboard.press('Escape'); await page.locator('.ctx-menu').waitFor({ state: 'detached' });
+  checks.push('panning, node selection/drag, toolbar and canvas context menu do not close navigation');
+  await page.locator('.board-canvas-live').dblclick({ position: { x: 40, y: 500 } });
+  await page.waitForFunction(() => document.querySelectorAll('.node-card').length === 2);
+  await page.keyboard.press('Escape'); assert.equal(await isOpen(), true);
+  await page.locator('.board-canvas-live').click({ position: { x: 30, y: 430 } });
+  await page.locator('.sidebar.is-collapsed').waitFor({ state: 'attached' });
+  assert.equal(await page.locator('.node-card').count(), 2);
+  await click(page, page.locator('.canvas-toolbar .tb-zoom'));
+  await shot(page, '05-after-canvas-focus');
+  await click(page, page.getByRole('button', { name: '展开侧栏', exact: true })); await page.locator('.pane-projects').waitFor();
+  checks.push('double click still creates node; blank primary click hides both panes and titlebar restores navigation');
+  await click(page, page.getByRole('button', { name: '与 AI 对话', exact: true }));
+  await page.waitForFunction(() => window.__fixtureWindowOptions.length > 0);
+  const options = await page.evaluate(() => window.__fixtureWindowOptions.at(-1));
+  assert.equal(options.width, 1040); assert.equal(options.height, 720); assert.equal(options.decorations, true);
+  checks.push('actual FAB requests landscape native Mac window within synthetic monitor work area with native decorations');
+
+  await page.goto(fixture('ai')); await page.locator('.ai-root.is-mac').waitFor(); await page.setViewportSize({ width: 1040, height: 720 });
+  await click(page, page.getByRole('button', { name: '历史对话', exact: true })); await click(page, page.locator('.ai-history-item'));
+  await page.locator('.ai-msg-assistant').waitFor();
+  for (const value of ['light', 'paper', 'dark']) { await theme(page, value); await shot(page, `06-after-conversation-${value}`); }
+  assert.ok((await page.locator('.ai-msg-assistant').boundingBox()).width <= 780);
+  assert.equal(await page.locator('.ai-titlebar-actions .lucide').count(), 3);
+  assert.equal(await page.locator('.ai-wincontrols').count(), 0);
+  await page.getByRole('textbox', { name: '输入问题' }).fill('保留这个问题，不调用模型。');
+  await settings(page);
+  await click(page, page.getByRole('button', { name: '取消', exact: true }));
+  assert.equal(await page.getByRole('textbox', { name: '输入问题' }).inputValue(), '保留这个问题，不调用模型。');
+  checks.push('landscape conversation uses consistent library icons and bounded line length in three themes; settings return retains question');
+  await settings(page);
+  await page.getByLabel('供应商', { exact: true }).selectOption('deepseek');
+  await page.getByLabel('配置名称', { exact: true }).fill('DeepSeek 学习');
+  await page.getByLabel('API Key', { exact: true }).fill('synthetic-deepseek-key');
+  await page.getByLabel('预设模型', { exact: true }).selectOption('deepseek-v4-pro');
+  await page.getByRole('checkbox', { name: /允许 AI 读取本白板内容/ }).uncheck();
+  await click(page, page.getByRole('button', { name: '推荐参数', exact: true }));
+  assert.equal(await page.getByRole('checkbox', { name: /允许 AI 读取本白板内容/ }).isChecked(), false);
+  const budget = page.getByRole('spinbutton', { name: /上下文预算/ });
+  assert.equal(await budget.inputValue(), '1043456');
+  await budget.fill('999999999'); await budget.press('Tab'); assert.equal(await budget.inputValue(), '1043456');
+  await budget.fill('20000');
+  assert.equal(await page.getByRole('spinbutton', { name: /温度/ }).count(), 0);
+  assert.equal(await page.getByLabel('思考强度', { exact: true }).inputValue(), 'max');
+  await click(page, page.getByRole('button', { name: '保存', exact: true })); await page.locator('.ai-settings').waitFor({ state: 'detached' });
+  const first = (await profileState(page)).activeId;
+  await settings(page); await click(page, page.getByRole('button', { name: '另存为新配置', exact: true }));
+  await page.getByLabel('供应商', { exact: true }).selectOption('mimo');
+  assert.equal(await page.getByLabel('API Key', { exact: true }).inputValue(), '');
+  await page.getByLabel('配置名称', { exact: true }).fill('MiMo 深入研究');
+  await page.getByLabel('API Key', { exact: true }).fill('synthetic-mimo-key');
+  await page.getByLabel('预设模型', { exact: true }).selectOption('mimo-v2.6-flash');
+  await click(page, page.getByRole('button', { name: '保存', exact: true })); await page.locator('.ai-settings').waitFor({ state: 'detached' });
+  const second = (await profileState(page)).activeId;
+  assert.notEqual(first, second);
+  await settings(page); await page.getByLabel('已保存的配置', { exact: true }).selectOption(first);
+  await page.waitForFunction(() => document.querySelector('input[type=password]').placeholder === '已保存，使用时读取');
+  assert.equal(await page.getByLabel('API Key', { exact: true }).inputValue(), '');
+  assert.equal(await page.getByLabel('API 地址', { exact: true }).inputValue(), 'https://api.deepseek.com');
+  assert.equal(await budget.inputValue(), '20000');
+  await click(page, page.getByRole('button', { name: '取消', exact: true }));
+  assert.equal((await profileState(page)).activeId, second);
+  checks.push('named profiles and save-as retain separate compatible-provider credentials; cancel does not activate another profile; recommendations preserve sharing consent');
+  await page.goto(fixture('ai')); await page.locator('.ai-root.is-mac').waitFor(); await settings(page);
+  assert.equal(await page.getByLabel('配置名称', { exact: true }).inputValue(), 'MiMo 深入研究');
+  assert.equal(await page.getByLabel('API Key', { exact: true }).inputValue(), '');
+  assert.equal(await page.getByLabel('API Key', { exact: true }).getAttribute('placeholder'), '已保存，使用时读取');
+  const metadata = JSON.stringify(await profileState(page));
+  assert.ok(!/apiKey|synthetic-mimo-key|synthetic-deepseek-key/.test(metadata));
+  checks.push('reload restores selected profile and deferred key reference without decrypting credentials');
+  for (const id of ['deepseek', 'openai', 'mimo', 'qwen', 'kimi', 'glm']) {
+    await page.getByLabel('供应商', { exact: true }).selectOption(id);
+    assert.ok((await page.getByLabel('API 地址', { exact: true }).inputValue()).startsWith('https://'));
+    assert.ok(Number(await budget.inputValue()) > 500000);
+    assert.ok(await page.getByLabel('预设模型', { exact: true }).locator('option').count() >= 2);
+  }
+  await page.getByLabel('供应商', { exact: true }).selectOption('custom');
+  await page.getByLabel('模型 ID', { exact: true }).fill('my-private-model');
+  await page.getByLabel('模型 ID', { exact: true }).press('Tab');
+  await page.getByLabel('API 地址', { exact: true }).fill('https://synthetic.invalid/v1');
+  await page.getByLabel('API Key', { exact: true }).fill('synthetic-custom-key');
+  await budget.fill('999999999'); await budget.press('Tab');
+  assert.ok(Number(await budget.inputValue()) > 1_000_000 && Number(await budget.inputValue()) < 1_048_576);
+  checks.push('six documented provider presets populate current models/URLs and high bounded budgets; custom model/URL and manual numeric caps work');
+  await click(page, page.getByRole('button', { name: '另存为新配置', exact: true }));
+  await page.getByLabel('配置名称', { exact: true }).fill('自定义网关');
+  await page.getByLabel('模型 ID', { exact: true }).fill('gpt-6-luna');
+  await click(page, page.getByRole('button', { name: '保存', exact: true })); await page.locator('.ai-settings').waitFor({ state: 'detached' });
+  await page.goto(fixture('ai')); await page.locator('.ai-root.is-mac').waitFor(); await settings(page);
+  assert.equal(await page.getByLabel('供应商', { exact: true }).inputValue(), 'custom');
+  assert.equal(await page.getByLabel('模型 ID', { exact: true }).inputValue(), 'gpt-6-luna');
+  assert.equal(await page.getByLabel('API 地址', { exact: true }).inputValue(), 'https://synthetic.invalid/v1');
+  await page.getByLabel('已保存的配置', { exact: true }).selectOption(second);
+  await page.waitForFunction(() => document.querySelector('input[type=password]').placeholder === '已保存，使用时读取');
+  await click(page, page.getByRole('button', { name: '保存', exact: true })); await page.locator('.ai-settings').waitFor({ state: 'detached' });
+  await settings(page);
+  await page.keyboard.press('Escape'); await page.locator('.ai-settings').waitFor({ state: 'detached' });
+  await settings(page);
+  checks.push('custom gateway with a known model ID remains visible/editable after reload; Escape returns from settings');
+  await page.getByLabel('供应商', { exact: true }).selectOption('mimo');
+  await page.getByLabel('API Key', { exact: true }).fill('synthetic-mimo-key');
+  for (const value of ['light', 'paper', 'dark']) for (const [width, height] of [[1040, 720], [520, 600], [380, 420]]) {
+    await page.setViewportSize({ width, height }); await theme(page, value);
+    await within(page, page.getByRole('button', { name: '保存', exact: true }));
+    await within(page, page.getByRole('button', { name: '取消', exact: true }));
+    assert.equal(await page.locator('.ai-root').evaluate(el => el.scrollWidth <= el.clientWidth), true);
+    assert.equal(await page.locator('.ai-settings-scroll').evaluate(el => el.scrollWidth <= el.clientWidth), true);
+    for (const control of await page.locator('.ai-settings select').all()) assert.ok((await control.boundingBox()).height >= 38);
+    if (width === 380) {
+      await budget.scrollIntoViewIfNeeded(); await within(page, budget);
+    }
+    await page.evaluate(() => { document.activeElement?.blur(); document.querySelector('.ai-settings-scroll').scrollTop = 0; });
+    await shot(page, `07-after-settings-${value}-${width}`);
+  }
+  await snapshot(page, '07-after-settings');
+  checks.push('profile and parameter layout reflows in 3 themes at 1040x720, 520x600, 380x420 with fixed visible save/cancel and no horizontal overflow');
+  await page.setViewportSize({ width: 1040, height: 720 });
+  await page.goto(fixture('ai') + '&secretFailure=1'); await page.locator('.ai-root.is-mac').waitFor(); await settings(page);
+  await page.getByLabel('配置名称', { exact: true }).fill('应保存失败');
+  await click(page, page.getByRole('button', { name: '保存', exact: true }));
+  await page.getByRole('alert').waitFor();
+  assert.equal(await page.locator('.ai-settings').count(), 1);
+  const stateAfterFailure = await profileState(page);
+  assert.equal(stateAfterFailure.profiles.find(p => p.id === stateAfterFailure.activeId).name, 'MiMo 深入研究');
+  await shot(page, '08-save-failure-retains-editor');
+  checks.push('native credential failure leaves editor open and original active profile unchanged');
+  const other = await page.context().newPage();
+  await other.goto(fixture('ai')); await other.locator('.ai-root.is-mac').waitFor();
+  const countBefore = (await profileState(page)).profiles.length;
+  const createConcurrent = async (target, name) => target.evaluate(async name => {
+    const { saveAiProfile, DEFAULT_AI_SETTINGS } = await import('/src/ai/aiSettings.ts');
+    const saved = await saveAiProfile({ ...DEFAULT_AI_SETTINGS, apiKey: `synthetic-${name}` }, name);
+    return saved.profileId;
+  }, name);
+  // The existing page has a deliberate keychain fault; use a normal fixture first.
+  await page.goto(fixture('ai')); await page.locator('.ai-root.is-mac').waitFor();
+  const ids = await Promise.all([createConcurrent(page, '并行窗口 A'), createConcurrent(other, '并行窗口 B')]);
+  const afterConcurrent = await profileState(page);
+  assert.equal(afterConcurrent.profiles.length, countBefore + 2);
+  assert.ok(ids.every(id => afterConcurrent.profiles.some(p => p.id === id)));
+  await other.close();
+  checks.push('two independent window contexts save different profiles concurrently without replacing each other in the shared store');
+  assert.deepEqual(errors, []);
+  const report = { environment: `${process.platform}, ${engine}, actual React app and synthetic native bridge`, checks, errors, realProviderCalls: 0, nativeTauriUI: false };
+  writeFileSync(path.join(output, 'mac-ai-refinement-qa.json'), JSON.stringify(report, null, 2) + '\n');
+  console.log(JSON.stringify(report));
+})().catch(async e => { console.error(e); console.error(JSON.stringify(errors)); if (page) { await shot(page, 'qa-failure'); await snapshot(page, 'qa-failure'); } process.exitCode = 1; }).finally(async () => { await browser?.close(); });

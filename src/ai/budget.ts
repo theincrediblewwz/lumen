@@ -3,10 +3,10 @@
  *
  * 目标：把「system 提示词 + 历史消息 + 本轮问题」控制在预算 token 内，
  * 避免超长请求被服务端拒绝或烧钱。策略（本地优先、无网络、可预测）：
- *   1) 单条过长消息先按字符预算硬截断（保留头部，标注省略）。
+ *   1) 当前问题原串保留，无法容纳时由调用方拒绝发送。
  *   2) system 提示词始终保留（含白板大纲，是回答质量的地基）。
  *   3) 从最新往旧保留消息，直到逼近预算；
- *   4) 被挤出的最旧若干条，压缩成一条简短的 system「早前对话摘要」塞回队首，
+ *   4) 被挤出的旧消息以有界原文摘录作为资料附带，
  *      让模型仍知道之前聊过什么，而不是凭空断片。
  */
 
@@ -20,8 +20,7 @@ export const MAX_MSG_TOKENS = 2000;
 export const MIN_BUDGET = 1000;
 
 export function messageTokens(m: ChatMessage): number {
-  // 角色名、分隔符等固定开销粗估 4 token
-  return estimateTokens(m.content || '') + 4;
+  return estimateTokens(JSON.stringify(m)) + 1;
 }
 
 /** 按 token 预算硬截断单条文本，保留头部，尾部加省略标记。 */
@@ -42,18 +41,19 @@ export function truncateToTokens(text: string, maxTokens: number): string {
 }
 
 /** 把一批被挤出的旧消息压缩成一句摘要文本（不调用模型，纯本地拼接）。 */
-export function summarizeDropped(dropped: ChatMessage[]): string {
-  const parts = dropped
-    .filter((m) => m.role === 'user' || m.role === 'assistant')
+export function summarizeDropped(dropped: ChatMessage[], maxTokens=800): string {
+  const eligible=dropped.filter(m=>m.role==='user'||m.role==='assistant');
+  const selected=eligible.length<=12?eligible:[...eligible.slice(0,4),...eligible.slice(-8)];
+  const parts = selected
     .map((m) => {
       const who = m.role === 'user' ? '用户' : '助手';
-      const oneLine = (m.content || '').replace(/\s+/g, ' ').trim();
+      const oneLine = (m.content || '').slice(0,120).replace(/\s+/g, ' ').trim();
       const clipped = oneLine.length > 60 ? oneLine.slice(0, 60) + '…' : oneLine;
       return `${who}：${clipped}`;
     })
     .filter((s) => s.length > 3);
   if (parts.length === 0) return '';
-  return '早前对话摘要（已压缩，供你保持连贯）：\n' + parts.join('\n');
+  return truncateToTokens(`早前对话摘要（仅原文摘录，并非完整语义总结；原记录仍保留，不能据此断言遗漏的事实。共${eligible.length}条）：\n` + parts.join('\n'),maxTokens);
 }
 
 export interface BudgetResult {
@@ -75,8 +75,11 @@ export interface BudgetResult {
 export function fitWithinBudget(
   messages: ChatMessage[],
   budget: number,
+  minimum=MIN_BUDGET,
 ): BudgetResult {
-  const cap = Math.max(MIN_BUDGET, budget);
+  const cap = Math.max(minimum, Number.isFinite(budget)?Math.floor(budget):minimum);
+  const total = messages.reduce((sum, m) => sum + messageTokens(m), 0);
+  if (total <= cap) return { messages: messages.slice(), tokens: total, compressed: false, droppedCount: 0 };
 
   // 分离固定 system 头
   let system: ChatMessage | null = null;
@@ -86,24 +89,22 @@ export function fitWithinBudget(
     rest = messages.slice(1);
   }
 
-  // 1) 单条硬截断
-  const clipped = rest.map((m) =>
-    messageTokens(m) > MAX_MSG_TOKENS
-      ? { ...m, content: truncateToTokens(m.content, MAX_MSG_TOKENS) }
-      : m,
-  );
-
   const systemTokens = system ? messageTokens(system) : 0;
-  let remaining = cap - systemTokens;
+  // Keep the current question byte-for-byte. If it cannot fit, the caller
+  // rejects before sending; a shortened question must never look complete.
+  const latest=rest.at(-1);
+  if(latest&&systemTokens+messageTokens(latest)>cap){const fixed=[...(system?[system]:[]),latest];return {messages:fixed,tokens:fixed.reduce((sum,m)=>sum+messageTokens(m),0),compressed:rest.length>1,droppedCount:Math.max(0,rest.length-1)};}
+  const recapReserve=Math.min(800,Math.floor(cap*.12));
+  let remaining = cap - systemTokens - recapReserve;
 
   // 2) 从最新往旧收集，直到放不下
   const kept: ChatMessage[] = [];
-  let i = clipped.length - 1;
+  let i = rest.length - 1;
   for (; i >= 0; i--) {
-    const t = messageTokens(clipped[i]);
+    const t = messageTokens(rest[i]);
     if (t <= remaining || kept.length === 0) {
       // 至少保留最后一条（本轮问题），哪怕略超也要发，否则无法对话
-      kept.push(clipped[i]);
+      kept.push(rest[i]);
       remaining -= t;
       if (remaining <= 0) {
         i--;
@@ -115,16 +116,16 @@ export function fitWithinBudget(
   }
   kept.reverse();
 
-  const dropped = clipped.slice(0, i + 1);
+  const dropped = rest.slice(0, i + 1);
   const out: ChatMessage[] = [];
   if (system) out.push(system);
 
-  let compressed = false;
+  const compressed = dropped.length>0;
   if (dropped.length > 0) {
-    const summary = summarizeDropped(dropped);
+    const allowance=cap-systemTokens-kept.reduce((sum,m)=>sum+messageTokens(m),0);
+    const summary = allowance>40?summarizeDropped(dropped,allowance-24):'';
     if (summary) {
-      out.push({ role: 'system', content: summary });
-      compressed = true;
+      out.push({ role: 'user', content: summary });
     }
   }
   out.push(...kept);

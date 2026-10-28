@@ -42,3 +42,6 @@ app-example
 /ios
 /android
 /modules/*/android/build/
+
+# Task-owned local build and acceptance artifacts
+/output/

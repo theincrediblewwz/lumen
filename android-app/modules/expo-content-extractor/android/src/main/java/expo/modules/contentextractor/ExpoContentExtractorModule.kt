@@ -18,6 +18,11 @@ class ExpoContentExtractorModule : Module() {
   override fun definition() = ModuleDefinition {
     Name("ExpoContentExtractor")
 
+    AsyncFunction("inspectPdfAsync") { uri:String, token:String -> RichDocuments.inspect(appContext.reactContext ?: throw IllegalStateException("Context unavailable"),uri,token) }
+    Function("cancelDocumentTask") { token:String -> RichDocuments.cancelled.add(token);Unit }
+    AsyncFunction("renderPdfPageAsync") { uri:String,page:Int,width:Int -> RichDocuments.render(appContext.reactContext ?: throw IllegalStateException("Context unavailable"),uri,page,width) }
+    AsyncFunction("sanitizeDocumentHtmlAsync") { html:String,aliases:Map<String,String> -> RichDocuments.sanitize(html,aliases) }
+
     AsyncFunction("extractPdfPagesAsync") { uriValue: String ->
       val context = appContext.reactContext
         ?: throw IllegalStateException("Android context is unavailable")
@@ -52,6 +57,8 @@ class ExpoContentExtractorModule : Module() {
                 if (scannedPages > 80) {
                   throw IllegalArgumentException("Scanned PDF exceeds the 80-page OCR safety limit")
                 }
+                val box=document.getPage(pageNumber-1).cropBox
+                if(box.width.toDouble()*box.height*4>40_000_000 || box.width<=0 || box.height<=0) throw IllegalArgumentException("PDF page exceeds the 40-megapixel rendering budget")
                 val bitmap = renderer.renderImageWithDPI(pageNumber - 1, 144f, ImageType.RGB)
                 try {
                   val pixels = bitmap.width.toLong() * bitmap.height.toLong()

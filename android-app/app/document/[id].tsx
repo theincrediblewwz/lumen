@@ -1,3 +1,7 @@
+import {splitDocument,documentText,withDocumentText,DOCUMENT_PREFIX,type DocumentMetadata} from '@/data/rich-document';
+import {PdfDocumentReader} from '@/components/pdf-document-reader';
+import {RichMarkdownReader} from '@/components/rich-markdown-reader';
+import {exportNodeDocument,legacyPdfMetadata} from '@/data/rich-document-files';
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { router, Stack, useLocalSearchParams, useNavigation } from 'expo-router';
 import { usePreventRemove } from '@react-navigation/native';
@@ -29,21 +33,24 @@ export default function DocumentScreen() {
   const [pickerStart,setPickerStart]=useState<number|null>(null);
   const [document,setDocument]=useState<MarkdownDocument|null>(null);const [body,setBody]=useState('');const [editing,setEditing]=useState(false);const [saving,setSaving]=useState(false);
   const [citations,setCitations]=useState<SourceCitation[]>([]);const [source,setSource]=useState<Awaited<ReturnType<typeof getDocumentDiscussion>>>(null);
+  const [originalView,setOriginalView]=useState(true);const [legacyPdf,setLegacyPdf]=useState<DocumentMetadata|null>(null);
+  useEffect(()=>{let active=true;setLegacyPdf(null);if(document&&!document.body.startsWith(DOCUMENT_PREFIX))void legacyPdfMetadata(db,document.id).then(value=>{if(active)setLegacyPdf(value);}).catch(()=>{});return()=>{active=false;};},[db,document]);
+  const parsed=useMemo(()=>{try{const payload=splitDocument(document?.body??'');return{...payload,attachment:payload.attachment??legacyPdf};}catch{return{markdown:'附件清单损坏，请从完整备份恢复。',attachment:null};}},[document?.body,legacyPdf]);
   const [error,setError]=useState('');const [toc,setToc]=useState(false);const [progress,setProgress]=useState(0);const [ready,setReady]=useState(false);
   const [renderEpoch,setRenderEpoch]=useState(0);
   const list=useRef<FlatList<ReactNode>>(null);const saved=useRef<{anchor:string;ratio:number}|null>(null);const interacted=useRef(false);const restored=useRef(false);
   const restorePlan=useRef<ReadingRestorePlan|null>(null);const frames=useRef(new Map<number,ReadingCellFrame>());const visible=useRef<number[]>([]);const scrollOffset=useRef(0);
   const contentGeneration=useRef(0);const lastGestureAt=useRef(0);const syncCheck=useRef(0);
   const timer=useRef<ReturnType<typeof setTimeout>|null>(null);const retryTimer=useRef<ReturnType<typeof setTimeout>|null>(null);
-  const value=useMemo(()=>appendSourceCitations(document?.body??'',citations),[document?.body,citations]);const blocks=useMemo(()=>readingBlocks(value),[value]);
+  const value=useMemo(()=>appendSourceCitations(parsed.markdown,citations),[parsed.markdown,citations]);const blocks=useMemo(()=>readingBlocks(value),[value]);
   const live=useRef({blocks,db,id,document,citations,source,editing,ready});live.current={blocks,db,id,document,citations,source,editing,ready};
-  usePreventRemove(editing&&body!==document?.body,({data})=>Alert.alert('保留这次编辑？','你的修改尚未保存。',[{text:'继续编辑',style:'cancel'},{text:'放弃修改',style:'destructive',onPress:()=>navigation.dispatch(data.action)}]));
-  useEffect(()=>{let active=true;setReady(false);restored.current=false;interacted.current=false;frames.current.clear();visible.current=[];scrollOffset.current=0;contentGeneration.current++;setRenderEpoch(contentGeneration.current);
+  usePreventRemove(editing&&body!==parsed.markdown,({data})=>Alert.alert('保留这次编辑？','你的修改尚未保存。',[{text:'继续编辑',style:'cancel'},{text:'放弃修改',style:'destructive',onPress:()=>navigation.dispatch(data.action)}]));
+  useEffect(()=>{let active=true;setReady(false);setOriginalView(!parseReadingReference(referenceParam));restored.current=false;interacted.current=false;frames.current.clear();visible.current=[];scrollOffset.current=0;contentGeneration.current++;setRenderEpoch(contentGeneration.current);
     Promise.all([getDocument(db,id),listSourceCitationsForTarget(db,'document',id),getDocumentDiscussion(db,id),db.getFirstAsync<{anchor:string;ratio:number}>('SELECT anchor,ratio FROM reading_positions WHERE id=?',id)]).then(([doc,refs,origin,position])=>{
       if(!active)return;
       const requested=parseReadingReference(referenceParam);
       if(requested&&doc&&requested.projectId!==doc.projectId){setDocument(null);setBody('');setError('引用文档不属于这份资料的白板，保留引用快照。');setReady(true);return;}
-      setDocument(doc);setBody(doc?.body??'');setCitations(refs);setSource(origin);saved.current=position;setProgress(position?.ratio??0);setReady(true);if(!doc)setError('这篇文档不存在或已删除');
+      setDocument(doc);setBody(documentText(doc?.body??''));setCitations(refs);setSource(origin);saved.current=position;setProgress(position?.ratio??0);setReady(true);if(!doc)setError('这篇文档不存在或已删除');
     }).catch(()=>{if(active){setError('无法读取文档');setReady(true);}});return()=>{active=false;restorePlan.current=null;if(timer.current)clearTimeout(timer.current);if(interacted.current&&saved.current)void saveReadingPosition(db,id,saved.current.anchor,saved.current.ratio).catch(()=>undefined);if(retryTimer.current)clearTimeout(retryTimer.current);};
   },[db,id,referenceParam]);
   useEffect(()=>{
@@ -63,7 +70,7 @@ export default function DocumentScreen() {
           stopRestoration();restored.current=false;frames.current.clear();visible.current=[];
           contentGeneration.current++;setRenderEpoch(contentGeneration.current);
         }
-        setDocument(next);setBody(next.body);setCitations(refs);setSource(origin);
+        setDocument(next);setBody(documentText(next.body));setCitations(refs);setSource(origin);
       }).catch(()=>undefined);
     });
     return()=>{active=false;unsubscribe();};
@@ -91,6 +98,11 @@ export default function DocumentScreen() {
     finally{selectionGate.current=false;setSelecting(false);}
   }
   function stopRestoration(){restorePlan.current=null;if(retryTimer.current){clearTimeout(retryTimer.current);retryTimer.current=null;}}
+  function persistPdfPosition(anchor:string,ratio:number){
+    stopRestoration();if(timer.current){clearTimeout(timer.current);timer.current=null;}
+    saved.current={anchor,ratio};interacted.current=true;setProgress(ratio);
+    void saveReadingPosition(db,id,anchor,ratio).catch(()=>setError('阅读位置暂未保存'));
+  }
   function persistIndex(index:number){
     const current=live.current;const block=current.blocks[index];if(!block)return;
     const next={anchor:block.anchor,ratio:index/Math.max(1,current.blocks.length-1)};saved.current=next;setProgress(next.ratio);
@@ -124,8 +136,8 @@ export default function DocumentScreen() {
   const viewChanged=useRef(({viewableItems}:{viewableItems:ViewToken[]})=>{
     visible.current=viewableItems.filter(item=>item.isViewable&&item.index!==null).map(item=>item.index!);updateVisiblePosition();
   }).current;
-  async function save(){if(!document||saving)return;setSaving(true);try{const updatedAt=await saveDocumentRevision(db,id,body,document.updatedAt,document.body);setDocument({...document,body,origin:'learner',updatedAt});setEditing(false);setError('');restored.current=false;}catch(e){setError(e instanceof Error?e.message:'保存失败');}finally{setSaving(false);}}
-  async function saveCopy(){if(!document||saving)return;setSaving(true);try{await createManualNode(db,{projectId:document.projectId,title:document.title.slice(0,145)+' · 编辑副本',body});restored.current=false;setEditing(false);setBody(document.body);Alert.alert('已保存为独立文档与新节点');}catch(e){setError(e instanceof Error?e.message:'副本未保存');}finally{setSaving(false);}}
+  async function save(){if(!document||saving)return;setSaving(true);try{const updatedAt=await saveDocumentRevision(db,id,withDocumentText(document.body,body),document.updatedAt,document.body);setDocument({...document,body:withDocumentText(document.body,body),origin:'learner',updatedAt});setEditing(false);setError('');restored.current=false;}catch(e){setError(e instanceof Error?e.message:'保存失败');}finally{setSaving(false);}}
+  async function saveCopy(){if(!document||saving)return;setSaving(true);try{await createManualNode(db,{projectId:document.projectId,title:document.title.slice(0,145)+' · 编辑副本',body:withDocumentText(document.body,body)});restored.current=false;setEditing(false);setBody(parsed.markdown);Alert.alert('已保存为独立文档与新节点');}catch(e){setError(e instanceof Error?e.message:'副本未保存');}finally{setSaving(false);}}
   if(!ready)return <View style={{flex:1,justifyContent:'center'}}><ActivityIndicator color={colors.ink}/></View>;
   if(!document)return <ScrollView contentContainerStyle={{padding:20,gap:14}}><Text style={{color:colors.coral}}>{error}</Text>{reference?<><Text style={{color:colors.inkMuted}}>{referenceNotice||'原文已不可用，引用快照仍保留。'}</Text><Text style={{fontWeight:'700',color:colors.ink}}>{reference.title}</Text><Text selectable style={{color:colors.ink,lineHeight:26}}>{reference.quote}</Text></>:null}</ScrollView>;
   return <KeyboardAvoidingView behavior={process.env.EXPO_OS==='ios'?'padding':undefined} style={{flex:1,backgroundColor:colors.canvas}}>
@@ -134,20 +146,21 @@ export default function DocumentScreen() {
     {editing?<ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={{padding:18,gap:12,paddingBottom:insets.bottom+24}}>
       <TextInput accessibilityLabel="Markdown 源码" value={body} onChangeText={setBody} multiline textAlignVertical="top" style={{minHeight:500,padding:16,borderRadius:radii.large,backgroundColor:colors.surfaceStrong,color:colors.ink,lineHeight:25,fontSize:16}}/>
       <WorkspaceButton label="另存为新文档与节点" secondary disabled={saving} onPress={()=>void saveCopy()}/>
-      <WorkspaceButton label="取消编辑" secondary disabled={saving} onPress={()=>Alert.alert('放弃未保存修改？','原文会保留。',[{text:'继续编辑',style:'cancel'},{text:'放弃修改',onPress:()=>{restored.current=false;setBody(document.body);setEditing(false);}}])}/>
+      <WorkspaceButton label="取消编辑" secondary disabled={saving} onPress={()=>Alert.alert('放弃未保存修改？','原文会保留。',[{text:'继续编辑',style:'cancel'},{text:'放弃修改',onPress:()=>{restored.current=false;setBody(parsed.markdown);setEditing(false);}}])}/>
     </ScrollView>:<>
       <View style={{paddingHorizontal:18,paddingVertical:8,gap:6}}>
-        <View style={{flexDirection:'row',justifyContent:'space-between',alignItems:'center'}}><Pressable accessibilityRole="button" onPress={()=>setToc(true)} style={{padding:12}}><Text style={{color:colors.blue}}>目录</Text></Pressable><Text style={{color:colors.inkMuted,fontSize:12}}>已读 {Math.round(progress*100)}%</Text><Pressable accessibilityRole="button" accessibilityLabel="阅读操作" onPress={()=>Alert.alert('阅读操作','长按文字可解释、举例或追问；公式和跨段内容可用“引用段落”。',[{text:'引用段落',onPress:()=>setPicking(true)},{text:'取消',style:'cancel'}])} style={{padding:12,minHeight:44}}><Text style={{color:colors.ink,fontSize:20}}>···</Text></Pressable></View>
+        <View style={{flexDirection:'row',gap:8}}>{parsed.attachment?<WorkspaceButton label={originalView?'原版 · 切换文字':'文字 · 切换原版'} secondary onPress={()=>setOriginalView(v=>!v)}/>:null}<WorkspaceButton label="导出文档" secondary onPress={()=>void exportNodeDocument(legacyPdf?DOCUMENT_PREFIX+JSON.stringify(legacyPdf)+'\n-->\n\n'+document.body:document.body,document.title).catch(e=>setError(e.message))}/></View>
+        <View style={{flexDirection:'row',justifyContent:'space-between',alignItems:'center'}}><Pressable accessibilityRole="button" onPress={()=>{setOriginalView(false);setToc(true);}} style={{padding:12}}><Text style={{color:colors.blue}}>目录</Text></Pressable><Text style={{color:colors.inkMuted,fontSize:12}}>{parsed.attachment&&originalView?'原版阅读':`已读 ${Math.round(progress*100)}%`}</Text><Pressable accessibilityRole="button" accessibilityLabel="阅读操作" onPress={()=>Alert.alert('阅读操作','长按文字可解释、举例或追问；公式和跨段内容可用“引用段落”。',[{text:'引用段落',onPress:()=>{setOriginalView(false);setPicking(true);}},{text:'存入知识库',onPress:()=>router.push({pathname:'/knowledge-library',params:{fromDocumentId:document.id}})},{text:'取消',style:'cancel'}])} style={{padding:12,minHeight:44}}><Text style={{color:colors.ink,fontSize:20}}>···</Text></Pressable></View>
         {referenceNotice?<View style={{padding:10,backgroundColor:colors.blueSoft,borderRadius:12,gap:6}}><Text style={{color:colors.inkMuted}}>{referenceNotice}</Text>{!highlighted&&reference?<Text selectable style={{color:colors.ink,lineHeight:23}}>{reference.quote}</Text>:null}<Pressable accessibilityRole="button" onPress={()=>{setReferenceNotice('');setHighlighted(null);}} style={{paddingVertical:8}}><Text style={{color:colors.blue}}>收起引用提示</Text></Pressable></View>:null}
-        {source?.conversation_id?<WorkspaceButton label="回到原始讨论" secondary onPress={()=>router.push({pathname:'/discussion',params:{conversationId:source.conversation_id!}})}/>:source?.source_answer_id?<WorkspaceButton label="查看原始回答" secondary onPress={()=>router.push({pathname:'/answer/[id]',params:{id:source.source_answer_id!}})}/>:null}
+        {source?.conversation_id?<WorkspaceButton label="回到来源消息" secondary onPress={()=>router.push({pathname:'/discussion',params:{conversationId:source.conversation_id!,sourceMessageIds:source.message_ids_json}})}/>:source?.source_answer_id?<WorkspaceButton label="查看原始回答" secondary onPress={()=>router.push({pathname:'/answer/[id]',params:{id:source.source_answer_id!}})}/>:null}
       </View>
-      <MarkdownContent key={`${id}:${renderEpoch}`} value={value} highlightedBlocks={highlighted} onSelectionAction={(index,event)=>void quoteSelection(index,index,event.action,event)} onBlockLayout={(index,frame)=>{if(renderEpoch!==contentGeneration.current)return;if(frame)frames.current.set(index,frame);else frames.current.delete(index);}}
+      {parsed.attachment&&originalView?<View style={{flex:1}}>{parsed.attachment.kind==='pdf'?<PdfDocumentReader key={`${document.id}:${parsed.attachment.original.sha256}`} documentId={document.id} metadata={parsed.attachment} onPosition={persistPdfPosition}/>:<RichMarkdownReader raw={document.body} metadata={parsed.attachment}/>}</View>:<MarkdownContent key={`${id}:${renderEpoch}`} value={value} localTextOnly={!!parsed.attachment} highlightedBlocks={highlighted} onSelectionAction={(index,event)=>void quoteSelection(index,index,event.action,event)} onBlockLayout={(index,frame)=>{if(renderEpoch!==contentGeneration.current)return;if(frame)frames.current.set(index,frame);else frames.current.delete(index);}}
         listProps={{ref:list,onLayout:restore,onContentSizeChange:restore,onTouchStart:manualInteraction,onScrollBeginDrag:manualInteraction,
           onScroll:event=>{scrollOffset.current=event.nativeEvent.contentOffset.y;if(interacted.current&&!restorePlan.current)lastGestureAt.current=Date.now();updateVisiblePosition();},scrollEventThrottle:80,
           onViewableItemsChanged:viewChanged,viewabilityConfig:{itemVisiblePercentThreshold:1},onScrollToIndexFailed:info=>{
             const plan=restorePlan.current;if(!plan||plan.index!==info.index)return;
             list.current?.scrollToOffset({offset:Math.max(0,info.averageItemLength*info.index),animated:false});
-          }}}/>
+          }}}/>}
     </>}
     {picking?<ReadingBlockPicker body={document.body} initialIndex={pickerStart??firstReadingIndex(visible.current,frames.current,scrollOffset.current)??0} busy={selecting} onClose={()=>{setPicking(false);setPickerStart(null);}} onChoose={(start,end,action)=>void quoteSelection(start,end,action)}/>:null}
     <Modal visible={toc} transparent animationType="slide" onRequestClose={()=>setToc(false)}><View style={{flex:1,backgroundColor:'rgba(0,0,0,0.25)',justifyContent:'flex-end'}}><View style={{maxHeight:'80%',backgroundColor:colors.surfaceStrong,padding:18,paddingBottom:18+insets.bottom,gap:10,borderTopLeftRadius:24,borderTopRightRadius:24}}><Text style={{fontSize:20,fontWeight:'700',color:colors.ink}}>目录</Text><ScrollView>{blocks.filter(b=>b.heading).map(block=><Pressable key={block.anchor} accessibilityRole="button" onPress={()=>{setToc(false);jump(block.index,true);}} style={{minHeight:48,paddingVertical:12,paddingLeft:(block.depth-1)*12}}><Text style={{color:colors.ink,fontSize:16}}>{block.heading}</Text></Pressable>)}{blocks.every(b=>!b.heading)?<Text style={{color:colors.inkMuted,padding:12}}>文档暂无 Markdown 标题</Text>:null}</ScrollView><WorkspaceButton label="关闭目录" secondary onPress={()=>setToc(false)}/></View></View></Modal>

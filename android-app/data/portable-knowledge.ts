@@ -1,5 +1,9 @@
+import {remapFormalLinks} from './formal-links';
 import type { SQLiteDatabase } from 'expo-sqlite';
+import {documentAssets} from './rich-document';
 import { remapReadingReferences } from './reading-reference';
+import { copyKnowledgeLibrary, remapKnowledgeValue, scopedKnowledgeLibrary, validateKnowledgeLibrary, emptyKnowledgeLibrary, type KnowledgeLibrary } from './knowledge-library-core';
+import { loadKnowledgeLibrary, mapKnowledgeBoards, writeKnowledgeLibraryRows } from './knowledge-library';
 
 import { insertNodeAnswerInTransaction } from '@/data/node-answers';
 import { exportPortableFusion, importPortableFusion, validatePortableFusion, type PortableFusion } from './portable-fusion';
@@ -14,11 +18,12 @@ import type {
   ProjectContentPolicy,
   SourceItemKind,
   MasteryAttempt,
+  ReviewEventRecord,
   GraphMutationBatch,
 } from '@/types/domain';
 
 export const PORTABLE_FORMAT = 'learnstuff-graph' as const;
-export const PORTABLE_VERSION = 3 as const;
+export const PORTABLE_VERSION = 5 as const;
 export const MAX_MARKDOWN_FILES = 120;
 export const MAX_MARKDOWN_FILE_CHARS = 1_000_000;
 export const MAX_MARKDOWN_TOTAL_CHARS = 12_000_000;
@@ -31,6 +36,7 @@ const MAX_ANSWERS = 500;
 const MAX_SOURCE_ITEMS = 500;
 const MAX_SOURCE_SEGMENTS = 5_000;
 const MAX_MASTERY_ATTEMPTS = 5_000;
+const MAX_REVIEW_EVENTS = 5_000;
 const MAX_GRAPH_BATCHES = 2_000;
 const MAX_SOURCE_CITATIONS = 20_000;
 
@@ -38,7 +44,7 @@ export type ImportedMarkdownFile = { relativePath: string; body: string };
 
 export type PortableGraphManifest = {
   format: typeof PORTABLE_FORMAT;
-  version: 1 | 2 | typeof PORTABLE_VERSION;
+  version: 1 | 2 | 3 | 4 | typeof PORTABLE_VERSION;
   exportedAt: string;
   project: {
     id: string;
@@ -106,6 +112,7 @@ export type PortableGraphManifest = {
     }>;
   }>;
   masteryAttempts?: Array<Omit<MasteryAttempt, 'projectId'>>;
+  reviewEvents?: Array<Omit<ReviewEventRecord, 'projectId'>>;
   graphMutationBatches?: Array<Omit<GraphMutationBatch, 'projectId'>>;
   sourceCitations?: Array<{
     id: string;
@@ -117,6 +124,7 @@ export type PortableGraphManifest = {
     createdAt: string;
   }>;
   fusion?: PortableFusion;
+  knowledgeLibrary?: KnowledgeLibrary;
 };
 
 type DocumentRow = PortableGraphManifest['documents'][number] & { project_id?: string };
@@ -124,6 +132,7 @@ type DocumentRow = PortableGraphManifest['documents'][number] & { project_id?: s
 export async function createPortableManifest(
   db: SQLiteDatabase,
   projectId: string,
+  includeKnowledge = true,
 ): Promise<PortableGraphManifest> {
   const project = await db.getFirstAsync<{
     id: string; topic_id: string | null; title: string; source_text: string; created_at: string; updated_at: string; layout_direction: LayoutDirection;
@@ -139,6 +148,7 @@ export async function createPortableManifest(
     sourceItems,
     sourceSegments,
     masteryAttempts,
+    reviewEvents,
     graphBatches,
     sourceCitations,
   ] = await Promise.all([
@@ -175,6 +185,11 @@ export async function createPortableManifest(
       decision: MasteryAttempt['decision']; created_at: string;
     }>('SELECT id, node_id, question, learner_answer, reference_points, decision, created_at FROM mastery_attempts WHERE project_id = ? ORDER BY created_at, id', projectId),
     db.getAllAsync<{
+      id: string; node_id: string; document_id: string; document_hash: string; session_id: string;
+      question: string; learner_answer: string; reference_points: string;
+      rating: ReviewEventRecord['rating']; created_at: string; due_at: string;
+    }>('SELECT id,node_id,document_id,document_hash,session_id,question,learner_answer,reference_points,rating,created_at,due_at FROM review_events WHERE project_id=? ORDER BY created_at,id', projectId),
+    db.getAllAsync<{
       id: string; selection_id: string; job_id: string; answer_id: string; status: GraphMutationBatch['status'];
       created_node_ids_json: string; created_edge_ids_json: string; created_document_ids_json: string;
       committed_at: string; undone_at: string | null;
@@ -187,7 +202,7 @@ export async function createPortableManifest(
       source_item_id: string; locator: string; quote: string; created_at: string;
     }>('SELECT id, target_type, target_id, source_item_id, locator, quote, created_at FROM source_citations WHERE project_id = ? ORDER BY created_at, id', projectId),
   ]);
-  return validatePortableManifest({
+  const manifest = validatePortableManifest({
     format: PORTABLE_FORMAT,
     version: PORTABLE_VERSION,
     exportedAt: new Date().toISOString(),
@@ -293,6 +308,13 @@ export async function createPortableManifest(
       decision: attempt.decision,
       createdAt: attempt.created_at,
     })),
+    reviewEvents: reviewEvents.map(event => ({
+      id: event.id, nodeId: event.node_id, documentId: event.document_id,
+      documentHash: event.document_hash, sessionId: event.session_id,
+      question: event.question, learnerAnswer: event.learner_answer,
+      referencePoints: event.reference_points, rating: event.rating,
+      createdAt: event.created_at, dueAt: event.due_at,
+    })),
     graphMutationBatches: graphBatches.map((batch) => ({
       id: batch.id,
       selectionId: batch.selection_id,
@@ -315,6 +337,9 @@ export async function createPortableManifest(
       createdAt: citation.created_at,
     })),
   });
+  manifest.knowledgeLibrary = includeKnowledge ? scopedKnowledgeLibrary(await loadKnowledgeLibrary(db), projectId,
+    [...manifest.documents.map(row => row.body), ...(manifest.answers ?? []).map(row => row.body), ...(manifest.fusion?.messages ?? []).map(row => row.body)]) : emptyKnowledgeLibrary();
+  return validatePortableManifest(manifest);
 }
 
 export function parsePortableManifest(raw: string): PortableGraphManifest {
@@ -330,8 +355,8 @@ export function parsePortableManifest(raw: string): PortableGraphManifest {
 
 export function validatePortableManifest(value: unknown): PortableGraphManifest {
   const manifest = record(value, '图谱清单');
-  if (manifest.format !== PORTABLE_FORMAT || (manifest.version !== 1 && manifest.version !== 2 && manifest.version !== PORTABLE_VERSION)) {
-    throw new Error('不是受支持的 LearnStuff 图谱格式 v1/v2/v3');
+  if (manifest.format !== PORTABLE_FORMAT || ![1, 2, 3, 4, PORTABLE_VERSION].includes(Number(manifest.version))) {
+    throw new Error('不是受支持的 LearnStuff 图谱格式 v1/v2/v3/v4');
   }
   const project = record(manifest.project, '项目信息');
   const rawContentPolicy = project.contentPolicy === undefined
@@ -358,7 +383,7 @@ export function validatePortableManifest(value: unknown): PortableGraphManifest 
       id: shortString(row.id, '文档 ID', 160),
       path: safeRelativePath(shortString(row.path, '文档路径', 500)),
       title: shortString(row.title, '文档标题', 300),
-      body: bodyString(row.body, '文档正文'),
+      body: optionalBodyString(row.body, '文档正文'),
       origin: oneOf(row.origin, ['source', 'ai', 'learner'] as const, '文档来源'),
       createdAt: shortString(row.createdAt, '文档创建时间', 80),
       updatedAt: shortString(row.updatedAt, '文档更新时间', 80),
@@ -439,7 +464,7 @@ export function validatePortableManifest(value: unknown): PortableGraphManifest 
     const extractionStatus = row.extractionStatus === undefined
       ? 'ready'
       : oneOf(row.extractionStatus, ['ready', 'processing', 'failed'] as const, '资料提取状态');
-    if (extractionStatus === 'ready' && !segments.length) throw new Error(`资料来源 ${index + 1} 没有片段`);
+    if (extractionStatus === 'ready' && !segments.length && !documents.some(doc=>documentAssets(doc.body).some(asset=>asset.sha256===row.contentHash&&asset.size===row.byteSize&&asset.media_type===row.mediaType))) throw new Error(`资料来源 ${index + 1} 没有片段`);
     unique(segments.map((segment) => String(segment.ordinal)), `资料来源 ${index + 1} 片段顺序`);
     return {
       id: shortString(row.id, '资料来源 ID', 160),
@@ -469,6 +494,27 @@ export function validatePortableManifest(value: unknown): PortableGraphManifest 
       referencePoints: bodyString(row.referencePoints, '掌握参考要点'),
       decision: oneOf(row.decision, ['passed', 'continue_learning'] as const, '掌握决定'),
       createdAt: shortString(row.createdAt, '掌握记录时间', 80),
+    };
+  });
+  const reviewEvents = array(manifest.reviewEvents ?? [], '复习记录', MAX_REVIEW_EVENTS).map((item, index) => {
+    const row = record(item, `复习记录 ${index + 1}`);
+    const createdAt = shortString(row.createdAt, '复习时间', 80);
+    const dueAt = shortString(row.dueAt, '下次回顾时间', 80);
+    const rating = oneOf(row.rating, ['remembered', 'fuzzy', 'forgotten', 'deferred'] as const, '复习自评');
+    if (!Number.isFinite(Date.parse(createdAt)) || !Number.isFinite(Date.parse(dueAt))) throw new Error('复习记录的时间无效');
+    return {
+      id: shortString(row.id, '复习记录 ID', 160),
+      nodeId: shortString(row.nodeId, '复习节点 ID', 160),
+      documentId: shortString(row.documentId, '复习文档 ID', 160),
+      documentHash: shortString(row.documentHash, '复习文档指纹', 160),
+      sessionId: shortString(row.sessionId, '复习批次 ID', 160),
+      question: shortString(row.question, '复习问题', 4_000),
+      learnerAnswer: rating === 'deferred'
+        ? optionalBodyString(row.learnerAnswer, '复习回答')
+        : bodyString(row.learnerAnswer, '复习回答'),
+      referencePoints: bodyString(row.referencePoints, '复习参考'),
+      rating,
+      createdAt, dueAt,
     };
   });
   const graphMutationBatches = array(manifest.graphMutationBatches ?? [], '图谱修改批次', MAX_GRAPH_BATCHES).map((item, index) => {
@@ -507,6 +553,8 @@ export function validatePortableManifest(value: unknown): PortableGraphManifest 
   unique(answers.map((item) => item.id), '全部回答 ID');
   unique(sourceItems.map((item) => item.id), '资料来源 ID');
   unique(masteryAttempts.map((item) => item.id), '掌握记录 ID');
+  unique(reviewEvents.map((item) => item.id), '复习记录 ID');
+  unique(reviewEvents.map((item) => `${item.sessionId}\u0000${item.nodeId}`), '复习批次与节点');
   unique(graphMutationBatches.map((item) => item.id), '图谱批次 ID');
   unique(sourceCitations.map((item) => item.id), '资料引用 ID');
   const documentIds = new Set(documents.map((item) => item.id));
@@ -526,6 +574,7 @@ export function validatePortableManifest(value: unknown): PortableGraphManifest 
   for (const attempt of masteryAttempts) {
     if (!nodeIds.has(attempt.nodeId)) throw new Error(`掌握记录 ${attempt.id} 的节点不存在`);
   }
+  for (const event of reviewEvents) if (!nodeIds.has(event.nodeId)) throw new Error(`复习记录 ${event.id} 的节点不存在`);
   for (const batch of graphMutationBatches) {
     if (!nodeIds.has(batch.selectionId)) throw new Error(`图谱批次 ${batch.id} 的选择节点不存在`);
     if (!answerIds.has(batch.answerId)) throw new Error(`图谱批次 ${batch.id} 的回答不存在`);
@@ -546,8 +595,10 @@ export function validatePortableManifest(value: unknown): PortableGraphManifest 
           : documentIds.has(citation.targetId);
     if (!targetExists) throw new Error(`资料引用 ${citation.id} 的目标不存在`);
   }
-  const fusion = manifest.version === 3 || manifest.fusion !== undefined
+  const fusion = manifest.version === 3 || manifest.version === 4 || manifest.version === 5 || manifest.fusion !== undefined
     ? validatePortableFusion(manifest.fusion, { nodes: nodeIds, documents: documentIds, answers: answerIds, edges: edgeIds }) : undefined;
+  const knowledgeLibrary = manifest.knowledgeLibrary === undefined ? undefined : validateKnowledgeLibrary(manifest.knowledgeLibrary);
+  if (knowledgeLibrary && (knowledgeLibrary.bindings.some(row => row.project_id !== project.id || row.node_id && !nodeIds.has(row.node_id)) || knowledgeLibrary.settings.some(row => row.project_id !== project.id))) throw new Error('便携知识引用不属于当前白板');
   if (fusion?.graphKind !== 'free') assertPrerequisiteAcyclic(nodes.map((node) => node.id), edges);
   const total = documents.reduce((sum, item) => sum + item.body.length, 0)
     + savedAnswers.reduce((sum, item) => sum + item.body.length, 0)
@@ -555,7 +606,9 @@ export function validatePortableManifest(value: unknown): PortableGraphManifest 
       sum + item.segments.reduce((segmentSum, segment) => segmentSum + segment.body.length, 0)
     ), 0)
     + masteryAttempts.reduce((sum, item) => sum + item.learnerAnswer.length + item.referencePoints.length, 0)
-    + (fusion?.messages.reduce((sum, item) => sum + item.body.length, 0) ?? 0);
+    + reviewEvents.reduce((sum, item) => sum + item.question.length + item.learnerAnswer.length + item.referencePoints.length, 0)
+    + (fusion?.messages.reduce((sum, item) => sum + item.body.length, 0) ?? 0)
+    + (knowledgeLibrary ? JSON.stringify(knowledgeLibrary).length : 0);
   if (total > MAX_MANIFEST_CHARS) throw new Error('图谱 Markdown 总内容超过 24 MB 上限');
   if (!nodes.length && fusion?.graphKind !== 'free') throw new Error('图谱至少需要一个节点');
   return {
@@ -581,9 +634,11 @@ export function validatePortableManifest(value: unknown): PortableGraphManifest 
     answers,
     sourceItems,
     masteryAttempts,
+    reviewEvents,
     graphMutationBatches,
     sourceCitations,
     fusion,
+    knowledgeLibrary,
   };
 }
 
@@ -603,8 +658,12 @@ export async function importPortableManifest(db: SQLiteDatabase, manifest: Porta
 export async function importPortableManifestWithMapping(
   db: SQLiteDatabase,
   manifest: PortableGraphManifest,
+  sourceAssetUris: ReadonlyMap<string, string> = new Map(),
+  sharedKnowledgeCopy?: ReturnType<typeof copyKnowledgeLibrary>,
 ): Promise<PortableImportMapping> {
-  const checked = validatePortableManifest(manifest);
+  const parsed = validatePortableManifest(manifest);
+  const knowledgeCopy = sharedKnowledgeCopy ?? (parsed.knowledgeLibrary ? copyKnowledgeLibrary(parsed.knowledgeLibrary) : undefined);
+  const checked = knowledgeCopy ? remapKnowledgeValue(parsed, knowledgeCopy.entryIds, knowledgeCopy.revisionIds) : parsed;
   const projectId = createId('project');
   const documentIds = new Map(checked.documents.map((document) => [document.id, createId('doc')]));
   const nodeIds = new Map(checked.nodes.map((node) => [node.id, createId('node')]));
@@ -612,6 +671,13 @@ export async function importPortableManifestWithMapping(
   const allAnswers = checked.answers ?? checked.savedAnswers.map((answer) => ({ ...answer, saved: true }));
   const answerIds = new Map(allAnswers.map((answer) => [answer.id, createId('answer')]));
   const sourceItemIds = new Map((checked.sourceItems ?? []).map((source) => [source.id, createId('source')]));
+  for (const [sourceId, uri] of sourceAssetUris) {
+    if (!sourceItemIds.has(sourceId) || !/^file:\/\/.*\/sync-blobs\/[a-f0-9]{64}$/u.test(uri)) throw new Error('恢复原件的来源或本机路径无效');
+  }
+  for(const document of checked.documents)for(const ref of documentAssets(document.body)){const source=(checked.sourceItems??[]).find(source=>source.contentHash===ref.sha256&&source.byteSize===ref.size&&source.mediaType===ref.media_type&&sourceAssetUris.get(source.id)?.endsWith(`/sync-blobs/${ref.sha256}`));if(!source)throw new Error('资料包缺少已校验的图文或PDF原件，尚未创建副本');}
+  const conversationIds=new Map((checked.fusion?.conversations??[]).map(row=>[row.id,createId('chat')]));
+  const messageIds=new Map((checked.fusion?.messages??[]).map(row=>[row.id,createId('msg')]));
+  const formalIds=new Map([...documentIds,...nodeIds,...conversationIds,...messageIds]);
   const now = new Date().toISOString();
   await db.withExclusiveTransactionAsync(async (transaction) => {
     await transaction.runAsync(
@@ -633,7 +699,7 @@ export async function importPortableManifestWithMapping(
     for (const document of checked.documents) {
       await transaction.runAsync(
         'INSERT INTO documents (id, project_id, path, title, body, origin, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
-        documentIds.get(document.id)!, projectId, document.path, document.title, remapReadingReferences(document.body, checked.project.id, projectId, documentIds), document.origin,
+        documentIds.get(document.id)!, projectId, document.path, document.title, remapFormalLinks(remapReadingReferences(document.body, checked.project.id, projectId, documentIds),formalIds,projectId), document.origin,
         document.createdAt, document.updatedAt,
       );
     }
@@ -707,6 +773,13 @@ export async function importPortableManifestWithMapping(
         );
       }
     }
+    for (const [sourceId, uri] of sourceAssetUris) {
+      const result = await transaction.runAsync(
+        'UPDATE source_items SET asset_uri=? WHERE id=? AND project_id=?',
+        uri, sourceItemIds.get(sourceId)!, projectId,
+      );
+      if (result.changes !== 1) throw new Error('恢复原件未能挂载到来源');
+    }
     for (const attempt of checked.masteryAttempts ?? []) {
       await transaction.runAsync(
         `INSERT INTO mastery_attempts (
@@ -779,7 +852,20 @@ export async function importPortableManifestWithMapping(
         citation.createdAt,
       );
     }
-    await importPortableFusion(transaction, checked.fusion, { projectId, sourceProjectId: checked.project.id, documentIds, nodeIds, answerIds, edgeIds }, createId);
+    for (const event of checked.reviewEvents ?? []) {
+      await transaction.runAsync(
+        `INSERT INTO review_events (
+          id,project_id,node_id,document_id,document_hash,session_id,question,
+          learner_answer,reference_points,rating,created_at,due_at
+        ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`,
+        createId('review'), projectId, nodeIds.get(event.nodeId)!,
+        documentIds.get(event.documentId) ?? createId('missing-document'),
+        event.documentHash, event.sessionId, event.question, event.learnerAnswer,
+        event.referencePoints, event.rating, event.createdAt, event.dueAt,
+      );
+    }
+    await importPortableFusion(transaction, checked.fusion, { projectId, sourceProjectId: checked.project.id, documentIds, nodeIds, answerIds, edgeIds, conversationIds, messageIds }, createId);
+    if (knowledgeCopy && !sharedKnowledgeCopy) await writeKnowledgeLibraryRows(transaction, mapKnowledgeBoards(knowledgeCopy.library, new Map([[checked.project.id, projectId]]), nodeIds));
   });
   return {
     projectId,
@@ -891,6 +977,11 @@ function booleanValue(value: unknown, label: string) {
 
 function bodyString(value: unknown, label: string): string {
   if (typeof value !== 'string' || !value.trim() || value.length > MAX_MARKDOWN_FILE_CHARS) throw new Error(`${label}为空或超过 1 MB`);
+  return value;
+}
+
+function optionalBodyString(value: unknown, label: string): string {
+  if (typeof value !== 'string' || value.length > MAX_MARKDOWN_FILE_CHARS) throw new Error(`${label}无效或超过 1 MB`);
   return value;
 }
 

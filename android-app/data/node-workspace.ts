@@ -4,7 +4,23 @@ import type { MarkdownDocument } from '@/types/domain';
 
 export async function listNodeDocuments(db: SQLiteDatabase, nodeId: string): Promise<MarkdownDocument[]> {
   return db.getAllAsync<MarkdownDocument>(`SELECT d.id,d.project_id AS projectId,d.path,d.title,d.body,d.origin,d.created_at AS createdAt,d.updated_at AS updatedAt
-    FROM node_documents l JOIN documents d ON d.id=l.document_id WHERE l.node_id=? ORDER BY l.sort_order,l.id`,nodeId);
+    FROM node_documents l JOIN nodes n ON n.id=l.node_id JOIN documents d ON d.id=l.document_id AND d.project_id=n.project_id
+    WHERE l.node_id=? ORDER BY l.sort_order,d.updated_at DESC,d.id`,nodeId);
+}
+
+export async function moveNodeDocumentPriority(db: SQLiteDatabase, nodeId: string, documentId: string, direction: -1 | 1) {
+  await db.withExclusiveTransactionAsync(async tx => {
+    const links = await tx.getAllAsync<{ id: string; document_id: string }>(`SELECT l.id,l.document_id FROM node_documents l
+      JOIN nodes n ON n.id=l.node_id JOIN documents d ON d.id=l.document_id AND d.project_id=n.project_id
+      WHERE l.node_id=? ORDER BY l.sort_order,d.updated_at DESC,d.id`, nodeId);
+    const index = links.findIndex(link => link.document_id === documentId);
+    const next = index + direction;
+    if (index < 0 || next < 0 || next >= links.length) return;
+    [links[index], links[next]] = [links[next], links[index]];
+    for (let rank = 0; rank < links.length; rank++) {
+      await tx.runAsync('UPDATE node_documents SET sort_order=? WHERE id=? AND node_id=?', rank, links[rank].id, nodeId);
+    }
+  });
 }
 export async function createManualNode(db:SQLiteDatabase,input:{projectId:string;title:string;body:string;parentId?:string}) {
   if (!input.title.trim() || input.title.length>160 || input.body.length>1000000) throw new Error('标题需为 1–160 字符，正文最多 100 万字符');
@@ -33,7 +49,42 @@ export async function addNodeDocument(db:SQLiteDatabase,nodeId:string,title:stri
   return id;
 }
 export async function connectNodes(db:SQLiteDatabase,projectId:string,from:string,to:string) {
-  await db.withExclusiveTransactionAsync(async tx=>{await insertManualEdge(tx,projectId,from,to,'related','相关');});
+  await db.withExclusiveTransactionAsync(async tx=>{
+    if (await tx.getFirstAsync(
+      "SELECT id FROM edges WHERE project_id=? AND relation_kind='related' AND ((source_id=? AND target_id=?) OR (source_id=? AND target_id=?))",
+      projectId,from,to,to,from,
+    )) throw new Error('这两个节点已经连接');
+    await insertManualEdge(tx,projectId,from,to,'related','相关');
+  });
+}
+
+type StoredConnection = {
+  id: string; project_id: string; source_id: string; target_id: string; relation: string;
+  importance: number; document_id: string; review_status: string; reviewed_at: string | null;
+  relation_kind: string | null; directed: number; label: string;
+};
+
+export async function disconnectNodes(db: SQLiteDatabase, projectId: string, edgeId: string): Promise<StoredConnection> {
+  let removed: StoredConnection | null = null;
+  await db.withExclusiveTransactionAsync(async tx => {
+    const edge = await tx.getFirstAsync<StoredConnection>('SELECT * FROM edges WHERE id=? AND project_id=?', edgeId, projectId);
+    if (!edge) throw new Error('这条连接已不存在，请刷新白板');
+    const result = await tx.runAsync('DELETE FROM edges WHERE id=? AND project_id=?', edgeId, projectId);
+    if (result.changes !== 1) throw new Error('连接没有解除，请刷新白板');
+    removed = edge;
+  });
+  if (!removed) throw new Error('连接没有解除，请刷新白板');
+  return removed;
+}
+
+export async function restoreDisconnectedNodes(db: SQLiteDatabase, edge: StoredConnection) {
+  await db.withExclusiveTransactionAsync(async tx => {
+    if (await tx.getFirstAsync('SELECT id FROM edges WHERE id=?', edge.id)) throw new Error('连接已恢复');
+    const owners = await tx.getFirstAsync<{ count: number }>('SELECT COUNT(*) AS count FROM nodes WHERE id IN (?,?) AND project_id=?', edge.source_id, edge.target_id, edge.project_id);
+    if (owners?.count !== 2) throw new Error('节点已改变，无法恢复连接');
+    await tx.runAsync(`INSERT INTO edges (id,project_id,source_id,target_id,relation,importance,document_id,review_status,reviewed_at,relation_kind,directed,label)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`, edge.id, edge.project_id, edge.source_id, edge.target_id, edge.relation, edge.importance, edge.document_id, edge.review_status, edge.reviewed_at, edge.relation_kind, edge.directed, edge.label);
+  });
 }
 export async function moveNode(db:SQLiteDatabase,id:string,x:number,y:number) {
   if (![x,y].every(n=>Number.isFinite(n)&&Math.abs(n)<1000000)) throw new Error('节点位置无效');
@@ -49,15 +100,16 @@ export async function saveDocumentRevision(db:SQLiteDatabase,id:string,body:stri
   return updatedAt;
 }
 export async function getDocumentDiscussion(db:SQLiteDatabase,id:string) {
-  return db.getFirstAsync<{conversation_id:string|null;source_answer_id:string|null;node_id:string|null}>('SELECT conversation_id,source_answer_id,node_id FROM conversation_documents WHERE document_id=?',id);
+  return db.getFirstAsync<{conversation_id:string|null;source_answer_id:string|null;node_id:string|null;message_ids_json:string}>('SELECT conversation_id,source_answer_id,node_id,message_ids_json FROM conversation_documents WHERE document_id=?',id);
 }
 
-export async function createFreeBoard(db: SQLiteDatabase, title: string, body: string) {
+export async function createFreeBoard(db: SQLiteDatabase, title: string, body: string, topicId?: string) {
   if (!title.trim() || title.length > 160 || body.length > 1000000) throw new Error('标题或正文超出上限');
   const projectId = newLocalId('project'); const nodeId = newLocalId('node'); const documentId = newLocalId('doc');
   const now = new Date().toISOString();
   await db.withExclusiveTransactionAsync(async tx => {
-    await tx.runAsync("INSERT INTO projects(id,title,created_at,updated_at,graph_kind) VALUES(?,?,?,?,'free')",projectId,title.trim(),now,now);
+    if (topicId && !await tx.getFirstAsync('SELECT id FROM topics WHERE id=?', topicId)) throw new Error('所属专题不存在，请返回专题后重试');
+    await tx.runAsync("INSERT INTO projects(id,topic_id,title,created_at,updated_at,graph_kind) VALUES(?,?,?,?,?,'free')",projectId,topicId??null,title.trim(),now,now);
     await tx.runAsync("INSERT INTO documents(id,project_id,path,title,body,origin,created_at,updated_at) VALUES(?,?,?,?,?,'learner',?,?)",documentId,projectId,`笔记/${documentId}.md`,title.trim(),body,now,now);
     await tx.runAsync("INSERT INTO nodes(id,project_id,title,x,y,importance,status,document_id) VALUES(?,?,?,0,0,5,'learning',?)",nodeId,projectId,title.trim(),documentId);
   });

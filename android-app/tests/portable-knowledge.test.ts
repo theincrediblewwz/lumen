@@ -49,6 +49,30 @@ test('portable v1 preserves an optional horizontal reading direction', () => {
   assert.throws(() => validatePortableManifest(horizontal), /展开方向/);
 });
 
+test('portable v4 accepts an unanswered deferred review but still requires an answer after self-rating', () => {
+  const manifest = structuredClone(validManifest) as any;
+  manifest.version = 4;
+  manifest.fusion = {
+    graphKind: 'learning',
+    nodeDocuments: [
+      { id: 'link-one', node_id: 'n1', document_id: 'd1', sort_order: 0 },
+      { id: 'link-two', node_id: 'n2', document_id: 'd2', sort_order: 0 },
+    ],
+    conversations: [], messages: [], conversationDocuments: [], readingPositions: [],
+    edgePresentation: [{ id: 'e1', relation_kind: null, directed: 1, label: '' }],
+    canvasGroups: [], canvasGroupMembers: [],
+  };
+  manifest.reviewEvents = [{
+    id: 'review-deferred', nodeId: 'n1', documentId: 'd1', documentHash: 'a'.repeat(64),
+    sessionId: 'session-one', question: '请解释目标。', learnerAnswer: '',
+    referencePoints: '目标的定义。', rating: 'deferred',
+    createdAt: '2026-09-28T00:00:00.000Z', dueAt: '2026-09-29T00:00:00.000Z',
+  }];
+  assert.equal(validatePortableManifest(manifest).reviewEvents?.[0].learnerAnswer, '');
+  manifest.reviewEvents[0].rating = 'remembered';
+  assert.throws(() => validatePortableManifest(manifest), /复习回答为空/);
+});
+
 test('portable v2 preserves summary policy, contains edges, sources, mastery, provenance and undo batches', () => {
   const manifest = structuredClone(validManifest) as any;
   manifest.version = 2;

@@ -1,4 +1,6 @@
 import type { SQLiteDatabase } from 'expo-sqlite';
+import { knowledgeReferenceLinks } from '@/data/knowledge-library-core';
+import { loadKnowledgeReferences } from '@/data/knowledge-library';
 
 import {
   ByokProviderError,
@@ -30,6 +32,7 @@ import {
   normalizeGraphStructuralDraft,
   normalizeKnowledgeDossierDraft,
   normalizeTeachingPlanDraft,
+  restoreGraphCompilationArtifact,
   sourceBoundaryFromPlan,
 } from '@/ai/deep-build-prompts';
 import { AiGatewayError, getExpansionAdapterMode, requestGraphExpansion } from '@/ai/gateway-client';
@@ -40,6 +43,7 @@ import {
 } from '@/ai/graph-patch';
 import { createLocalExpansion } from '@/ai/local-expansion-adapter';
 import { createModelLearningContext } from '@/ai/model-learning-context';
+import { parseStoredExpansionContext, StoredExpansionDataError } from '@/ai/stored-expansion';
 import {
   claimDeepBuildStage,
   claimExpansionJob,
@@ -63,6 +67,13 @@ import { loadPersonalContextEvidence } from '@/data/personal-context';
 
 const MAX_ATTEMPTS = 3;
 const RETRY_DELAYS_MS = [600, 1_500];
+type QuickExpansionStage = 'prepare_context' | 'request_answer' | 'validate_answer' | 'commit_graph';
+const QUICK_STAGE_LABELS: Record<QuickExpansionStage, string> = {
+  prepare_context: '读取节点资料',
+  request_answer: '取得 AI 回答',
+  validate_answer: '校验回答和节点',
+  commit_graph: '保存回答和图谱',
+};
 
 export type ExpansionResult = {
   adapter: ExpansionAdapter;
@@ -103,7 +114,12 @@ export async function expandKnowledgeNode(
   await recoverStaleExpansionJobs(db);
   const qualityPath = options.qualityPath ?? 'quick';
   const provisionalJobId = createId('expand');
-  let context = await buildExpansionContext(db, nodeId, prompt, provisionalJobId);
+  let context: ExpansionContext;
+  try {
+    context = await buildExpansionContext(db, nodeId, prompt, provisionalJobId);
+  } catch (error) {
+    throw new Error(`${QUICK_STAGE_LABELS.prepare_context}失败：${error instanceof Error ? error.message : '请重新打开白板后重试'}`);
+  }
   let existing = await findActiveExpansionJob(db, context.project.id, context.selection.id);
   const preferredAdapter = await getPreferredExpansionAdapter();
   if (qualityPath === 'deep' && preferredAdapter !== 'byok') {
@@ -138,8 +154,8 @@ export async function expandKnowledgeNode(
       throw new Error('这个知识点的展开任务仍由另一个执行器持有租约，请稍后再试');
     }
     try {
-      const savedContext = JSON.parse(existing.requestJson) as typeof context;
-      if (savedContext.schemaVersion !== 2) throw new Error('旧版展开上下文不能继续使用');
+      const savedContext = parseStoredExpansionContext(JSON.parse(existing.requestJson), context.project.id, nodeId);
+      if (savedContext.requestId !== jobId) throw new StoredExpansionDataError('已保存的展开任务标识与请求不符，请重新发起问题', 'invalid_saved_request');
       context = savedContext;
     } catch {
       await markExpansionFailed(db, jobId, 'invalid_saved_request', '已保存的展开上下文无法读取');
@@ -174,22 +190,28 @@ export async function expandKnowledgeNode(
   }
   for (let attempt = attemptsUsed + 1; attempt <= MAX_ATTEMPTS; attempt += 1) {
     await claimExpansionJob(db, jobId);
+    let stage: QuickExpansionStage = 'prepare_context';
     try {
+      stage = 'prepare_context';
+      await assertKnowledgeReferencesCurrent(db, context);
       const contextPlan = adapter === 'byok'
         ? await resolveExpansionContextPlan(db, context, jobId)
         : null;
+      stage = 'request_answer';
       const byokResult = adapter === 'byok'
         ? await requestByokGraphPatch(context, undefined, fetch, contextPlan ?? undefined)
         : null;
       const rawExpansion = adapter === 'gateway'
         ? await requestGraphExpansion(context)
         : byokResult?.expansion ?? createLocalExpansion(context);
+      stage = 'validate_answer';
       const expansion = validateLearningExpansion(rawExpansion);
       const patch = expansion.patch;
+      stage = 'commit_graph';
       const result = await commitGraphPatch(db, context, patch, jobId, {
         adapter,
         actualModel: byokResult?.actualModel ?? null,
-        body: expansion.answerMarkdown,
+        body: expansion.answerMarkdown + knowledgeReferenceLinks(contextPlan?.modelContext.knowledgeEvidence ?? context.project.knowledgeReferences ?? []),
       });
       return {
         adapter,
@@ -202,6 +224,10 @@ export async function expandKnowledgeNode(
       };
     } catch (error) {
       const failure = classifyFailure(error);
+      if (failure.code === 'internal_error') {
+        failure.code = `internal_${stage}`;
+        failure.message = `${QUICK_STAGE_LABELS[stage]}失败：${failure.message}`;
+      }
       if (failure.retryable && attempt < MAX_ATTEMPTS) {
         const delay = RETRY_DELAYS_MS[attempt - 1] ?? RETRY_DELAYS_MS.at(-1)!;
         await markExpansionRetry(db, jobId, failure.code, failure.message, delay);
@@ -209,6 +235,7 @@ export async function expandKnowledgeNode(
         continue;
       }
       await markExpansionFailed(db, jobId, failure.code, failure.message);
+      if (failure.code.startsWith('internal_')) throw new Error(failure.message);
       throw error;
     }
   }
@@ -239,7 +266,17 @@ async function executeDeepBuild(
       throw new Error('深入构建需要由用户明确继续失败阶段');
     }
     if (persisted.status === 'succeeded') {
-      const artifact = readDeepBuildArtifact<unknown>(persisted);
+      let artifact: unknown;
+      try {
+        artifact = readDeepBuildArtifact<unknown>(persisted);
+        const prefix = persisted.stage === 'knowledge_dossier' ? 'kd1'
+          : persisted.stage === 'teaching_plan' ? 'tp1' : 'gc1';
+        if (!artifact || persisted.artifactFingerprint !== fingerprintDeepBuildArtifact(prefix, artifact)) {
+          throw new Error('阶段产物指纹不一致');
+        }
+      } catch {
+        throw new StoredExpansionDataError(`已保存的“${DEEP_BUILD_STAGE_LABELS[persisted.stage]}”产物不完整或校验失败，请重新发起问题`, 'invalid_saved_artifact');
+      }
       if (persisted.stage === 'knowledge_dossier') dossier = validateKnowledgeDossier(artifact);
       if (persisted.stage === 'teaching_plan') {
         if (!dossier) throw new Error('教学方案缺少已验证的知识底稿');
@@ -247,7 +284,11 @@ async function executeDeepBuild(
       }
       if (persisted.stage === 'graph_compilation') {
         if (!dossier || !teachingPlan) throw new Error('图谱编排缺少已验证的前序产物');
-        graphCompilation = composeGraphCompilationArtifact(artifact, dossier, teachingPlan);
+        try {
+          graphCompilation = restoreGraphCompilationArtifact(artifact, dossier, teachingPlan);
+        } catch {
+          throw new StoredExpansionDataError('已保存的图谱编排产物不完整，请重新发起问题', 'invalid_saved_artifact');
+        }
       }
       continue;
     }
@@ -263,6 +304,7 @@ async function executeDeepBuild(
     await claimDeepBuildStage(db, jobId, persisted.stage, requestId);
     let receivedResponse: ByokStructuredResult | null = null;
     try {
+      await assertKnowledgeReferencesCurrent(db, context);
       if (persisted.stage === 'knowledge_dossier') {
         const response = await requestByokStructuredJson(
           buildKnowledgeDossierRequest(contextPlan),
@@ -329,7 +371,7 @@ async function executeDeepBuild(
   const result = await commitGraphPatch(db, context, expansion.patch, jobId, {
     adapter: 'byok',
     actualModel,
-    body: expansion.answerMarkdown,
+    body: expansion.answerMarkdown + knowledgeReferenceLinks(contextPlan.modelContext.knowledgeEvidence ?? []),
   });
   return {
     adapter: 'byok',
@@ -347,6 +389,7 @@ async function resolveExpansionContextPlan(
   context: ExpansionContext,
   jobId: string,
 ): Promise<ContextPlan> {
+  await assertKnowledgeReferencesCurrent(db, context);
   const persisted = await readExpansionContextPlan(db, jobId);
   if (persisted) return persisted;
   const personal = await loadPersonalContextEvidence(
@@ -368,6 +411,12 @@ async function resolveExpansionContextPlan(
     },
   );
   return saveExpansionContextPlan(db, jobId, plan);
+}
+
+async function assertKnowledgeReferencesCurrent(db: SQLiteDatabase, context: ExpansionContext) {
+  const policy = await db.getFirstAsync<{ mode: string; allow_outside_knowledge: number }>('SELECT mode,allow_outside_knowledge FROM projects WHERE id=?', context.project.id);
+  const actual = await loadKnowledgeReferences(db, context.project.id, context.prompt, { nodeId: context.selection.id, sourceBound: policy?.mode === 'summary', allowOutside: Boolean(policy?.allow_outside_knowledge) });
+  if (JSON.stringify(actual) !== JSON.stringify(context.project.knowledgeReferences ?? [])) throw new Error('知识内容或引用权限已变化，请重新预览后再发送；尚未发起本次 AI 请求');
 }
 
 async function persistDeepBuildArtifact(
@@ -412,45 +461,6 @@ function validateReceivedArtifact<T>(validate: () => T, stage: DeepBuildStage): 
   }
 }
 
-function composeGraphCompilationArtifact(
-  value: unknown,
-  dossier: KnowledgeDossier,
-  teachingPlan: TeachingPlan,
-) {
-  if (
-    value
-    && typeof value === 'object'
-    && !Array.isArray(value)
-    && 'learningExpansion' in value
-  ) {
-    return validateReceivedArtifact(
-      () => validateGraphCompilationArtifact(value, dossier, teachingPlan),
-      'graph_compilation',
-    );
-  }
-  return validateReceivedArtifact(
-    () => composeGraphCompilation(value, dossier, teachingPlan),
-    'graph_compilation',
-  );
-}
-
-function validateGraphCompilationArtifact(
-  value: unknown,
-  dossier: KnowledgeDossier,
-  teachingPlan: TeachingPlan,
-) {
-  return composeGraphCompilation({
-    ...(value as Record<string, unknown>),
-    summary: (value as GraphCompilation).learningExpansion.patch.summary,
-    nodes: (value as GraphCompilation).learningExpansion.patch.nodes.map((node) => ({
-      ...node,
-      importanceReason: (value as GraphCompilation).learningExpansion.keyPoints
-        .find((point) => point.title === node.title)?.importanceReason,
-    })),
-    edges: (value as GraphCompilation).learningExpansion.patch.edges,
-  }, dossier, teachingPlan);
-}
-
 function deepBuildFailure(error: unknown) {
   if (error instanceof ByokProviderError) {
     return { code: error.code, message: error.message, outcomeUnknown: error.outcomeUnknown };
@@ -488,6 +498,9 @@ function sumStageUsage(values: Array<string | null>): ByokUsage | null {
 }
 
 function classifyFailure(error: unknown) {
+  if (error instanceof StoredExpansionDataError) {
+    return { code: error.code, message: error.message, retryable: false };
+  }
   if (error instanceof ByokProviderError) {
     return { code: error.code, message: error.message, retryable: false };
   }

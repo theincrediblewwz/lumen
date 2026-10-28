@@ -3,13 +3,22 @@
 > **本地优先的极简白板，把 AI 辅助学习的过程结构化为「问题树」。**
 > 每个节点是一个你问过的问题，每条连线是一次思维的延伸，每篇文档是一次 AI 回答的原文。
 
+## 当前版本
+
+[下载 Mac 0.1.14](https://github.com/theincrediblewwz/lumen/releases/tag/mac-v0.1.14) · [升级与恢复说明](./docs/LONG_MARKDOWN_AND_FAITHFUL_IMPORT.md)
+
+桌面源码 **0.1.14**，技术栈 Tauri 2 + React 18 + TypeScript + Vite。最新更新包括长 Markdown 顺序分批分析、上游临时满载自动重试，以及两种对话导入方式：
+
+- **AI 重构图谱**：按主题重新组织问题树，各批结果在本机合并。
+- **忠实逐轮图谱**：每条 AI 回答保留为一个节点；新 AI 只生成概括标题、简短导读和建议层级，原回答由本机逐字保留。支持分享对话、明确问答标题和“第 N 条回答”导出；长回答分片分析后仍保留为同一节点。
+
+两种方式都先预览、再确认写入。失败或取消不写入部分结果，完整原文与轮次选择依据随资料保留。详细说明见 [导入、升级与恢复](./docs/LONG_MARKDOWN_AND_FAITHFUL_IMPORT.md)。已有知识库、PDF/图文资料、白板工具、会话历史与资料包恢复功能继续保留。
+
 ## Android 预览版
 
-Android 客户端现已与桌面端放在同一仓库：[源码与开发说明](./android-app/README.md)。它提供安静白板、节点 Markdown 阅读、持续讨论、划词提问、对话原文保存为文档及新节点。两端实现了共同的 WebDAV 同步协议；真实服务三端联调、Mac 原生和物理 Android 后台验收仍待完成。
+Android 源码同步至 **2.1.0-preview.8 / versionCode 23**，包名仍为 `com.learnstuffquickly.app`，图标名称仍为 LearnStuff。包含节点 PDF/图文原件、阅读、讨论与划词提问、知识交换、备份和 WebDAV 同步能力：[源码与开发说明](./android-app/README.md)。桌面 0.1.14 的两种对话导入界面属于桌面功能，本次没有宣称 Android 已提供同样的导入入口。
 
-[下载 Android 预览 APK](https://github.com/theincrediblewwz/lumen/releases/tag/android-v2.1.0-preview.3) · [安装、签名和数据说明](./docs/ANDROID-PREVIEW.md)。此版本沿用 Android 既有应用身份 `com.learnstuffquickly.app`，安装图标名称仍为 LearnStuff，以便保留同签名预览版的数据。Android 使用独立 `android-v*` 标签；原有 `v*` 标签继续对应桌面构建。
-
-**当前状态**：M0–M6 完成 · 进入 M7 发布阶段（打包 / 端到端验收 / CI）。技术栈 Tauri 2.x + React 18 + TypeScript + Vite。
+[旧公开 Android 预览 APK](https://github.com/theincrediblewwz/lumen/releases/tag/android-v2.1.0-preview.3) · [安装、签名和数据说明](./docs/ANDROID-PREVIEW.md)。旧公开附件保持不变，不能当作当前源码版本的安装包；新二进制以 [Releases](https://github.com/theincrediblewwz/lumen/releases) 的明确版本和校验和为准。真实 WebDAV 与物理设备行为须以对应版本的验收记录为准。
 
 ---
 
@@ -43,7 +52,9 @@ Android 客户端现已与桌面端放在同一仓库：[源码与开发说明](
 | --- | --- |
 | 白板画布 | 自研引擎：DOM 节点层 + SVG 贝塞尔连线层；平移 / 缩放 / 撤销重做 / 树状自动布局 |
 | 内容与阅读 | Markdown 导入、离线 KaTeX 公式渲染、独立阅读窗（连续 / 单页 / 双页 / 全屏）、PDF 系统打开 |
-| AI 助手 | OpenAI 兼容（baseURL + Key）、白板工具调用、节点引用回链、对话历史持久化、Key 凭据库加密 |
+| AI 助手 | OpenAI 兼容连接、多套模型设置、白板工具调用、节点引用回链、对话历史与凭据保护 |
+| 对话导入 | AI 重构 / 忠实逐轮；长 Markdown 分批、进度与取消、临时满载重试、确认后写入 |
+| 知识与原件 | 独立知识库、版本与出处、PDF/图文原件保留、项目/全库资料包恢复到新目录 |
 | 全局搜索 | 跨全部白板全文检索（Mod + K），命中高亮、点击跳转 |
 | 导出 | 白板导出 Markdown / HTML / SVG / PNG |
 | 快照与恢复 | 打开白板自动留存、保留最近 20 份、恢复前自动保险 |
@@ -54,8 +65,8 @@ Android 客户端现已与桌面端放在同一仓库：[源码与开发说明](
 ## 快速开始（开发）
 
 ```bash
-# 依赖：Node 18+、Rust stable、Tauri 2.x 系统依赖
-npm install
+# 依赖：Node 24.15+、Rust 1.95+、Tauri 2.x 系统依赖
+npm ci
 npm run tauri:dev      # 启动桌面应用（开发模式）
 
 # 常用校验
@@ -64,6 +75,21 @@ npm test               # vitest run
 npm run build          # tsc + vite build
 npm run tauri:build    # 打包桌面应用（ad-hoc）
 ```
+
+## 离线知识格式交换
+
+仓库包含离线产品转换工具 `scripts/knowledge_exchange.py`，在知识文档格式与 Lumen 知识包之间生成独立副本；它不写入应用资料库，也不覆盖既有输出目录。锁定的公开 schema 位于 `contracts/historyandknowledge/`，来源提交和 SHA-256 在该目录的 `SOURCE.json` 中核验。
+
+需要 **Python 3.11+**，并安装锁定的 `PyYAML` 与 `jsonschema`。以下命令将环境与缓存留在本仓库：
+
+```bash
+python3 -m venv .local/knowledge-exchange-venv
+.local/knowledge-exchange-venv/bin/python -m pip install --cache-dir .local/cache/pip -r scripts/knowledge-exchange-requirements.txt
+.local/knowledge-exchange-venv/bin/python -B scripts/knowledge_exchange.py --help
+LSQ_EXCHANGE_PYTHON="$PWD/.local/knowledge-exchange-venv/bin/python" LSQ_EXCHANGE_QA="$PWD/.local/knowledge-exchange-tests" npm --prefix android-app run test:knowledge-exchange
+```
+
+Windows 将上述虚拟环境解释器路径改为 `.local/knowledge-exchange-venv/Scripts/python.exe`。安装依赖后，转换本身不需要网络、Gateway 或模型服务。跨端测试会实际经过 SQLite、副本导入、编辑和格式导出；它不能替代真实个人资料的备份核对。
 
 ## 数据存储
 
@@ -102,7 +128,7 @@ npm run tauri:build    # 打包桌面应用（ad-hoc）
 | 画布 | 自研：SVG 连线层 + DOM 节点层 |
 | 渲染 | markdown-it 定制规则 + KaTeX（全部离线内置） |
 | 存储 | 文件系统 + JSON（原子写、快照） |
-| 测试 | Vitest（纯逻辑内核 15 个测试文件 / 221 用例）+ Rust 单测 |
+| 测试 | Vitest（44个文件 / 457项测试）+ Rust 单测与合成界面验收 |
 
 平台策略见 [DESIGN.md §11 跨平台与发布策略](./docs/DESIGN.md)。主目标平台 macOS(arm64)，Windows 次之。
 

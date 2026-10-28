@@ -135,4 +135,3 @@ export function straightPath(from: Pt, to: Pt): string {
 export function boxContains(b: Box, p: Pt): boolean {
   return p.x >= b.x && p.x <= b.x + b.w && p.y >= b.y && p.y <= b.y + b.h;
 }
-

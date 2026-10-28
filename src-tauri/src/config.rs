@@ -14,7 +14,7 @@ pub struct AppConfig {
     pub storage_root: Option<String>,
 }
 
-fn config_dir() -> Result<PathBuf, String> {
+pub(crate) fn config_dir() -> Result<PathBuf, String> {
     #[cfg(feature = "isolated-preview")]
     { return std::env::current_exe().map_err(|e| e.to_string())?.parent().map(|p|p.join(".preview").join("config")).ok_or_else(||"预览程序目录无效".to_string()); }
     #[cfg(not(feature = "isolated-preview"))]

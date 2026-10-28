@@ -46,9 +46,9 @@ test('binds a stored API key to one Base URL and requires re-entry after destina
     kind: 'custom', label: 'A', baseUrl: 'https://a.example.com/v1', model: 'm', jsonMode: true,
     tokenLimitField: 'max_tokens',
   });
-  const stored = JSON.stringify({ version: 1, baseUrl: profile.baseUrl, apiKey: 'fixture-key' });
+  const stored = JSON.stringify({ version: 1, baseUrl: profile.baseUrl, apiKey: 'fixture-key-1' });
   assert.equal(parseStoredApiKey(stored)?.baseUrl, profile.baseUrl);
-  assert.equal(resolveApiKeyForProfile(profile, undefined, stored), 'fixture-key');
+  assert.equal(resolveApiKeyForProfile(profile, undefined, stored), 'fixture-key-1');
   assert.throws(
     () => resolveApiKeyForProfile({ ...profile, baseUrl: 'https://b.example.com/v1' }, undefined, stored),
     /更换 Base URL/,
@@ -66,10 +66,10 @@ test('stores the key only in a Base-URL-bound SecureStore record and clears both
     kind: 'custom', label: 'A', baseUrl: 'https://a.example.com/v1', model: 'm', jsonMode: true,
     tokenLimitField: 'max_tokens',
   });
-  await saveByokProfile(profile, 'fixture-key', store);
+  await saveByokProfile(profile, 'fixture-key-1', store);
   assert.deepEqual(await getByokProfileStatus(store), { profile, hasApiKey: true });
-  assert.deepEqual(await getByokCredentials(store), { profile, apiKey: 'fixture-key' });
-  assert.equal([...values.values()].some((value) => value === 'fixture-key'), false);
+  assert.deepEqual(await getByokCredentials(store), { profile, apiKey: 'fixture-key-1' });
+  assert.equal([...values.values()].some((value) => value === 'fixture-key-1'), false);
   assert.equal([...values.values()].some((value) => value.includes('"baseUrl":"https://a.example.com/v1"')), true);
 
   await assert.rejects(

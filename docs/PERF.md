@@ -79,5 +79,3 @@
 - **已达标 / 已实测**：前端产物体积（~1.79 MB）；**Windows 安装包体积（本机 NSIS 4.26 MB / MSI 5.65 MB；CI Release NSIS 4.04 MB / MSI 5.34 MB）**；**macOS arm64 dmg 5.38 MB**（CI Release，均达标）。
 - **待实机填写**：冷启动时间、画布 FPS 压测、阅读窗首屏。
 - 压测数据回填后，如任一项不达标，记录瓶颈并在 `docs/STATUS.md` 开跟进项。
-
-

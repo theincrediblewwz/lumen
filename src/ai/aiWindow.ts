@@ -6,11 +6,14 @@
  * 非 Tauri（浏览器预览）回退：派发 CustomEvent，由 App 内浮层 AI 面板接管。
  */
 
+import { windowIdentity } from '../windowIdentity';
 export interface OpenAiArgs {
   projectId: string;
   boardId: string;
   boardName: string;
+  nodeId?: string;
   conversationId?: string;
+  messageIds?: string[];
 }
 
 function inTauri(): boolean {
@@ -29,11 +32,7 @@ async function windowEnvironment(): Promise<{isMac:boolean;dataDirectory?:string
 }
 
 export const OPEN_AI_EVENT = 'lumen:open-ai';
-
-function aiLabel(a: OpenAiArgs): string {
-  const raw = `ai-${a.boardId}`;
-  return raw.replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 120);
-}
+export const OPEN_CONVERSATION_EVENT = 'lumen:open-conversation';
 
 export async function openAiWindow(a: OpenAiArgs): Promise<void> {
   if (!inTauri()) {
@@ -42,14 +41,14 @@ export async function openAiWindow(a: OpenAiArgs): Promise<void> {
   }
 
   const { WebviewWindow } = await import('@tauri-apps/api/webviewWindow');
-  const label = aiLabel(a);
+  const label = await windowIdentity('ai',[a.projectId,a.boardId,a.nodeId??'']);
 
   // macOS 用原生装饰（系统红绿灯 + 圆角 + 阴影）；Windows/Linux 无边框自绘按钮。
   const {isMac,dataDirectory} = await windowEnvironment();
 
   const existing = await WebviewWindow.getByLabel(label);
   if (existing) {
-    if(a.conversationId){const {emitTo}=await import('@tauri-apps/api/event');await emitTo(label,'lumen://open-conversation',{boardId:a.boardId,conversationId:a.conversationId});}
+    if(a.conversationId){const {emitTo}=await import('@tauri-apps/api/event');await emitTo(label,'lumen://open-conversation',{boardId:a.boardId,conversationId:a.conversationId,messageIds:a.messageIds??[]});}
     try {
       if (await existing.isMinimized()) await existing.unminimize();
       await existing.show();
@@ -68,15 +67,20 @@ export async function openAiWindow(a: OpenAiArgs): Promise<void> {
     board: a.boardId,
     name: a.boardName,
   });
+  if(a.nodeId)params.set('node',a.nodeId);
   if(a.conversationId)params.set('conversation',a.conversationId);
+  if(a.messageIds?.length)params.set('messages',a.messageIds.join(','));
+
+  const { currentMonitor } = await import('@tauri-apps/api/window');
+  const monitor = await currentMonitor().catch(() => null);
+  const availableWidth = monitor ? monitor.workArea.size.width / monitor.scaleFactor : window.screen.availWidth;
+  const availableHeight = monitor ? monitor.workArea.size.height / monitor.scaleFactor : window.screen.availHeight;
+  const size = aiWindowSize(availableWidth, availableHeight);
 
   const options = {
     url: `index.html?${params.toString()}`,
     title: `AI 助手 · ${a.boardName} — 脉络 Lumen`,
-    width: 520,
-    height: 760,
-    minWidth: 380,
-    minHeight: 420,
+    ...size,
     resizable: true,
     center: true,
     // macOS：原生装饰 + Overlay 标题栏（红绿灯/圆角/阴影由系统提供）；
@@ -96,4 +100,8 @@ export async function openAiWindow(a: OpenAiArgs): Promise<void> {
   });
 }
 
-
+export function aiWindowSize(availableWidth: number, availableHeight: number) {
+  const width = Math.max(320, Math.min(1040, availableWidth - 64));
+  const height = Math.max(360, Math.min(720, availableHeight - 80));
+  return { width, height, minWidth: Math.min(520, width), minHeight: Math.min(420, height) };
+}

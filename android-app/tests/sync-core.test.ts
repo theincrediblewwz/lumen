@@ -143,7 +143,7 @@ test('missing and corrupt remote blobs never apply half a commit', async () => {
 test('malformed protocol, hashes, duplicate entities, secret fields and unsafe IDs fail closed', async () => {
   const a = createSyncState('library', 'a');
   await assert.rejects(queue(a, doc('d', 'one'), doc('d', 'two')), /duplicate-entity/);
-  await assert.rejects(queue(a, { ...doc('d', 'body'), data: { id: 'd', api_key: 'fixture-secret' } }), /credential-field/);
+  await assert.rejects(queue(a, { ...doc('d', 'body'), data: { id: 'd', api_key: 'fixture-key-1' } }), /credential-field/);
   assert.throws(() => createSyncState('../outside', 'a'), /invalid-library/);
   const good = await queue(a, doc('d', 'body')); const serialized = JSON.stringify(good).replace('"body":"body"', '"body":"wrong"');
   await assert.rejects(parseSyncState(serialized, hash), /state-hash-mismatch/);

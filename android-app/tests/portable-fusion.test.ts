@@ -6,6 +6,7 @@ import { migrateDatabase } from '../data/database';
 import { beginConversationTurn, createConversation, listMessages, saveDiscussionAsNode, updateConversationReply } from '../data/conversations';
 import { createPortableManifest, importPortableManifestWithMapping, parsePortableManifest } from '../data/portable-knowledge';
 import { importLocalBackupAsCopies, parseLocalBackupSnapshot } from '../data/local-backup-import';
+import { createCanvasGroup, listCanvasGroups } from '../data/canvas-groups';
 import type { LocalBackupSnapshot } from '../data/local-backup-format';
 
 async function database() {
@@ -35,11 +36,11 @@ function backup(projects: LocalBackupSnapshot['projects']): LocalBackupSnapshot 
   return { format: 'learnstuff-app-backup', version: 4, exportedAt: 'now', revision: 1, projects, answers: [], promptTemplates: [], topics: [], aiUnderstandingDocuments: [], projectAiScopeSettings: [], favorites: [], favoriteBindings: [], exclusions: ['original binary attachments', 'credentials'] };
 }
 
-test('portable v3 restores multiple documents, conversations and capture provenance with remapped IDs', async () => {
+test('portable v5 restores multiple documents, conversations and capture provenance with remapped IDs', async () => {
   const { db, raw } = await database(); const { id, saved } = await seedDiscussion(db);
   await db.runAsync('INSERT INTO node_documents VALUES(?,?,?,?)', 'secondary', 'node-transformer', saved.documentId, 1);
   const manifest = await createPortableManifest(db, 'project-transformer');
-  assert.equal(manifest.version, 3); assert.equal(manifest.fusion?.conversations.length, 1);
+  assert.equal(manifest.version, 5); assert.equal(manifest.fusion?.conversations.length, 1);
   const map = await importPortableManifestWithMapping(db, parsePortableManifest(JSON.stringify(manifest)));
   const imported = await createPortableManifest(db, map.projectId); const chat = imported.fusion!.conversations[0];
   assert.notEqual(chat.id, id); assert.equal(chat.node_id, map.nodeIds.get('node-transformer'));
@@ -56,6 +57,27 @@ test('portable v3 restores multiple documents, conversations and capture provena
   assert.equal(imported.fusion!.readingPositions[0].ratio, 0.35);
   assert.equal(imported.fusion!.edgePresentation.find((edge) => edge.id === map.edgeIds.get('edge-root-attention'))?.directed, 0);
   assert.ok(raw.prepare('SELECT id FROM documents WHERE id=?').get(saved.documentId)); raw.close();
+});
+
+test('portable v3 and v4 local backup carry groups with remapped member nodes; older exports remain importable', async () => {
+  const { db, raw } = await database(); const { saved } = await seedDiscussion(db);
+  const created = await createCanvasGroup(db, 'project-transformer', '重要线索', ['node-transformer', saved.nodeId!]);
+  const manifest = await createPortableManifest(db, 'project-transformer');
+  assert.equal(manifest.fusion!.canvasGroups?.[0].id, created.groupId);
+  const copy = await importPortableManifestWithMapping(db, parsePortableManifest(JSON.stringify(manifest)));
+  const copied = await listCanvasGroups(db, copy.projectId);
+  assert.equal(copied.groups[0].title, '重要线索');
+  assert.notEqual(copied.groups[0].id, created.groupId);
+  assert.deepEqual(new Set(copied.members.map(member => member.node_id)), new Set(['node-transformer', saved.nodeId!].map(id => copy.nodeIds.get(id)!)));
+  const old = structuredClone(manifest); delete old.fusion!.canvasGroups; delete old.fusion!.canvasGroupMembers;
+  const legacy = await importPortableManifestWithMapping(db, parsePortableManifest(JSON.stringify(old)));
+  assert.deepEqual(await listCanvasGroups(db, legacy.projectId), { groups: [], members: [] });
+  const invalid = structuredClone(manifest); invalid.fusion!.canvasGroupMembers![0].group_id = 'missing';
+  assert.throws(() => parsePortableManifest(JSON.stringify(invalid)), /引用不存在/);
+  const snapshot = backup([manifest]);
+  const restored = await importLocalBackupAsCopies(db, parseLocalBackupSnapshot(JSON.stringify(snapshot)));
+  assert.equal((await listCanvasGroups(db, restored.projectIds[0])).groups[0].title, '重要线索');
+  raw.close();
 });
 
 test('incomplete portable v3 categories and dangling capture messages are rejected before import', async () => {

@@ -121,6 +121,8 @@ pub struct BoardFile {
     pub nodes: Vec<BoardNode>,
     #[serde(default)]
     pub edges: Vec<BoardEdge>,
+    #[serde(default, flatten)]
+    pub extra: std::collections::BTreeMap<String, serde_json::Value>,
 }
 
 // ─────────────────────────── 基础工具 ───────────────────────────
@@ -265,6 +267,7 @@ pub fn create_board(root: &Path, project_id: &str, name: &str) -> Result<BoardMe
     write_json(&project_file(root, pid), &project)?;
 
     let board = BoardFile {
+        extra: Default::default(),
         version: FORMAT_VERSION,
         id: id.clone(),
         name: name.to_string(),
@@ -287,13 +290,16 @@ pub fn load_board(root: &Path, project_id: &str, board_id: &str) -> Result<Board
     let bid = safe_id(board_id)?;
     let p = board_file(root, pid, bid);
     let s = fs::read_to_string(&p).map_err(|e| format!("读取 board.json 失败: {e}"))?;
-    serde_json::from_str(&s).map_err(|e| format!("解析 board.json 失败: {e}"))
+    let mut board: BoardFile = serde_json::from_str(&s).map_err(|e| format!("解析 board.json 失败: {e}"))?;
+    board.extra.remove("_disk_revision");
+    Ok(board)
 }
 
 pub fn save_board(root: &Path, board: &BoardFile) -> Result<(), String> {
     let pid = safe_id(&board.project_id)?;
     let bid = safe_id(&board.id)?;
     let mut board = board.clone();
+    board.extra.remove("_disk_revision");
     board.version = FORMAT_VERSION;
     board.updated_at = now_iso();
     write_json(&board_file(root, pid, bid), &board)
@@ -582,7 +588,9 @@ pub fn read_chats(root: &Path, project_id: &str, board_id: &str) -> Result<Strin
     if !p.exists() {
         return Ok(String::new());
     }
-    fs::read_to_string(&p).map_err(|e| format!("读取对话历史失败: {e}"))
+    let raw=fs::read_to_string(&p).map_err(|e| format!("读取对话历史失败: {e}"))?;
+    if raw.trim().is_empty() { return Err("原始对话文件为空，已保留，请先检查或恢复。".into()); }
+    Ok(raw)
 }
 
 /// 原子写入某白板的对话历史 JSON 文本。
@@ -608,7 +616,7 @@ pub fn exports_dir(root: &Path, project_id: &str, board_id: &str) -> PathBuf {
 
 /// 只允许安全的导出文件名（单层、无路径分隔、限定扩展名）。
 fn safe_export_name(name: &str) -> Result<String, String> {
-    if name.is_empty() || name.contains('/') || name.contains('\\') || name.contains("..") {
+    if name.is_empty() || name.contains('/') || name.contains('\\') || name.contains(':') || name.contains("..") || name.chars().any(|c|c.is_control()) {
         return Err("非法导出文件名".into());
     }
     let ok = name.ends_with(".md")
@@ -632,9 +640,9 @@ pub fn export_text(
     let pid = safe_id(project_id)?;
     let bid = safe_id(board_id)?;
     let name = safe_export_name(filename)?;
-    let dir = exports_dir(root, pid, bid);
+    let dir = crate::board_operations::checked_path(root,&format!("{pid}/{bid}/exports"))?;
     fs::create_dir_all(&dir).map_err(|e| format!("创建导出目录失败: {e}"))?;
-    let p = dir.join(&name);
+    let p = crate::board_operations::checked_path(root,&format!("{pid}/{bid}/exports/{name}"))?;
     atomic_write(&p, content)?;
     Ok(p.to_string_lossy().to_string())
 }
@@ -651,13 +659,10 @@ pub fn export_binary_b64(
     let bid = safe_id(board_id)?;
     let name = safe_export_name(filename)?;
     let bytes = b64_decode(b64)?;
-    let dir = exports_dir(root, pid, bid);
+    let dir = crate::board_operations::checked_path(root,&format!("{pid}/{bid}/exports"))?;
     fs::create_dir_all(&dir).map_err(|e| format!("创建导出目录失败: {e}"))?;
-    let p = dir.join(&name);
-    if let Some(parent) = p.parent() {
-        fs::create_dir_all(parent).ok();
-    }
-    fs::write(&p, &bytes).map_err(|e| format!("写入导出文件失败: {e}"))?;
+    let p = crate::board_operations::checked_path(root,&format!("{pid}/{bid}/exports/{name}"))?;
+    crate::sync::atomic_bytes(&p,&bytes)?;
     Ok(p.to_string_lossy().to_string())
 }
 
@@ -860,7 +865,7 @@ pub fn restore_snapshot(
     let mut board: BoardFile =
         serde_json::from_str(&snap_content).map_err(|e| format!("快照内容损坏: {e}"))?;
 
-    let _ = snapshot_board(root, pid, bid, true);
+    snapshot_board(root, pid, bid, true)?;
 
     board.id = bid.to_string();
     board.project_id = pid.to_string();
@@ -1004,7 +1009,8 @@ pub fn search_all(root: &Path, query: &str) -> Result<Vec<SearchHit>, String> {
                         ));
                     }
                     // 读正文（失败跳过，不阻塞整体检索）
-                    if let Ok(content) = read_doc(root, &pm.id, &bm.id, &d.path) {
+                    if let Ok(payload) = crate::documents::read_payload(root, &pm.id, &bm.id, &d.path) {
+                        let content=payload.markdown;
                         if content.to_lowercase().contains(&ql) {
                             if let Some(sn) = make_snippet(&content, &ql, 50) {
                                 hits.push(base(
@@ -1065,6 +1071,12 @@ pub fn delete_doc(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]fn export_names_and_reparse_paths_cannot_escape_exports(){
+        for name in ["C:escape.md","file:stream.md","a\n.md","../a.md"]{assert!(safe_export_name(name).is_err());}
+        let root=tmpdir("export_safe");let p=create_project(&root,"synthetic").unwrap();let b=create_board(&root,&p.id,"synthetic").unwrap();export_text(&root,&p.id,&b.id,"normal.md","# exported").unwrap();assert_eq!(fs::read(exports_dir(&root,&p.id,&b.id).join("normal.md")).unwrap(),b"# exported");
+        #[cfg(unix)]{fs::remove_file(exports_dir(&root,&p.id,&b.id).join("normal.md")).unwrap();fs::remove_dir(exports_dir(&root,&p.id,&b.id)).unwrap();std::os::unix::fs::symlink(docs_dir(&root,&p.id,&b.id),exports_dir(&root,&p.id,&b.id)).unwrap();assert!(export_text(&root,&p.id,&b.id,"original.md","bad").is_err());assert!(export_binary_b64(&root,&p.id,&b.id,"original.png","YWJj").is_err());assert!(!docs_dir(&root,&p.id,&b.id).join("original.md").exists());}
+        fs::remove_dir_all(root).unwrap();
+    }
 
     fn tmpdir(tag: &str) -> PathBuf {
         let p = std::env::temp_dir().join(format!("lumen_test_{}_{}", tag, new_id("t")));
@@ -1081,6 +1093,29 @@ mod tests {
         let parsed = read_index(&root).unwrap();
         assert_eq!(parsed.version, FORMAT_VERSION);
         fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn board_transport_revision_is_not_persisted_and_business_extras_survive() {
+        let root = tmpdir("transport_revision");
+        ensure_storage(&root).unwrap();
+        let p = create_project(&root, "P").unwrap();
+        let b = create_board(&root, &p.id, "B").unwrap();
+        let file = board_file(&root, &p.id, &b.id);
+        let mut raw: serde_json::Value = serde_json::from_slice(&fs::read(&file).unwrap()).unwrap();
+        raw["_disk_revision"] = serde_json::json!("legacy_transport");
+        raw["_sync_content_policy"] = serde_json::json!({"mode":"summary"});
+        raw["future_metadata"] = serde_json::json!({"user_owned":true});
+        fs::write(&file, serde_json::to_vec(&raw).unwrap()).unwrap();
+        let mut loaded = load_board(&root, &p.id, &b.id).unwrap();
+        assert!(!loaded.extra.contains_key("_disk_revision"));
+        loaded.extra.insert("_disk_revision".into(), serde_json::json!("frontend_transport"));
+        save_board(&root, &loaded).unwrap();
+        let saved: serde_json::Value = serde_json::from_slice(&fs::read(&file).unwrap()).unwrap();
+        assert!(saved.get("_disk_revision").is_none());
+        assert_eq!(saved["_sync_content_policy"], raw["_sync_content_policy"]);
+        assert_eq!(saved["future_metadata"], raw["future_metadata"]);
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]

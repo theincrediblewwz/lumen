@@ -102,8 +102,3 @@ export function applySettings(s: Settings, platform = ''): void {
   root.style.setProperty('--glass-alpha', alpha.toFixed(3));
   root.style.setProperty('--glass-blur', `${blur.toFixed(1)}px`);
 }
-
-
-
-
-

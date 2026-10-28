@@ -7,6 +7,7 @@ import type {
 } from '@/ai/deep-build';
 import type { ContextPlan } from '@/ai/context-plan';
 import type { ExpansionContext, GraphPatch } from '@/ai/graph-patch';
+import { parseStoredContextPlan, StoredExpansionDataError } from '@/ai/stored-expansion';
 
 export type ExpansionAdapter = 'local' | 'gateway' | 'byok';
 export type ExpansionJobStatus = 'queued' | 'running' | 'retry_wait' | 'succeeded' | 'failed';
@@ -286,9 +287,9 @@ export async function readExpansionContextPlan(
   );
   if (!row?.context_plan_json) return null;
   try {
-    return JSON.parse(row.context_plan_json) as ContextPlan;
+    return parseStoredContextPlan(JSON.parse(row.context_plan_json));
   } catch {
-    throw new Error('已保存的上下文计划损坏，请重新发起问题');
+    throw new StoredExpansionDataError('已保存的上下文计划损坏，请重新发起问题', 'invalid_saved_plan');
   }
 }
 
@@ -322,6 +323,7 @@ export async function findDeepBuildResumeCandidate(
      FROM ai_expansion_jobs job
      WHERE job.project_id = ? AND job.selection_id = ? AND job.prompt = ?
        AND job.adapter = 'byok' AND job.quality_path = 'deep' AND job.status = 'failed'
+       AND COALESCE(job.error_code, '') NOT IN ('invalid_saved_request', 'invalid_saved_plan', 'invalid_saved_artifact')
        AND NOT EXISTS (
          SELECT 1 FROM ai_deep_build_stages stage
          WHERE stage.job_id = job.id AND stage.status = 'unknown_charge'

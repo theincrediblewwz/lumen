@@ -219,6 +219,21 @@ export type MasteryAttempt = {
   createdAt: string;
 };
 
+export type ReviewEventRecord = {
+  id: string;
+  projectId: string;
+  nodeId: string;
+  documentId: string;
+  documentHash: string;
+  sessionId: string;
+  question: string;
+  learnerAnswer: string;
+  referencePoints: string;
+  rating: 'remembered' | 'fuzzy' | 'forgotten' | 'deferred';
+  createdAt: string;
+  dueAt: string;
+};
+
 export type GraphMutationBatch = {
   id: string;
   projectId: string;

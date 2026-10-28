@@ -2,7 +2,7 @@
   "expo": {
     "name": "LearnStuff",
     "slug": "learn-stuff-quickly",
-    "version": "2.1.0-preview.3",
+    "version": "2.1.0-preview.8",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
     "scheme": "learnstuff",
@@ -13,7 +13,31 @@
     },
     "android": {
       "package": "com.learnstuffquickly.app",
-      "versionCode": 18,
+      "versionCode": 23,
+      "intentFilters": [
+        {
+          "action": "SEND",
+          "category": ["DEFAULT"],
+          "data": [
+            { "mimeType": "text/plain" },
+            { "mimeType": "text/markdown" },
+            { "mimeType": "application/pdf" },
+            { "mimeType": "image/*" },
+            { "mimeType": "application/octet-stream" }
+          ]
+        },
+        {
+          "action": "SEND_MULTIPLE",
+          "category": ["DEFAULT"],
+          "data": [
+            { "mimeType": "text/plain" },
+            { "mimeType": "text/markdown" },
+            { "mimeType": "application/pdf" },
+            { "mimeType": "image/*" },
+            { "mimeType": "application/octet-stream" }
+          ]
+        }
+      ],
       "adaptiveIcon": {
         "backgroundColor": "#F6F1E8",
         "foregroundImage": "./assets/images/android-icon-foreground.png",
@@ -51,7 +75,8 @@
           "microphonePermission": false
         }
       ],
-      "expo-background-task"
+      "expo-background-task",
+      "./plugins/with-rich-documents"
     ],
     "experiments": {
       "typedRoutes": true,

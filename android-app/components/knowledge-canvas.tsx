@@ -8,12 +8,14 @@ import Animated, {
   useSharedValue,
   withTiming,
 } from 'react-native-reanimated';
-import Svg, { Circle, Defs, Line, Pattern, Rect } from 'react-native-svg';
+import Svg, { Circle, Defs, Pattern, Rect } from 'react-native-svg';
 
 import { calculateFocalZoom, clampCanvasScale, shouldApplyPinchUpdate } from '@/components/canvas-transform';
 import { getDirectHierarchy, getPersistedBoardBounds, GRAPH_NODE_HEIGHT, GRAPH_NODE_WIDTH } from '@/components/hierarchy-layout';
 import { colors, edgeReviewColor, radii, statusColor, statusSoftColor } from '@/theme/tokens';
 import type { KnowledgeEdge, KnowledgeNode } from '@/types/domain';
+import type { CanvasViewport } from '@/data/canvas-state';
+import type { CanvasGroup, CanvasGroupMember } from '@/data/canvas-groups';
 
 export type FocusPreset = 'coral' | 'blue' | 'green' | 'amber';
 
@@ -80,6 +82,62 @@ function MarchingEdge({
   );
 }
 
+function CanvasEdgeLine({
+  x1,
+  y1,
+  x2,
+  y2,
+  color,
+  thickness,
+  dashed,
+  opacity,
+  visible,
+  label,
+  onPress,
+}: {
+  x1: number;
+  y1: number;
+  x2: number;
+  y2: number;
+  color: string;
+  thickness: number;
+  dashed: boolean;
+  opacity: number;
+  visible: boolean;
+  label: string;
+  onPress: () => void;
+}) {
+  const length = Math.max(1, Math.hypot(x2 - x1, y2 - y1));
+  const angle = Math.atan2(y2 - y1, x2 - x1);
+  return (
+    <Pressable
+      accessibilityRole="button"
+      accessibilityLabel={label}
+      onPress={onPress}
+      style={{
+        position: 'absolute',
+        left: (x1 + x2) / 2 - length / 2,
+        top: (y1 + y2) / 2 - 17,
+        width: length,
+        height: 34,
+        justifyContent: 'center',
+        opacity,
+        transform: [{ rotate: `${angle}rad` }],
+      }}
+    >
+      {visible ? <View pointerEvents="none" style={{
+        width: length,
+        height: thickness,
+        backgroundColor: dashed ? undefined : color,
+        borderTopWidth: dashed ? thickness : undefined,
+        borderTopColor: dashed ? color : undefined,
+        borderStyle: dashed ? 'dashed' : undefined,
+        borderRadius: dashed ? 0 : thickness / 2,
+      }} /> : null}
+    </Pressable>
+  );
+}
+
 type Props = {
   nodes: KnowledgeNode[];
   edges: KnowledgeEdge[];
@@ -87,7 +145,11 @@ type Props = {
   onSelectNode: (node: KnowledgeNode) => void;
   onSelectEdge: (edge: KnowledgeEdge) => void;
   onClearSelection: () => void;
-  onLongPressNode: (node: KnowledgeNode) => void;
+  groups?: CanvasGroup[];
+  groupMembers?: CanvasGroupMember[];
+  selectedGroupId?: string | null;
+  pickingNodeIds?: string[];
+  onSelectGroup?: (groupId: string) => void;
   focusPreset?: FocusPreset;
   fitRequest?: number;
   focusNodeId?: string | null;
@@ -96,6 +158,10 @@ type Props = {
   showLearningMarks?: boolean;
   onPreviewMove?: (id:string,x:number,y:number)=>void;
   onMoveNode?: (id:string,x:number,y:number)=>void;
+  initialViewport?: CanvasViewport | null;
+  restoredViewport?: CanvasViewport | null;
+  restoreRequest?: number;
+  onViewportChange?: (viewport: CanvasViewport) => void;
 };
 
 export function KnowledgeCanvas({
@@ -105,7 +171,11 @@ export function KnowledgeCanvas({
   onSelectNode,
   onSelectEdge,
   onClearSelection,
-  onLongPressNode,
+  groups = [],
+  groupMembers = [],
+  selectedGroupId = null,
+  pickingNodeIds = [],
+  onSelectGroup,
   focusPreset = 'coral',
   fitRequest = 0,
   focusNodeId = null,
@@ -114,6 +184,10 @@ export function KnowledgeCanvas({
   showLearningMarks = false,
   onPreviewMove,
   onMoveNode,
+  initialViewport = null,
+  restoredViewport = null,
+  restoreRequest = 0,
+  onViewportChange,
 }: Props) {
   const { width } = useWindowDimensions();
   const reducedMotion = useReducedMotion();
@@ -123,6 +197,8 @@ export function KnowledgeCanvas({
   const scale = useSharedValue(initialScale);
   const startX = useSharedValue(0);
   const startY = useSharedValue(0);
+  const nodeDragStartX = useSharedValue(0);
+  const nodeDragStartY = useSharedValue(0);
   const startScale = useSharedValue(initialScale);
   const pinchStartX = useSharedValue(0);
   const pinchStartY = useSharedValue(0);
@@ -136,9 +212,35 @@ export function KnowledgeCanvas({
   const hasFitted = useRef(false);
   const appliedFitRequest = useRef(fitRequest);
   const appliedFocusRequest = useRef('');
+  const appliedRestoreRequest = useRef(restoreRequest);
+
+  const reportViewport = useCallback((x: number, y: number, zoom: number, w: number, h: number) => {
+    if (onViewportChange && w > 0 && h > 0 && zoom > 0) {
+      onViewportChange({ centerX: (w / 2 - x) / zoom, centerY: (h / 2 - y) / zoom, scale: zoom });
+    }
+  }, [onViewportChange]);
 
   const board = useMemo(() => getPersistedBoardBounds(nodes), [nodes]);
   const nodeMap = useMemo(() => new Map(nodes.map((node) => [node.id, node])), [nodes]);
+  const pickedNodes = useMemo(() => new Set(pickingNodeIds), [pickingNodeIds]);
+  const groupMembersById = useMemo(() => {
+    const map = new Map<string, KnowledgeNode[]>();
+    for (const member of groupMembers) {
+      const node = nodeMap.get(member.node_id);
+      if (node) {
+        if (!map.has(member.group_id)) map.set(member.group_id, []);
+        map.get(member.group_id)!.push(node);
+      }
+    }
+    return map;
+  }, [groupMembers, nodeMap]);
+  const groupFrames = useMemo(() => groups.map(group => {
+    const members = groupMembersById.get(group.id) ?? [];
+    if (!members.length) return null;
+    const left = Math.min(...members.map(node => node.x));
+    const top = Math.min(...members.map(node => node.y));
+    return { group, left, top, right: Math.max(...members.map(node => node.x + GRAPH_NODE_WIDTH)), bottom: Math.max(...members.map(node => node.y + GRAPH_NODE_HEIGHT)) };
+  }).filter((frame): frame is NonNullable<typeof frame> => Boolean(frame)), [groups, groupMembersById]);
   const hierarchy = useMemo(() => getDirectHierarchy(selectedId, edges), [edges, selectedId]);
   const hasNodeSelection = nodes.some((node) => node.id === selectedId);
   const focusColor = focusColors[focusPreset];
@@ -166,6 +268,9 @@ export function KnowledgeCanvas({
     animation.start();
   }, [dashOffset, hasNodeSelection, reducedMotion, movingNodeId, showLearningMarks, stopMarchingAnimation]);
 
+  const panStartedOnNode = useSharedValue(false);
+  const draggingNodeId = useSharedValue('');
+
   useEffect(() => {
     startMarchingAnimation();
     return stopMarchingAnimation;
@@ -174,13 +279,17 @@ export function KnowledgeCanvas({
   const pan = Gesture.Pan()
     .maxPointers(1)
     .minDistance(3)
-    .onBegin(() => {
+    .onBegin((event) => {
       runOnJS(stopMarchingAnimation)();
+      const worldX = (event.x - translateX.value) / scale.value;
+      const worldY = (event.y - translateY.value) / scale.value;
+      panStartedOnNode.value = !movingNodeId && nodes.some(node => worldX >= node.x && worldX <= node.x + GRAPH_NODE_WIDTH && worldY >= node.y && worldY <= node.y + GRAPH_NODE_HEIGHT);
       const moving = nodes.find(n=>n.id===movingNodeId);
       startX.value = moving ? moving.x : translateX.value;
       startY.value = moving ? moving.y : translateY.value;
     })
     .onUpdate((event) => {
+      if (panStartedOnNode.value || draggingNodeId.value) return;
       if (movingNodeId && onPreviewMove) {
         runOnJS(onPreviewMove)(movingNodeId,startX.value+event.translationX/scale.value,startY.value+event.translationY/scale.value);
       } else {
@@ -189,10 +298,12 @@ export function KnowledgeCanvas({
       }
     })
     .onEnd((event,success)=>{
-      if (movingNodeId && onMoveNode) runOnJS(onMoveNode)(movingNodeId,startX.value+(success?event.translationX/scale.value:0),startY.value+(success?event.translationY/scale.value:0));
+      if (!panStartedOnNode.value && movingNodeId && onMoveNode) runOnJS(onMoveNode)(movingNodeId,startX.value+(success?event.translationX/scale.value:0),startY.value+(success?event.translationY/scale.value:0));
     })
     .onFinalize(() => {
       runOnJS(startMarchingAnimation)();
+      if (!movingNodeId && !panStartedOnNode.value) runOnJS(reportViewport)(translateX.value, translateY.value, scale.value, viewportWidth.value, viewportHeight.value);
+      panStartedOnNode.value = false;
     });
 
   const pinch = Gesture.Pinch()
@@ -236,6 +347,7 @@ export function KnowledgeCanvas({
     .onFinalize(() => {
       activePinchTouches.value = 0;
       runOnJS(startMarchingAnimation)();
+      runOnJS(reportViewport)(translateX.value, translateY.value, scale.value, viewportWidth.value, viewportHeight.value);
     });
 
   const boardPositionStyle = useAnimatedStyle(() => ({
@@ -260,12 +372,14 @@ export function KnowledgeCanvas({
       scale.value = nextScale;
       translateX.value = nextX;
       translateY.value = nextY;
+      reportViewport(nextX, nextY, nextScale, nextWidth, nextHeight);
       return;
     }
     scale.value = withTiming(nextScale, { duration: 260 });
     translateX.value = withTiming(nextX, { duration: 260 });
     translateY.value = withTiming(nextY, { duration: 260 });
-  }, [nodes, scale, translateX, translateY, viewportHeight, viewportWidth]);
+    reportViewport(nextX, nextY, nextScale, nextWidth, nextHeight);
+  }, [nodes, reportViewport, scale, translateX, translateY, viewportHeight, viewportWidth]);
 
   const focusNode = useCallback((nodeId: string) => {
     const target = nodeMap.get(nodeId);
@@ -278,7 +392,18 @@ export function KnowledgeCanvas({
     scale.value = withTiming(nextScale, { duration: 260 });
     translateX.value = withTiming(nextWidth / 2 - centerX, { duration: 260 });
     translateY.value = withTiming(nextHeight / 2 - centerY, { duration: 260 });
-  }, [nodeMap, scale, translateX, translateY, viewportHeight, viewportWidth]);
+    reportViewport(nextWidth / 2 - centerX, nextHeight / 2 - centerY, nextScale, nextWidth, nextHeight);
+  }, [nodeMap, reportViewport, scale, translateX, translateY, viewportHeight, viewportWidth]);
+
+  useEffect(() => {
+    if (!hasFitted.current || appliedRestoreRequest.current === restoreRequest || !restoredViewport) return;
+    appliedRestoreRequest.current = restoreRequest;
+    const w = viewportWidth.value, h = viewportHeight.value;
+    scale.value = restoredViewport.scale;
+    translateX.value = w / 2 - restoredViewport.centerX * restoredViewport.scale;
+    translateY.value = h / 2 - restoredViewport.centerY * restoredViewport.scale;
+    reportViewport(translateX.value, translateY.value, scale.value, w, h);
+  }, [restoreRequest, restoredViewport, reportViewport, scale, translateX, translateY, viewportWidth, viewportHeight]);
 
   useEffect(() => {
     if (!hasFitted.current || appliedFitRequest.current === fitRequest) return;
@@ -303,7 +428,15 @@ export function KnowledgeCanvas({
         viewportHeight.value = nextHeight;
         if (!hasFitted.current) {
           hasFitted.current = true;
-          fit(nextWidth, nextHeight, true);
+          if (initialViewport) {
+            scale.value = initialViewport.scale;
+            translateX.value = nextWidth / 2 - initialViewport.centerX * initialViewport.scale;
+            translateY.value = nextHeight / 2 - initialViewport.centerY * initialViewport.scale;
+          } else fit(nextWidth, nextHeight, true);
+          if (focusNodeId && focusRequest > 0 && nodeMap.has(focusNodeId)) {
+            appliedFocusRequest.current = `${focusNodeId}:${focusRequest}`;
+            focusNode(focusNodeId);
+          }
         }
       }}
       style={{ flex: 1, overflow: 'hidden', backgroundColor: '#FAFAF9' }}
@@ -327,8 +460,7 @@ export function KnowledgeCanvas({
                 boardScaleStyle,
               ]}
             >
-          <Svg width={board.boardWidth} height={board.boardHeight} style={{ position: 'absolute' }}>
-            {edges.map((edge) => {
+          {edges.map((edge) => {
               const source = nodeMap.get(edge.sourceId);
               const target = nodeMap.get(edge.targetId);
               if (!source || !target) return null;
@@ -340,36 +472,24 @@ export function KnowledgeCanvas({
                const directIncoming = hierarchy.incomingEdgeIds.has(edge.id);
                const directOutgoing = hierarchy.outgoingEdgeIds.has(edge.id);
                const direct = directIncoming || directOutgoing;
-               const reviewColor = edgeReviewColor[edge.reviewStatus];
-               const edgeColor = directIncoming ? colors.inkMuted : directOutgoing ? downstreamColor : reviewColor;
-               const visualProps = {
-                 x1,
-                 y1,
-                 x2,
-                 y2,
-                 stroke: edgeColor,
-                 strokeWidth: selected ? 6 : direct ? 5 : 2.5,
-                 strokeDasharray: direct || edge.reviewStatus === 'unverified' ? '10 7' : undefined,
-                 opacity: hasNodeSelection && !direct ? 0.28 : 1,
-                 pointerEvents: 'none' as const,
-               };
-              return (
-                <Fragment key={edge.id}>
-                  <Line
-                    key={`${edge.id}-target`}
-                    x1={x1}
-                    y1={y1}
-                    x2={x2}
-                    y2={y2}
-                    stroke="rgba(0, 0, 0, 0.001)"
-                    strokeWidth={34}
-                    onPress={() => onSelectEdge(edge)}
-                  />
-                  {hasNodeSelection && direct ? null : <Line key={edge.id} {...visualProps} />}
-                </Fragment>
+               const edgeColor = directIncoming ? colors.inkMuted : directOutgoing ? downstreamColor : edgeReviewColor[edge.reviewStatus];
+               return (
+                <CanvasEdgeLine
+                  key={edge.id}
+                  x1={x1}
+                  y1={y1}
+                  x2={x2}
+                  y2={y2}
+                  color={edgeColor}
+                  thickness={selected ? 6 : direct ? 5 : 2.5}
+                  dashed={direct || edge.reviewStatus === 'unverified'}
+                  opacity={hasNodeSelection && !direct ? 0.28 : 1}
+                  visible={!hasNodeSelection || !direct}
+                  label={`关系：${source.title} 到 ${target.title}`}
+                  onPress={() => onSelectEdge(edge)}
+                />
               );
             })}
-          </Svg>
 
           {hasNodeSelection ? (
             <View
@@ -399,8 +519,36 @@ export function KnowledgeCanvas({
             </View>
           ) : null}
 
+          {groupFrames.map(frame => <Fragment key={`group-${frame.group.id}`}>
+            <View pointerEvents="none" style={{ position: 'absolute', left: frame.left - board.minX - 12, top: frame.top - board.minY - 14, width: frame.right - frame.left + 24, height: frame.bottom - frame.top + 27, borderRadius: 19, borderWidth: selectedGroupId === frame.group.id ? 2.5 : 1.5, borderColor: selectedGroupId === frame.group.id ? colors.blue : '#A5BBD0', backgroundColor: 'rgba(138,171,201,0.055)' }} />
+            <Pressable accessibilityRole="button" accessibilityLabel={`分组：${frame.group.title}`} onPress={() => onSelectGroup?.(frame.group.id)} style={({ pressed }) => ({ position: 'absolute', left: frame.left - board.minX, top: frame.top - board.minY - 39, paddingHorizontal: 10, paddingVertical: 6, borderRadius: 12, backgroundColor: pressed || selectedGroupId === frame.group.id ? colors.blueSoft : colors.surfaceStrong, borderWidth: 1, borderColor: '#A5BBD0' })}>
+              <Text numberOfLines={1} style={{ maxWidth: 190, color: colors.ink, fontSize: 12, fontWeight: '700' }}>{frame.group.title}</Text>
+            </Pressable>
+          </Fragment>)}
+
           {nodes.map((node) => {
+             const drag = Gesture.Pan()
+               .enabled(!movingNodeId && Boolean(onPreviewMove && onMoveNode))
+               .maxPointers(1)
+               .activateAfterLongPress(480)
+               .minDistance(3)
+               .simultaneousWithExternalGesture(pan)
+               .onStart(() => {
+                  nodeDragStartX.value = node.x;
+                  nodeDragStartY.value = node.y;
+                  draggingNodeId.value = node.id;
+                  runOnJS(stopMarchingAnimation)();
+                })
+               .onUpdate(event => {
+                  if (onPreviewMove) runOnJS(onPreviewMove)(node.id, nodeDragStartX.value + event.translationX / scale.value, nodeDragStartY.value + event.translationY / scale.value);
+                })
+               .onEnd((event, success) => {
+                  if (success && onMoveNode) runOnJS(onMoveNode)(node.id, nodeDragStartX.value + event.translationX / scale.value, nodeDragStartY.value + event.translationY / scale.value);
+                  else if (onPreviewMove) runOnJS(onPreviewMove)(node.id, nodeDragStartX.value, nodeDragStartY.value);
+                })
+               .onFinalize(() => { draggingNodeId.value = ''; runOnJS(startMarchingAnimation)(); });
              const selected = node.id === selectedId;
+             const picked = pickedNodes.has(node.id);
              const directParent = hierarchy.incomingNodeIds.has(node.id);
              const directChild = hierarchy.outgoingNodeIds.has(node.id);
              const subdued = hasNodeSelection && !selected && !directParent && !directChild;
@@ -412,14 +560,11 @@ export function KnowledgeCanvas({
                    ? downstreamColor
                    : statusColor[node.status];
              return (
-              <Pressable
-                key={node.id}
+              <GestureDetector key={node.id} gesture={drag}><Pressable
                 accessibilityRole="button"
                 accessibilityState={{ selected }}
-                accessibilityLabel={`${node.title}，重要程度 ${node.importance}。长按可管理节点`}
+                accessibilityLabel={`${node.title}。长按拖动位置，点按后可打开文档和提问`}
                 onPress={() => onSelectNode(node)}
-                onLongPress={() => onLongPressNode(node)}
-                delayLongPress={520}
                 style={({ pressed }) => ({
                   position: 'absolute',
                   left: node.x - board.minX,
@@ -430,8 +575,8 @@ export function KnowledgeCanvas({
                   borderCurve: 'continuous',
                   borderWidth: showLearningMarks ? selected ? 6 : directParent ? 5 : directChild ? 4 : 1.5 : selected ? 2.5 : 1,
                   borderLeftWidth: showLearningMarks ? undefined : selected ? 4 : 3,
-                  borderColor: showLearningMarks || selected || directChild ? borderColor : '#E1DFDA',
-                  borderLeftColor: selected ? focusColor : statusColor[node.status],
+                  borderColor: picked ? colors.blue : showLearningMarks || selected || directChild ? borderColor : '#E1DFDA',
+                  borderLeftColor: picked ? colors.blue : selected ? focusColor : statusColor[node.status],
                   backgroundColor: showLearningMarks ? statusSoftColor[node.status] : colors.white,
                   padding: 13,
                   flexDirection: 'row',
@@ -461,7 +606,7 @@ export function KnowledgeCanvas({
                     {node.subtitle}
                   </Text>
                 </View>
-              </Pressable>
+              </Pressable></GestureDetector>
             );
           })}
             </Animated.View>

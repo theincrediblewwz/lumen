@@ -1,4 +1,5 @@
 import type { SQLiteDatabase } from 'expo-sqlite';
+import {documentAssets} from './rich-document';
 
 import type {
   SourceItem,
@@ -288,8 +289,215 @@ export async function addProjectSourceItem(db: SQLiteDatabase, input: NewSourceI
   return mapSourceItem(row);
 }
 
+export type SharedSourceTarget =
+  | { kind: 'existing'; nodeId: string }
+  | { kind: 'new'; title: string };
+
+/** A received share is only committed after the learner chooses its destination. */
+export async function saveSharedSourceToNode(
+  db: SQLiteDatabase,
+  input: NewSourceItem,
+  target: SharedSourceTarget,
+) {
+  if (!['text', 'markdown', 'web'].includes(input.kind)) throw new Error('这条分享路径只接收文字或链接');
+  if (!input.title.trim() || !input.contentHash || !input.segments.length || input.segments.every(segment => !segment.body.trim())) {
+    throw new Error('分享内容不完整');
+  }
+  if (input.byteSize > 8_000_000 || input.byteSize < 0) throw new Error('分享文字超过 8 MB 上限');
+  if (target.kind === 'new' && (!target.title.trim() || target.title.trim().length > 160)) {
+    throw new Error('节点标题需为 1–160 字符');
+  }
+
+  const cleanTitle = input.title.trim().slice(0, 160);
+  const now = new Date().toISOString();
+  let sourceItemId = '';
+  let documentId = '';
+  let nodeId = '';
+  let reused = false;
+  await db.withExclusiveTransactionAsync(async transaction => {
+    if (!await transaction.getFirstAsync('SELECT id FROM projects WHERE id = ?', input.projectId)) {
+      throw new Error('目标白板不存在');
+    }
+    if (target.kind === 'existing' && !await transaction.getFirstAsync(
+      'SELECT id FROM nodes WHERE id = ? AND project_id = ?', target.nodeId, input.projectId,
+    )) throw new Error('所选节点不属于目标白板');
+
+    const existing = await transaction.getFirstAsync<{ id: string; derived_document_id: string }>(
+      'SELECT id, derived_document_id FROM source_items WHERE project_id = ? AND content_hash = ? AND kind = ?',
+      input.projectId, input.contentHash, input.kind,
+    );
+    reused = Boolean(existing);
+    sourceItemId = existing?.id ?? createId('source');
+    documentId = existing?.derived_document_id ?? createId('doc');
+    if (!existing) {
+      await transaction.runAsync(
+        `INSERT INTO documents (id, project_id, path, title, body, origin, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, 'source', ?, ?)`,
+        documentId, input.projectId, `资料/分享-${documentId}.md`, cleanTitle,
+        buildSourceDocumentBody(input, cleanTitle), now, now,
+      );
+      await transaction.runAsync(
+        `INSERT INTO source_items (
+          id, project_id, kind, title, original_name, media_type, asset_uri, source_url,
+          content_hash, byte_size, extraction_status, extraction_error,
+          derived_document_id, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, 'ready', NULL, ?, ?, ?)`,
+        sourceItemId, input.projectId, input.kind, cleanTitle, input.originalName,
+        input.mediaType, input.sourceUrl, input.contentHash, input.byteSize, documentId, now, now,
+      );
+      for (const [index, segment] of input.segments.entries()) {
+        await transaction.runAsync(
+          `INSERT INTO source_segments (id, source_item_id, ordinal, locator_type, locator, body, content_hash)
+           VALUES (?, ?, ?, ?, ?, ?, ?)`,
+          createId('segment'), sourceItemId, index, segment.locatorType,
+          segment.locator, segment.body.trim(), segment.contentHash,
+        );
+      }
+    }
+
+    if (target.kind === 'existing') {
+      nodeId = target.nodeId;
+      await transaction.runAsync(
+        'INSERT OR IGNORE INTO node_documents (id, node_id, document_id, sort_order) VALUES (?, ?, ?, 1)',
+        createId('link'), nodeId, documentId,
+      );
+    } else {
+      const linked = existing && await transaction.getFirstAsync<{ node_id: string }>(
+        'SELECT node_id FROM node_documents WHERE document_id = ? ORDER BY sort_order, node_id LIMIT 1', documentId,
+      );
+      if (linked) {
+        nodeId = linked.node_id;
+      } else {
+        nodeId = createId('node');
+        const position = await transaction.getFirstAsync<{ x: number; count: number }>(
+          'SELECT COALESCE(MAX(x), 0) AS x, COUNT(*) AS count FROM nodes WHERE project_id = ?', input.projectId,
+        );
+        await transaction.runAsync(
+          `INSERT INTO nodes (id, project_id, title, subtitle, x, y, importance, status, sort_order, document_id)
+           VALUES (?, ?, ?, ?, ?, ?, 5, 'learning', NULL, ?)`,
+          nodeId, input.projectId, target.title.trim(), '分享资料',
+          (position?.x ?? 0) + 320, 40 + ((position?.count ?? 0) % 6) * 130, documentId,
+        );
+      }
+    }
+    await transaction.runAsync('UPDATE projects SET updated_at = ? WHERE id = ?', now, input.projectId);
+  });
+  const source = await db.getFirstAsync<SourceItemRow>(`${sourceItemSelect} WHERE item.id = ?`, sourceItemId);
+  if (!source) throw new Error('分享保存后无法读取');
+  return { source: mapSourceItem(source), nodeId, documentId, reused };
+}
+
+/** A multi-file share commits every source and its common target node, or none of them. */
+export async function saveSharedSourcesToNode(
+  db: SQLiteDatabase,
+  inputs: NewSourceItem[],
+  target: SharedSourceTarget,
+) {
+  if (!inputs.length || inputs.length > 11) throw new Error('一次最多保存 10 个文件和一段分享文字');
+  const projectId = inputs[0].projectId;
+  for (const input of inputs) {
+    if (input.projectId !== projectId || !['text', 'markdown', 'web', 'pdf', 'image'].includes(input.kind)) throw new Error('分享资料所属白板或类型无效');
+    if (!input.title.trim() || !input.contentHash || !input.segments.length || input.segments.every(segment => !segment.body.trim())) throw new Error('分享资料缺少可保存的正文');
+    const limit = input.kind === 'pdf' ? 32 * 1024 * 1024 : input.kind === 'image' ? 20_000_000 : 8_000_000;
+    if (!Number.isSafeInteger(input.byteSize) || input.byteSize < 0 || input.byteSize > limit) throw new Error('分享资料超过可同步的大小上限');
+    if (input.originalName && !input.assetUri) throw new Error('文件原件尚未持久保存');
+    if (input.assetUri && (!input.assetUri.startsWith('file://') || /(?:^|\/)\.\.(?:\/|$)/u.test(decodeURIComponent(input.assetUri)))) {
+      throw new Error('原始附件必须保存在应用私有目录');
+    }
+  }
+  if (target.kind === 'new' && (!target.title.trim() || target.title.trim().length > 160)) throw new Error('节点标题需为 1–160 字符');
+
+  const now = new Date().toISOString();
+  const documentIds: string[] = [];
+  const sourceItemIds: string[] = [];
+  const reused: boolean[] = [];
+  let nodeId = '';
+  await db.withExclusiveTransactionAsync(async tx => {
+    if (!await tx.getFirstAsync('SELECT id FROM projects WHERE id = ?', projectId)) throw new Error('目标白板不存在');
+    if (target.kind === 'existing' && !await tx.getFirstAsync('SELECT id FROM nodes WHERE id = ? AND project_id = ?', target.nodeId, projectId)) {
+      throw new Error('所选节点不属于目标白板');
+    }
+    for (const input of inputs) {
+      const existing = await tx.getFirstAsync<{ id: string; derived_document_id: string }>(
+        'SELECT id, derived_document_id FROM source_items WHERE project_id = ? AND content_hash = ? AND kind = ?',
+        projectId, input.contentHash, input.kind,
+      );
+      const sourceItemId = existing?.id ?? createId('source');
+      const documentId = existing?.derived_document_id ?? createId('doc');
+      const title = input.title.trim().slice(0, 160);
+      if (!existing) {
+        await tx.runAsync(
+          `INSERT INTO documents (id, project_id, path, title, body, origin, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, 'source', ?, ?)`,
+          documentId, projectId, `资料/分享-${documentId}.md`, title, buildSourceDocumentBody(input, title), now, now,
+        );
+        await tx.runAsync(
+          `INSERT INTO source_items (id, project_id, kind, title, original_name, media_type, asset_uri, source_url,
+           content_hash, byte_size, extraction_status, extraction_error, derived_document_id, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'ready', NULL, ?, ?, ?)`,
+          sourceItemId, projectId, input.kind, title, input.originalName, input.mediaType, input.assetUri,
+          input.sourceUrl, input.contentHash, input.byteSize, documentId, now, now,
+        );
+        for (const [index, segment] of input.segments.entries()) {
+          await tx.runAsync(
+            `INSERT INTO source_segments (id, source_item_id, ordinal, locator_type, locator, body, content_hash)
+             VALUES (?, ?, ?, ?, ?, ?, ?)`,
+            createId('segment'), sourceItemId, index, segment.locatorType, segment.locator,
+            segment.body.trim(), segment.contentHash,
+          );
+        }
+      }
+      sourceItemIds.push(sourceItemId);
+      documentIds.push(documentId);
+      reused.push(Boolean(existing));
+    }
+
+    if (target.kind === 'existing') nodeId = target.nodeId;
+    else {
+      if (reused.every(Boolean)) {
+        const candidates = await tx.getAllAsync<{ node_id: string }>(
+          'SELECT node_id FROM node_documents WHERE document_id = ? ORDER BY sort_order, node_id', documentIds[0],
+        );
+        for (const candidate of candidates) {
+          let allLinked = true;
+          for (const documentId of documentIds) {
+            if (!await tx.getFirstAsync('SELECT 1 FROM node_documents WHERE node_id = ? AND document_id = ?', candidate.node_id, documentId)) {
+              allLinked = false;
+              break;
+            }
+          }
+          if (allLinked) { nodeId = candidate.node_id; break; }
+        }
+      }
+      if (!nodeId) {
+        nodeId = createId('node');
+        const position = await tx.getFirstAsync<{ x: number; count: number }>(
+          'SELECT COALESCE(MAX(x), 0) AS x, COUNT(*) AS count FROM nodes WHERE project_id = ?', projectId,
+        );
+        await tx.runAsync(
+          `INSERT INTO nodes (id, project_id, title, subtitle, x, y, importance, status, sort_order, document_id)
+           VALUES (?, ?, ?, ?, ?, ?, 5, 'learning', NULL, ?)`,
+          nodeId, projectId, target.title.trim(), '分享资料',
+          (position?.x ?? 0) + 320, 40 + ((position?.count ?? 0) % 6) * 130, documentIds[0],
+        );
+      }
+    }
+    for (const documentId of documentIds) {
+      await tx.runAsync(
+        'INSERT OR IGNORE INTO node_documents (id, node_id, document_id, sort_order) VALUES (?, ?, ?, 1)',
+        createId('link'), nodeId, documentId,
+      );
+    }
+    await tx.runAsync('UPDATE projects SET updated_at = ? WHERE id = ?', now, projectId);
+  });
+  return { projectId, nodeId, documentIds, sourceItemIds, reused };
+}
+
 export async function deleteProjectSourceItem(db: SQLiteDatabase, sourceItemId: string) {
   await db.withExclusiveTransactionAsync(async (transaction) => {
+  const rich=await transaction.getAllAsync<{body:string}>('SELECT body FROM documents WHERE project_id=(SELECT project_id FROM source_items WHERE id=?)',sourceItemId);
+  const source=await transaction.getFirstAsync<{content_hash:string}>('SELECT content_hash FROM source_items WHERE id=?',sourceItemId);
+  if(source&&rich.some(doc=>documentAssets(doc.body).some(ref=>ref.sha256===source.content_hash)))throw Error('这份原件被图文或PDF文档引用，请在节点管理中解除挂载；原件仍保留以支持撤销。');
     const row = await transaction.getFirstAsync<{
       project_id: string;
       derived_document_id: string;

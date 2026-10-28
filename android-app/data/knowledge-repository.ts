@@ -1,4 +1,6 @@
+import {documentModelText} from './rich-document';
 import type { SQLiteDatabase } from 'expo-sqlite';
+import { loadKnowledgeReferences } from './knowledge-library';
 
 import type {
   DetailLevel,
@@ -159,6 +161,7 @@ export type NodeDeleteImpact = {
   isRoot: boolean;
   edgeCount: number;
   answerCount: number;
+  reviewEventCount: number;
   favoriteCount: number;
   activeJobCount: number;
 };
@@ -363,8 +366,13 @@ export async function buildExpansionContext(
   if (!parent) throw new Error('当前节点不存在');
   const graph = await getGraph(db, parent.project_id);
   const document = await getDocument(db, parent.document_id);
-  if (!graph || !document) throw new Error('无法建立展开上下文');
-  const incidentEdges = graph.edges
+  if (!graph || !graph.nodes.some(node => node.id === parent.id)
+    || !document || document.projectId !== parent.project_id) {
+    throw new Error('当前节点或主文档已变化，请重新打开白板后再提问');
+  }
+  const nodesById = new Map(graph.nodes.map(node => [node.id, node]));
+  const validEdges = graph.edges.filter(edge => nodesById.has(edge.sourceId) && nodesById.has(edge.targetId));
+  const incidentEdges = validEdges
     .filter((edge) => edge.sourceId === parent.id || edge.targetId === parent.id)
     .sort((a, b) => b.importance - a.importance);
   const neighborIds = new Set(incidentEdges.map((edge) => edge.sourceId === parent.id ? edge.targetId : edge.sourceId));
@@ -383,12 +391,13 @@ export async function buildExpansionContext(
     `${cleanPrompt}\n${parent.title}\n${parent.subtitle}`,
     maxSourceLength,
   );
-  const pathResult = buildLearningPath(graph, parent.id);
+  const pathResult = buildLearningPath({ ...graph, edges: validEdges }, parent.id);
   const relatedKnowledge = await Promise.all(incidentEdges.slice(0, maxRelatedDocuments).map(async (edge) => {
     const neighborId = edge.sourceId === parent.id ? edge.targetId : edge.sourceId;
-    const neighbor = graph.nodes.find((node) => node.id === neighborId)!;
-    const neighborDocument = await getDocument(db, neighbor.documentId);
-    const body = neighborDocument?.body ?? '';
+    const neighbor = nodesById.get(neighborId)!;
+    const loadedDocument = await getDocument(db, neighbor.documentId);
+    const neighborDocument = loadedDocument?.projectId === parent.project_id ? loadedDocument : null;
+    const body = documentModelText(neighborDocument?.body ?? '');
     return {
       id: neighbor.id,
       title: neighbor.title,
@@ -420,6 +429,7 @@ export async function buildExpansionContext(
       title: graph.project.title,
       sourceText: projectSource.text,
       sourceTextTruncated: projectSource.truncated,
+      knowledgeReferences: await loadKnowledgeReferences(db, graph.project.id, prompt, { nodeId, sourceBound: graph.project.contentPolicy.mode === 'summary', allowOutside: graph.project.contentPolicy.allowOutsideKnowledge }),
       contentPolicy: graph.project.contentPolicy,
       sourceReferences: projectSource.references,
     },
@@ -433,9 +443,9 @@ export async function buildExpansionContext(
       document: {
         path: document.path,
         title: document.title,
-        body: document.body.slice(0, maxDocumentLength),
+        body: documentModelText(document.body).slice(0, maxDocumentLength),
         origin: document.origin,
-        truncated: document.body.length > maxDocumentLength,
+        truncated: documentModelText(document.body).length > maxDocumentLength,
       },
     },
     nearbyNodes: graph.nodes
@@ -713,6 +723,13 @@ export async function undoGraphMutationBatch(db: SQLiteDatabase, batchId: string
         ...nodeIds,
       );
       if ((mastery?.count ?? 0) > 0) throw new Error('这些新节点已经产生掌握记录，不能整批撤销');
+      const reviewTable = await transaction.getFirstAsync("SELECT name FROM sqlite_master WHERE type='table' AND name='review_events'");
+      if (reviewTable) {
+        const reviews = await transaction.getFirstAsync<{ count: number }>(
+          `SELECT COUNT(*) AS count FROM review_events WHERE node_id IN (${placeholders})`, ...nodeIds,
+        );
+        if ((reviews?.count ?? 0) > 0) throw new Error('这些新节点已经产生复习记录，不能整批撤销');
+      }
     }
     if (edgeIds.length) {
       await transaction.runAsync(
@@ -830,12 +847,15 @@ async function readNodeDeleteImpact(db: SQLiteDatabase, nodeId: string): Promise
     node.project_id,
     nodeId,
   );
+  const hasReviewEvents = await db.getFirstAsync("SELECT 1 FROM sqlite_master WHERE type='table' AND name='review_events'");
+  const reviews = hasReviewEvents ? await db.getFirstAsync<{ count: number }>('SELECT COUNT(*) AS count FROM review_events WHERE node_id=?', nodeId) : null;
   return {
     nodeId,
     title: node.title,
     isRoot: project?.graph_kind !== 'free' && root?.id === nodeId,
     edgeCount: counts?.edge_count ?? 0,
     answerCount: counts?.answer_count ?? 0,
+    reviewEventCount: reviews?.count ?? 0,
     favoriteCount: counts?.favorite_count ?? 0,
     activeJobCount: counts?.active_job_count ?? 0,
   };

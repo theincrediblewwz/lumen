@@ -13,7 +13,10 @@ import type { BlobRef, SyncEntity, SyncState, SyncTransport } from '../sync/core
 import { basicAuthorization } from '../sync/authorization';
 import { installVerifiedBlob } from '../sync/blob-installation';
 import { createFreeBoard, listNodeDocuments } from '../data/node-workspace';
-import { beginConversationTurn, createConversation, listMessages, updateConversationReply } from '../data/conversations';
+import { createManualNode } from '../data/node-workspace';
+import { createCanvasGroup, deleteCanvasGroup, renameCanvasGroup } from '../data/canvas-groups';
+import { beginConversationTurn, createConversation, listMessages, saveDiscussionAsNode, updateConversationReply } from '../data/conversations';
+import { openNoteDraft, saveOrganizedNoteAsNode, updateNoteDraft } from '../data/note-drafts';
 import { composeReadingQuestion, createReadingReference, parseReadingQuestion, resolveReadingReference } from '../data/reading-reference';
 
 const sha256 = async (bytes: Uint8Array) => createHash('sha256').update(bytes).digest('hex');
@@ -120,6 +123,23 @@ test('reading selection snapshots survive offline queue and a second SQLite devi
   const messages = await listMessages(b.db, chat); assert.equal(messages.length, 2); assert.equal(messages[0].body, body);
   const restored = await b.db.getFirstAsync<{ id: string; projectId: string; body: string }>('SELECT id,project_id AS projectId,body FROM documents WHERE id=?', document.id);
   assert.deepEqual(await resolveReadingReference(parseReadingQuestion(messages[0].body)!.reference, restored, digest), { status: 'exact', index: 1 });
+});
+
+test('organized note and raw capture keep separate provenance across SQLite devices while working draft stays local', async t => {
+  const a = await database('note-phone'); const b = await database('note-peer', true);
+  t.after(() => { a.raw.close(); b.raw.close(); });
+  const chat = await createConversation(a.db, 'project-transformer', 'node-transformer', '笔记同步');
+  const turn = await beginConversationTurn(a.db, chat, '怎么理解？');
+  await updateConversationReply(a.db, turn.assistantId, '原始回答', 'complete', null);
+  const draft = await openNoteDraft(a.db, chat, [turn.assistantId]);
+  await updateNoteDraft(a.db, draft.id, { title: '整理后的结论', body: '## 核心结论\n\n我的理解', parentNodeId: 'node-transformer' });
+  const note = await saveOrganizedNoteAsNode(a.db, draft.id);
+  const raw = await saveDiscussionAsNode(a.db, { title: '原文', conversationId: chat, messageIds: [turn.assistantId] });
+  const transport = new MemoryTransport(); await sync(a.db, transport); await sync(b.db, transport);
+  assert.equal((b.raw.prepare('SELECT body FROM documents WHERE id=?').get(note.documentId) as { body: string }).body, '## 核心结论\n\n我的理解');
+  assert.equal((b.raw.prepare('SELECT body FROM documents WHERE id=?').get(raw.documentId) as { body: string }).body, '## AI\n\n原始回答');
+  assert.equal((b.raw.prepare('SELECT selection_key FROM conversation_documents WHERE document_id=?').get(note.documentId) as { selection_key: string }).selection_key, `note:v1:${draft.id}`);
+  assert.equal((b.raw.prepare('SELECT count(*) AS n FROM note_drafts').get() as { n: number }).n, 0);
 });
 
 test('migration tracks every content table and local queue/state commit rolls back as one unit', async () => {
@@ -231,7 +251,7 @@ test('delete tombstones stay durable and replay without resurrection', async () 
   a.raw.close(); b.raw.close();
 });
 
-test('all 21 content categories including conversation provenance, learning and reading positions round-trip', async () => {
+test('all 24 content categories including review history, canvas groups, conversation provenance and reading positions round-trip', async () => {
   const a = await database('phone'); const b = await database('desktop', true); const t = new MemoryTransport();
   a.raw.exec(`
     INSERT INTO topics VALUES('topic',NULL,'学习专题','now','now');
@@ -245,6 +265,7 @@ test('all 21 content categories including conversation provenance, learning and 
     INSERT INTO source_segments VALUES('segment','source',0,'paragraph','第一段','原文','hash');
     INSERT INTO source_citations VALUES('citation','project-transformer','node','node-transformer','source','第一段','原文','now');
     INSERT INTO mastery_attempts VALUES('mastery','project-transformer','node-transformer','解释','理解','重点','passed','now');
+    INSERT INTO review_events VALUES('review','project-transformer','node-transformer','doc-transformer','sha','session','解释','我的回答','原文','fuzzy','2026-09-28T08:00:00.000Z','2026-09-29T08:00:00.000Z');
     INSERT INTO graph_mutation_batches VALUES('batch','project-transformer','node-transformer','old-job','answer','applied','[]','[]','[]','{}','now',NULL);
     INSERT INTO conversations VALUES('conversation','project-transformer','node-transformer','进一步理解','now','now');
     INSERT INTO conversation_messages VALUES('message','conversation','assistant','完整对话','complete',0,NULL,'local','now','now');
@@ -252,6 +273,8 @@ test('all 21 content categories including conversation provenance, learning and 
     INSERT INTO node_documents VALUES('extra-link','node-transformer','saved',1);
     INSERT INTO conversation_documents VALUES('provenance','conversation',NULL,'saved','node-transformer','["message"]','selection','now');
     INSERT INTO reading_positions VALUES('position','saved','heading',0.6,'now');
+    INSERT INTO canvas_groups VALUES('group','project-transformer','知识结构','now','now');
+    INSERT INTO canvas_group_members VALUES('node-transformer','project-transformer','group','node-transformer','now');
   `);
   await sync(a.db, t); await sync(b.db, t);
   for (const table of SYNC_TABLES) {
@@ -259,6 +282,35 @@ test('all 21 content categories including conversation provenance, learning and 
     assert.deepEqual(b.raw.prepare(`SELECT * FROM ${table} ORDER BY ${orderBy}`).all(), a.raw.prepare(`SELECT * FROM ${table} ORDER BY ${orderBy}`).all(), table);
   }
   a.raw.close(); b.raw.close();
+});
+
+test('offline group rename conflicts retain both names and group deletion tombstones preserve member nodes', async () => {
+  const a = await database('phone'); const b = await database('desktop', true); const t = new MemoryTransport();
+  const second = await createManualNode(a.db, { projectId: 'project-transformer', title: '第二个', body: '# 内容' });
+  const created = await createCanvasGroup(a.db, 'project-transformer', '原名', ['node-transformer', second]);
+  await sync(a.db, t); await sync(b.db, t);
+  await renameCanvasGroup(a.db, 'project-transformer', created.groupId, '手机名称');
+  await renameCanvasGroup(b.db, 'project-transformer', created.groupId, '桌面名称');
+  await sync(a.db, t); await sync(b.db, t); await sync(a.db, t);
+  const conflicts = await listSyncConflicts(a.db);
+  assert.equal(conflicts.length, 1);
+  assert.equal(conflicts[0].key, entityKey({ kind: 'canvas_groups', id: created.groupId }));
+  assert.deepEqual(new Set(conflicts[0].versions.map(version => version.entity.data?.title)), new Set(['手机名称', '桌面名称']));
+  assert.equal((a.raw.prepare('SELECT title FROM canvas_groups WHERE id=?').get(created.groupId) as { title: string }).title, '手机名称');
+  assert.equal((b.raw.prepare('SELECT title FROM canvas_groups WHERE id=?').get(created.groupId) as { title: string }).title, '桌面名称');
+  a.raw.close(); b.raw.close();
+
+  const c = await database('phone-2'); const d = await database('desktop-2', true); const t2 = new MemoryTransport();
+  const member = await createManualNode(c.db, { projectId: 'project-transformer', title: '保留节点', body: '# 保留' });
+  const group = await createCanvasGroup(c.db, 'project-transformer', '临时组', ['node-transformer', member]);
+  await sync(c.db, t2); await sync(d.db, t2);
+  await deleteCanvasGroup(c.db, 'project-transformer', group.groupId);
+  await sync(c.db, t2); await sync(d.db, t2);
+  assert.equal((d.raw.prepare('SELECT count(*) AS n FROM canvas_groups').get() as { n: number }).n, 0);
+  assert.equal((d.raw.prepare('SELECT count(*) AS n FROM canvas_group_members').get() as { n: number }).n, 0);
+  assert.ok(d.raw.prepare('SELECT id FROM nodes WHERE id=?').get(member));
+  assert.equal((await listSyncConflicts(d.db)).length, 0);
+  c.raw.close(); d.raw.close();
 });
 
 test('foreground/background workers share a durable lease and interrupted owners expire safely', async () => {

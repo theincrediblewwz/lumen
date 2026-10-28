@@ -1,0 +1,5 @@
+# Preserve pinned schema bytes for SHA-256 provenance.
+contracts/historyandknowledge/knowledge-document-v1.schema.json -text whitespace=blank-at-eol,blank-at-eof,space-before-tab,cr-at-eol
+
+# Binary PDF fixtures must retain their exact bytes and cross-reference offsets.
+*.pdf binary

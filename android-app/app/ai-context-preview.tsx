@@ -1,10 +1,12 @@
-import { Stack, useLocalSearchParams } from 'expo-router';
+import { router, Stack, useLocalSearchParams } from 'expo-router';
 import { ScrollView, Text, View } from 'react-native';
 
 import type { ContextPlan } from '@/ai/context-plan';
 import { getPreparedContextPreview } from '@/ai/context-preview-store';
 import type { ModelLearningContext } from '@/ai/model-learning-context';
-import { colors, radii } from '@/theme/tokens';
+import { colors } from '@/theme/tokens';
+import { QuietDisclosure } from '@/components/quiet-disclosure';
+import { WorkspaceButton } from '@/components/workspace-controls';
 
 export default function AiContextPreviewScreen() {
   const { previewId } = useLocalSearchParams<{ previewId?: string }>();
@@ -19,7 +21,7 @@ export default function AiContextPreviewScreen() {
       contentContainerStyle={{ padding: 18, paddingBottom: 48, gap: 14 }}
       style={{ backgroundColor: colors.canvas }}
     >
-      <Stack.Screen options={{ title: 'AI 发送内容预览' }} />
+      <Stack.Screen options={{ title: '本次参考' }} />
       {error ? <Text selectable style={{ color: colors.coral, fontSize: 14, lineHeight: 21 }}>{error}</Text> : null}
       {plan ? (
         <>
@@ -28,12 +30,19 @@ export default function AiContextPreviewScreen() {
             return (
               <>
           <View style={{ gap: 6 }}>
-            <Text selectable style={{ color: colors.ink, fontSize: 22, lineHeight: 29, fontWeight: '800' }}>这次会带上哪些学习信息</Text>
+            <Text selectable style={{ color: colors.ink, fontSize: 22, lineHeight: 29, fontWeight: '600' }}>这次参考哪些内容</Text>
             <Text selectable style={{ color: colors.inkMuted, fontSize: 13.5, lineHeight: 20 }}>
-              这不是把前面的内容全部塞给 AI，而是按本次问题选择最小充分证据。内部 ID、文件路径、API key、其他项目和整张无关图谱不会发送；返回后若又编辑了节点，真正发送时会重新生成计划。
+              {qualityPath === 'deep' ? '深入构建分 3 个阶段，分别计费。' : '快速生成。'}展开查看原文，返回后继续提问。
             </Text>
           </View>
 
+          <ContextCard
+            title="本次问题"
+            initiallyOpen
+            meta={truncationMeta(context.currentQuestion.truncated)}
+            body={context.currentQuestion.text}
+          />
+          {(context.knowledgeEvidence ?? []).map(ref => <QuietDisclosure key={`${ref.entryId}:${ref.revisionId}`} title={ref.title} meta={`${ref.kind === 'material' ? '材料' : ref.kind === 'experience' ? '经验' : '我的理解'}${ref.truncated ? ' · 节选' : ''}`}><Text selectable style={{ color: colors.ink, fontSize: 14, lineHeight: 24 }}>{ref.excerpt}</Text>{ref.source ? <Text selectable style={{ color: colors.inkMuted, fontSize: 12, lineHeight: 20 }}>{ref.source}</Text> : null}<WorkspaceButton secondary label="查看引用原文" onPress={() => router.push({ pathname: '/knowledge-library', params: { entryId: ref.entryId, revisionId: ref.revisionId } })} /></QuietDisclosure>)}
           <ContextCard
             title={qualityPath === 'deep' ? '深入构建 · 3 个连续阶段' : '快速生成 · 1 次请求'}
             meta={qualityPath === 'deep' ? '知识底稿 → 因人施教 → 图谱编排' : '直接回答并生成图谱'}
@@ -43,8 +52,8 @@ export default function AiContextPreviewScreen() {
           />
 
           <ContextCard
-            title={`上下文计划 · ${questionShapeLabel[plan.questionShape]}`}
-            meta={`指纹 ${plan.fingerprint} · 约 ${plan.budget.selectedEstimatedTokens}/${plan.budget.evidenceBudgetTokens} tokens`}
+            title={`学习资料 · ${questionShapeLabel[plan.questionShape]}`}
+            meta={`已选 ${plan.selected.length} 项`}
             body={plan.selected.map((item) => (
               `带上 · ${item.title}\n原因：${item.reasons.join('；')}${item.truncated ? '\n状态：已按预算截断' : ''}`
             )).join('\n\n')}
@@ -68,11 +77,6 @@ export default function AiContextPreviewScreen() {
                 `${item.category === 'favorite' ? '收藏证据' : understandingCategoryLabel[item.category]} · ${item.title}\n来源：${item.provenance}${item.truncated ? '\n状态：已按预算截断' : ''}`
               )).join('\n\n')
               : '（本次问题没有选中相关个人资料或收藏）'}
-          />
-          <ContextCard
-            title="本次问题"
-            meta={truncationMeta(context.currentQuestion.truncated)}
-            body={context.currentQuestion.text}
           />
           <ContextCard
             title="这张图"
@@ -132,12 +136,6 @@ export default function AiContextPreviewScreen() {
             title="本次生成边界"
             body={`最多新增 ${context.outputLimits.maxNewNodes} 个知识点和 ${context.outputLimits.maxNewEdges} 条关系；数量由问题本身决定，不会为了凑数强行展开。`}
           />
-          <View style={{ padding: 14, borderRadius: radii.medium, borderCurve: 'continuous', backgroundColor: colors.amberSoft, gap: 5 }}>
-            <Text selectable style={{ color: colors.ink, fontSize: 13, fontWeight: '800' }}>学习资料只作为参考</Text>
-            <Text selectable style={{ color: colors.inkMuted, fontSize: 12.5, lineHeight: 19 }}>
-              节点笔记、补充资料和旧回答中的文字不会改变返回格式，也不会触发密钥泄露或外部操作。AI 会优先回答本次问题，并避免重复图中已经存在的知识。
-            </Text>
-          </View>
               </>
             );
           })()}
@@ -147,16 +145,8 @@ export default function AiContextPreviewScreen() {
   );
 }
 
-function ContextCard({ title, meta, body }: { title: string; meta?: string; body: string }) {
-  return (
-    <View style={{ padding: 15, borderRadius: radii.medium, borderCurve: 'continuous', backgroundColor: colors.surfaceStrong, gap: 8 }}>
-      <View style={{ gap: 2 }}>
-        <Text selectable style={{ color: colors.ink, fontSize: 14, fontWeight: '800' }}>{title}</Text>
-        {meta ? <Text selectable style={{ color: colors.inkMuted, fontSize: 11.5 }}>{meta}</Text> : null}
-      </View>
-      <Text selectable style={{ color: colors.ink, fontSize: 12.5, lineHeight: 19 }}>{body}</Text>
-    </View>
-  );
+function ContextCard({ title, meta, body, initiallyOpen = false }: { title: string; meta?: string; body: string; initiallyOpen?: boolean }) {
+  return <QuietDisclosure title={title} meta={meta} initiallyOpen={initiallyOpen}><Text selectable style={{ color: colors.ink, fontSize: 14, lineHeight: 24 }}>{body}</Text></QuietDisclosure>;
 }
 
 function truncationMeta(truncated: boolean) {

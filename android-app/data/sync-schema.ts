@@ -1,10 +1,14 @@
 /** Content only: credentials and executable AI jobs never enter the sync log. */
-export const SYNC_TABLES = [
+const BASE_SYNC_TABLES = [
   'topics', 'projects', 'documents', 'nodes', 'edges', 'node_answers', 'prompt_templates',
   'ai_understanding_documents', 'project_ai_scope_settings', 'favorites', 'favorite_bindings',
   'source_items', 'source_segments', 'source_citations', 'mastery_attempts', 'graph_mutation_batches',
   'conversations', 'conversation_messages', 'node_documents', 'conversation_documents', 'reading_positions',
 ] as const;
+const GROUP_SYNC_TABLES = ['canvas_groups', 'canvas_group_members'] as const;
+const REVIEW_SYNC_TABLES = ['review_events'] as const;
+const KNOWLEDGE_SYNC_TABLES = ['knowledge_entries', 'knowledge_revisions', 'knowledge_bindings', 'knowledge_reference_settings'] as const;
+export const SYNC_TABLES = [...BASE_SYNC_TABLES, ...GROUP_SYNC_TABLES, ...REVIEW_SYNC_TABLES, ...KNOWLEDGE_SYNC_TABLES] as const;
 
 export type SyncTable = typeof SYNC_TABLES[number];
 
@@ -19,7 +23,7 @@ export function syncIdSql(table: SyncTable, alias = '') {
   return keys ? `json_array(${keys.map((key) => prefix + key).join(',')})` : `${prefix}id`;
 }
 
-const triggers = SYNC_TABLES.flatMap((table) => ['INSERT', 'UPDATE', 'DELETE'].map((action) => {
+const triggersFor = (tables: readonly SyncTable[]) => tables.flatMap((table) => ['INSERT', 'UPDATE', 'DELETE'].map((action) => {
   const row = action === 'DELETE' ? 'OLD' : 'NEW';
   return `CREATE TRIGGER sync_track_${table}_${action.toLowerCase()}
     AFTER ${action} ON ${table} WHEN (SELECT suppress FROM sync_control WHERE id=1)=0
@@ -32,6 +36,13 @@ const triggers = SYNC_TABLES.flatMap((table) => ['INSERT', 'UPDATE', 'DELETE'].m
         ON CONFLICT(kind,entity_id) DO UPDATE SET revision=excluded.revision;` : ''}
     END;`;
 })).join('\n');
+const triggers = triggersFor(BASE_SYNC_TABLES);
+
+/** v17 only: these tables do not exist when the historical v14 migration runs. */
+export const GROUP_SYNC_TRIGGERS_SQL = triggersFor(GROUP_SYNC_TABLES);
+/** v18 only: review_events is created after the initial sync migration. */
+export const REVIEW_SYNC_TRIGGERS_SQL = triggersFor(REVIEW_SYNC_TABLES);
+export const KNOWLEDGE_SYNC_TRIGGERS_SQL = triggersFor(KNOWLEDGE_SYNC_TABLES);
 
 /** Run after the fusion migration, in its own exclusive migration transaction. */
 export const SYNC_MIGRATION_SQL = `
@@ -47,5 +58,5 @@ export const SYNC_MIGRATION_SQL = `
     status TEXT NOT NULL DEFAULT 'paused',device_id TEXT NOT NULL DEFAULT '',background_error TEXT);
   INSERT INTO sync_settings(id) VALUES(1);
   ${triggers}
-  ${SYNC_TABLES.map((table) => `INSERT INTO sync_changes(kind,entity_id,revision) SELECT '${table}',${syncIdSql(table)},0 FROM ${table};`).join('\n')}
+  ${BASE_SYNC_TABLES.map((table) => `INSERT INTO sync_changes(kind,entity_id,revision) SELECT '${table}',${syncIdSql(table)},0 FROM ${table};`).join('\n')}
 `;

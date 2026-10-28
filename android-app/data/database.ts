@@ -1,9 +1,10 @@
 import type { SQLiteDatabase } from 'expo-sqlite';
 import { FUSION_MIGRATION_SQL } from './fusion-schema';
-import { SYNC_MIGRATION_SQL } from './sync-schema';
+import { KNOWLEDGE_LIBRARY_MIGRATION_SQL } from './knowledge-library-schema';
+import { GROUP_SYNC_TRIGGERS_SQL, REVIEW_SYNC_TRIGGERS_SQL, SYNC_MIGRATION_SQL } from './sync-schema';
 
 const INITIAL_PROJECT_ID = 'project-transformer';
-export const CURRENT_DATABASE_VERSION = 14;
+export const CURRENT_DATABASE_VERSION = 19;
 
 const BACKUP_CONTENT_TABLES = ['projects', 'documents', 'nodes', 'edges', 'node_answers', 'prompt_templates'] as const;
 const BACKUP_CONTENT_ACTIONS = ['INSERT', 'UPDATE', 'DELETE'] as const;
@@ -24,6 +25,104 @@ const backupTriggers = BACKUP_CONTENT_TABLES.flatMap((table) => BACKUP_CONTENT_A
     WHERE id = 1;
   END;
 `)).join('\n');
+
+const groupBackupTriggers = (['canvas_groups', 'canvas_group_members'] as const).flatMap((table) => BACKUP_CONTENT_ACTIONS.map((action) => `
+  CREATE TRIGGER backup_${table}_${action.toLowerCase()} AFTER ${action} ON ${table}
+  BEGIN
+    UPDATE local_backup_jobs SET revision=revision+1,
+      status=CASE WHEN (SELECT enabled FROM local_backup_settings WHERE id=1)=0 THEN 'idle'
+        WHEN status='running' THEN 'running' ELSE 'pending' END,
+      requested_at=strftime('%Y-%m-%dT%H:%M:%fZ','now'),
+      last_error=CASE WHEN status='running' THEN last_error ELSE NULL END WHERE id=1;
+  END;
+`)).join('\n');
+
+export const CANVAS_GROUP_MIGRATION_SQL = `
+  CREATE TABLE canvas_groups (
+    id TEXT PRIMARY KEY NOT NULL,
+    project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    title TEXT NOT NULL CHECK(length(trim(title)) BETWEEN 1 AND 80),
+    created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+  );
+  CREATE INDEX canvas_groups_project ON canvas_groups(project_id,id);
+  CREATE TABLE canvas_group_members (
+    id TEXT PRIMARY KEY NOT NULL,
+    project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    group_id TEXT NOT NULL REFERENCES canvas_groups(id) ON DELETE CASCADE,
+    node_id TEXT NOT NULL UNIQUE REFERENCES nodes(id) ON DELETE CASCADE,
+    created_at TEXT NOT NULL,
+    CHECK(id=node_id)
+  );
+  CREATE INDEX canvas_group_members_group ON canvas_group_members(group_id,node_id);
+  CREATE TRIGGER canvas_group_members_insert_owner BEFORE INSERT ON canvas_group_members
+  BEGIN
+    SELECT RAISE(ABORT,'分组成员不能跨图谱') WHERE
+      (SELECT project_id FROM canvas_groups WHERE id=NEW.group_id) IS NOT NEW.project_id OR
+      (SELECT project_id FROM nodes WHERE id=NEW.node_id) IS NOT NEW.project_id;
+  END;
+  CREATE TRIGGER canvas_group_members_update_owner BEFORE UPDATE ON canvas_group_members
+  BEGIN
+    SELECT RAISE(ABORT,'分组成员不能跨图谱') WHERE
+      (SELECT project_id FROM canvas_groups WHERE id=NEW.group_id) IS NOT NEW.project_id OR
+      (SELECT project_id FROM nodes WHERE id=NEW.node_id) IS NOT NEW.project_id;
+  END;
+  ${GROUP_SYNC_TRIGGERS_SQL}
+  ${groupBackupTriggers}
+  PRAGMA user_version = 17;
+`;
+
+export const REVIEW_MIGRATION_SQL = `
+  CREATE TABLE review_events (
+    id TEXT PRIMARY KEY NOT NULL,
+    project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    node_id TEXT NOT NULL REFERENCES nodes(id) ON DELETE CASCADE,
+    document_id TEXT NOT NULL,
+    document_hash TEXT NOT NULL,
+    session_id TEXT NOT NULL,
+    question TEXT NOT NULL,
+    learner_answer TEXT NOT NULL,
+    reference_points TEXT NOT NULL,
+    rating TEXT NOT NULL CHECK(rating IN ('remembered','fuzzy','forgotten','deferred')),
+    created_at TEXT NOT NULL,
+    due_at TEXT NOT NULL,
+    UNIQUE(session_id,node_id)
+  );
+  CREATE INDEX review_events_node_time ON review_events(node_id,created_at,id);
+  CREATE TABLE local_review_sessions (
+    id TEXT PRIMARY KEY NOT NULL,
+    project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    root_node_id TEXT NOT NULL REFERENCES nodes(id) ON DELETE CASCADE,
+    cards_json TEXT NOT NULL,
+    position INTEGER NOT NULL DEFAULT 0,
+    answer_draft TEXT NOT NULL DEFAULT '',
+    draft_revision INTEGER NOT NULL DEFAULT 0,
+    revealed INTEGER NOT NULL DEFAULT 0 CHECK(revealed IN (0,1)),
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    UNIQUE(project_id,root_node_id)
+  );
+  CREATE TRIGGER review_events_owner BEFORE INSERT ON review_events BEGIN
+    SELECT RAISE(ABORT,'复习记录不能跨图谱') WHERE
+      (SELECT project_id FROM nodes WHERE id=NEW.node_id) IS NOT NEW.project_id;
+  END;
+  CREATE TRIGGER review_events_update_owner BEFORE UPDATE ON review_events BEGIN
+    SELECT RAISE(ABORT,'复习记录不能跨图谱') WHERE
+      (SELECT project_id FROM nodes WHERE id=NEW.node_id) IS NOT NEW.project_id;
+  END;
+  CREATE TRIGGER review_sessions_owner BEFORE INSERT ON local_review_sessions BEGIN
+    SELECT RAISE(ABORT,'复习会话不能跨图谱') WHERE
+      (SELECT project_id FROM nodes WHERE id=NEW.root_node_id) IS NOT NEW.project_id;
+  END;
+  ${REVIEW_SYNC_TRIGGERS_SQL}
+  ${(['INSERT','UPDATE','DELETE'] as const).map(action => `CREATE TRIGGER backup_review_events_${action.toLowerCase()} AFTER ${action} ON review_events BEGIN
+    UPDATE local_backup_jobs SET revision=revision+1,
+      status=CASE WHEN (SELECT enabled FROM local_backup_settings WHERE id=1)=0 THEN 'idle'
+        WHEN status='running' THEN 'running' ELSE 'pending' END,
+      requested_at=strftime('%Y-%m-%dT%H:%M:%fZ','now'),
+      last_error=CASE WHEN status='running' THEN last_error ELSE NULL END WHERE id=1;
+  END;`).join('\n')}
+  PRAGMA user_version = 18;
+`;
 
 export const LOCAL_BACKUP_MIGRATION_SQL = `
   CREATE TABLE local_backup_settings (
@@ -624,6 +723,50 @@ export async function migrateDatabase(db: SQLiteDatabase) {
       await transaction.execAsync('PRAGMA user_version = 14');
     });
   }
+  if (version < 15) {
+    await db.withExclusiveTransactionAsync(async transaction => {
+      await transaction.execAsync(`CREATE TABLE note_drafts (
+        id TEXT PRIMARY KEY, conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+        message_ids_json TEXT NOT NULL, source_snapshot_json TEXT NOT NULL,
+        title TEXT NOT NULL DEFAULT '', body TEXT NOT NULL DEFAULT '', parent_node_id TEXT,
+        generation TEXT NOT NULL DEFAULT 'manual' CHECK(generation IN ('manual','ai')),
+        status TEXT NOT NULL DEFAULT 'editing' CHECK(status IN ('editing','generating','interrupted','saved')),
+        saved_document_id TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+      );
+      CREATE INDEX note_drafts_conversation ON note_drafts(conversation_id,updated_at);
+      PRAGMA user_version = 15;`);
+    });
+  }
+  if (version < 16) {
+    await db.withExclusiveTransactionAsync(async transaction => {
+      await transaction.execAsync(`CREATE TABLE local_canvas_recent (
+        id INTEGER PRIMARY KEY CHECK(id=1),
+        project_id TEXT REFERENCES projects(id) ON DELETE SET NULL
+      );
+      CREATE TABLE local_canvas_state (
+        project_id TEXT PRIMARY KEY REFERENCES projects(id) ON DELETE CASCADE,
+        center_x REAL, center_y REAL, scale REAL,
+        collapsed_ids_json TEXT NOT NULL DEFAULT '[]'
+      );
+      PRAGMA user_version = 16;`);
+    });
+  }
+  if (version < 17) {
+    await db.withExclusiveTransactionAsync(async transaction => {
+      await transaction.execAsync(CANVAS_GROUP_MIGRATION_SQL);
+    });
+  }
+  if (version < 18) {
+    await db.withExclusiveTransactionAsync(async transaction => {
+      await transaction.execAsync(REVIEW_MIGRATION_SQL);
+    });
+  }
+  if (version < 19) {
+    await db.withExclusiveTransactionAsync(async transaction => {
+      await transaction.execAsync(KNOWLEDGE_LIBRARY_MIGRATION_SQL);
+    });
+  }
+  await db.runAsync("UPDATE note_drafts SET status='interrupted' WHERE status='generating'");
   await db.runAsync("UPDATE conversation_messages SET status='interrupted' WHERE status='pending'");
   const now = new Date().toISOString();
   await db.runAsync(

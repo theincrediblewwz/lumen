@@ -207,7 +207,8 @@ html.glass-on body {
 }
 
 /* macOS：为左上角系统红绿灯预留安全区，避免和品牌名重叠 */
-.titlebar.is-mac {
+.titlebar.is-mac,
+.titlebar.is-platform-pending {
   padding-left: 80px;
 }
 
@@ -292,6 +293,9 @@ html.glass-on body {
   position: fixed;
   z-index: 1000;
   min-width: 184px;
+  max-width: calc(100vw - 16px);
+  max-height: calc(100dvh - 16px);
+  overflow-y: auto;
   padding: 6px;
   background: var(--bg-node);
   border: var(--border-node) solid var(--border-color);
@@ -328,6 +332,27 @@ html.glass-on body {
 .ctx-item:hover:not(:disabled) {
   background: var(--accent-soft);
   color: var(--accent);
+}
+.ctx-item:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; background: var(--accent-soft); }
+.ctx-group-toggle { display: flex; align-items: center; justify-content: space-between; gap: 24px; }
+.ctx-menu.has-groups { min-width: min(264px, calc(100vw - 16px)); }
+.ctx-group-items { margin: 2px 0 5px 9px; padding-left: 5px; border-left: 1px solid var(--border-color); }
+.action-confirm { max-width: 440px; padding: 24px; }
+.action-confirm p { margin: 0 0 24px; line-height: 1.8; }
+.action-confirm-buttons { display: flex; justify-content: flex-end; gap: 10px; }
+.board-surface > .error-bar {
+  position: absolute;
+  z-index: 900;
+  bottom: 20px;
+  left: 50%;
+  transform: translateX(-50%);
+  max-width: min(640px, calc(100% - 40px));
+  width: max-content;
+  border: 1px solid var(--border-color);
+  border-radius: 12px;
+  background: var(--bg-node);
+  box-shadow: var(--shadow-node-hover);
+  overflow-wrap: anywhere;
 }
 
 .ctx-item:disabled {
@@ -648,10 +673,12 @@ html.motion-off .node-card.is-flash { animation: none; }
 .sidebar.has-boards {
   width: 448px; /* 选中项目：项目栏 + 白板栏 */
 }
+.sidebar[hidden] { display: none; }
 
 .sidebar.is-collapsed {
   width: 0;
   opacity: 0;
+  visibility: hidden;
 }
 
 /* 内层固定宽度，避免收起时内容被挤压重排（只做整体平移淡出） */
@@ -1397,6 +1424,17 @@ html.native-glass .canvas-toolbar {
   border: 1px solid var(--glass-edge);
   box-shadow: inset 0 1px 0 var(--glass-hi), var(--shadow-node-hover);
 }
+
+/* The sidebar is part of the window chrome, not a floating glass card. */
+html.glass-on .sidebar.glass-surface,
+html.native-glass .sidebar.glass-surface {
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+  background: rgba(var(--glass-rgb), calc(var(--glass-alpha) + 0.22));
+}
+html.glass-on .titlebar,
+html.native-glass .titlebar { border-bottom-color: transparent; }
 
 /* 节点卡：最需清晰可读，染色最重 */
 html.native-glass .node-card {
@@ -2440,6 +2478,6 @@ html.motion-off .edge-line { animation: none; }
 .drop-hint-busy {
   background: var(--text-secondary);
 }
+.tree-move-hint { display:flex;align-items:center;gap:12px;pointer-events:auto; }
 
-
-
+.error-bar.is-information { color:var(--text-secondary); }

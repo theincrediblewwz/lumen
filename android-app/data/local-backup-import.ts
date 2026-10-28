@@ -1,4 +1,7 @@
+import {validateOriginalAssets} from './rich-backup';
 import type { SQLiteDatabase } from 'expo-sqlite';
+import { copyKnowledgeLibrary, validateKnowledgeLibrary, remapKnowledgeValue } from './knowledge-library-core';
+import { mapKnowledgeBoards, writeKnowledgeLibraryRows } from './knowledge-library';
 
 import {
   APP_BACKUP_FORMAT,
@@ -30,11 +33,12 @@ export type LocalBackupImportProgress = {
 export type LocalBackupImportResult = {
   projectIds: string[];
   projectCount: number;
-  sourceVersion: 2 | 3 | 4;
+  sourceVersion: 2 | 3 | 4 | 5 | 6;
   importedTopicCount: number;
   importedFavoriteCount: number;
 };
 
+const restoredOriginals=new WeakMap<LocalBackupSnapshot,Map<string,string>>();
 export async function pickLocalBackupSnapshot(): Promise<LocalBackupSnapshot | null> {
   const [DocumentPicker, FileSystem] = await Promise.all([
     import('expo-document-picker'),
@@ -49,7 +53,14 @@ export async function pickLocalBackupSnapshot(): Promise<LocalBackupSnapshot | n
   const asset = result.assets[0];
   if ((asset.size ?? 0) > MAX_BACKUP_CHARS) throw new Error('备份 JSON 超过 64 MB 上限');
   const raw = await FileSystem.readAsStringAsync(asset.uri);
-  return parseLocalBackupSnapshot(raw);
+  const snapshot=parseLocalBackupSnapshot(raw);
+  if(snapshot.version===6&&snapshot.originalAssets?.length){
+    const permission=await FileSystem.StorageAccessFramework.requestDirectoryPermissionsAsync();if(!permission.granted)throw Error('需要选择包含“原件”子文件夹的同一备份目录，尚未恢复');
+    const {safName}=await import('./android-folder-transfer');const dirs=await FileSystem.StorageAccessFramework.readDirectoryAsync(permission.directoryUri);const originalDir=dirs.find(uri=>safName(uri)==='原件');if(!originalDir)throw Error('所选备份目录缺少“原件”文件夹');
+    const paths=await FileSystem.StorageAccessFramework.readDirectoryAsync(originalDir);const {File}=await import('expo-file-system');const {syncAssets}=await import('../sync/assets');const uris=new Map<string,string>();
+    for(const ref of snapshot.originalAssets){const uri=paths.find(p=>safName(p)===`${ref.sha256}.bin`);if(!uri)throw Error('备份原件不完整，尚未创建副本');const bytes=await new File(uri).bytes();uris.set(`${ref.projectId}/${ref.sourceId}`,await syncAssets.install({sha256:ref.sha256,size:ref.size,mediaType:ref.mediaType},bytes));}restoredOriginals.set(snapshot,uris);
+  }
+  return snapshot;
 }
 
 export function parseLocalBackupSnapshot(raw: string): LocalBackupSnapshot {
@@ -61,11 +72,14 @@ export function parseLocalBackupSnapshot(raw: string): LocalBackupSnapshot {
     throw new Error('所选文件不是有效 JSON');
   }
   const root = objectValue(value, '备份');
-  if (root.format !== APP_BACKUP_FORMAT || (root.version !== 2 && root.version !== 3 && root.version !== 4)) {
-    throw new Error('请选择 LearnStuff 自动备份 v2、v3 或 v4 的槽位 JSON');
+  if (root.format !== APP_BACKUP_FORMAT || (root.version !== 2 && root.version !== 3 && root.version !== 4 && root.version !== 5 && root.version !== 6)) {
+    throw new Error('请选择 LearnStuff 自动备份 v2、v3、v4 或 v5 的槽位 JSON');
   }
   const projects = arrayValue(root.projects, '项目', MAX_PROJECTS).map(validatePortableManifest);
-  if (root.version === 4 && projects.some((project) => project.version !== 3 || !project.fusion)) throw new Error('v4 备份缺少对话与阅读资料，请选择完整备份');
+  if (Number(root.version) >= 4 && projects.some((project) => project.version < 3 || !project.fusion)) throw new Error('备份缺少对话与阅读资料，请选择完整备份');
+  if (Number(root.version) >= 5 && root.knowledgeLibrary === undefined) throw new Error('v5 备份缺少独立知识库，请选择完整备份');
+  const knowledgeLibrary = root.knowledgeLibrary === undefined ? undefined : validateKnowledgeLibrary(root.knowledgeLibrary);
+  if (knowledgeLibrary && (knowledgeLibrary.bindings.some(row => { const project = projects.find(item => item.project.id === row.project_id); return !project || row.node_id && !project.nodes.some(node => node.id === row.node_id); }) || knowledgeLibrary.settings.some(row => !projects.some(project => project.project.id === row.project_id)))) throw new Error('备份知识引用的白板或节点缺失');
   const answers = arrayValue(root.answers ?? [], '回答', MAX_ANSWERS).map((value, index) => {
     const row = objectValue(value, `回答 ${index + 1}`);
     return {
@@ -173,6 +187,8 @@ export function parseLocalBackupSnapshot(raw: string): LocalBackupSnapshot {
     projectAiScopeSettings,
     favorites,
     favoriteBindings,
+    knowledgeLibrary,
+    originalAssets:root.version===6?validateOriginalAssets(root.originalAssets,projects):undefined,
     exclusions: arrayValue(root.exclusions ?? [], '排除项', 100)
       .map((item) => stringValue(item, '排除项', 500)),
   };
@@ -182,8 +198,13 @@ export async function importLocalBackupAsCopies(
   db: SQLiteDatabase,
   snapshotInput: LocalBackupSnapshot,
   onProgress?: (progress: LocalBackupImportProgress) => Promise<void> | void,
+  suppliedOriginals?:ReadonlyMap<string,string>,
 ): Promise<LocalBackupImportResult> {
+  const originalUris=suppliedOriginals??restoredOriginals.get(snapshotInput)??new Map<string,string>();
   const snapshot = parseLocalBackupSnapshot(JSON.stringify(snapshotInput));
+  if(snapshot.originalAssets?.some(ref=>!originalUris.has(`${ref.projectId}/${ref.sourceId}`)))throw Error('请先选择并校验完整备份原件，尚未恢复');
+  const knowledgeCopy = snapshot.knowledgeLibrary ? copyKnowledgeLibrary(snapshot.knowledgeLibrary) : undefined;
+  const restored = knowledgeCopy ? remapKnowledgeValue(snapshot, knowledgeCopy.entryIds, knowledgeCopy.revisionIds) : snapshot;
   const total = Math.max(1, snapshot.projects.length + 1);
   const imported: Array<{
     originalProjectId: string;
@@ -197,7 +218,7 @@ export async function importLocalBackupAsCopies(
         total,
         label: `正在恢复项目 ${index + 1}/${snapshot.projects.length} · ${project.project.title}`,
       });
-      const mapping = await importPortableManifestWithMapping(db, project);
+      const mapping = await importPortableManifestWithMapping(db, project, new Map((snapshot.originalAssets??[]).filter(ref=>ref.projectId===project.project.id).map(ref=>[ref.sourceId,originalUris.get(`${ref.projectId}/${ref.sourceId}`)!])), knowledgeCopy);
       imported.push({
         originalProjectId: project.project.id,
         originalTopicId: project.project.topicId ?? null,
@@ -205,8 +226,9 @@ export async function importLocalBackupAsCopies(
       });
     }
     await onProgress?.({ current: snapshot.projects.length, total, label: '正在恢复专题、AI 了解与收藏索引' });
-    const importedFavoriteCount = await restoreBackupMetadata(db, snapshot, imported);
-    await onProgress?.({ current: total, total, label: '备份副本恢复完成' });
+    const importedFavoriteCount = await restoreBackupMetadata(db, restored, imported, knowledgeCopy);
+    // Completion is already committed. A UI callback cannot undo this successful import.
+    await Promise.resolve().then(() => onProgress?.({ current: total, total, label: '备份副本恢复完成' })).catch(() => undefined);
     return {
       projectIds: imported.map((item) => item.mapping.projectId),
       projectCount: imported.length,
@@ -228,11 +250,14 @@ async function restoreBackupMetadata(
     originalTopicId: string | null;
     mapping: PortableImportMapping;
   }>,
+  knowledgeCopy?: ReturnType<typeof copyKnowledgeLibrary>,
 ) {
   const projects = new Map(imported.map((item) => [item.originalProjectId, item]));
   const topicIds = new Map(snapshot.topics.map((topic) => [topic.id, createId('topic')]));
   const favoriteIds = new Map<string, string>();
   await db.withExclusiveTransactionAsync(async (transaction) => {
+    if (knowledgeCopy) await writeKnowledgeLibraryRows(transaction, mapKnowledgeBoards(knowledgeCopy.library,
+      new Map(imported.map(item => [item.originalProjectId, item.mapping.projectId])), new Map(imported.flatMap(item => [...item.mapping.nodeIds]))));
     for (const topic of snapshot.topics) {
       await transaction.runAsync(
         'INSERT INTO topics (id, parent_id, title, created_at, updated_at) VALUES (?, NULL, ?, ?, ?)',

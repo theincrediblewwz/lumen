@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { api, type SnapshotMeta, type BoardFile } from '../api';
+import { BoardBackupList } from './BoardBackupList';
 
 /**
  * 快照与恢复（M6-8）：列出当前白板 `.snapshots/` 下的历史版本，可恢复 / 删除，也可手动存一份。
@@ -151,6 +152,9 @@ export function SnapshotPanel({
         {note && <div className="snap-note">{note}</div>}
 
         <div className="snap-list">
+          {projectId&&boardId&&<BoardBackupList projectId={projectId} boardId={boardId} onRestored={onRestored}/>}
+          <h3>结构快照</h3>
+          <p className="settings-hint">以下旧快照仅包含节点和连线，不包含文档原件。</p>
           {busy && items.length === 0 && <div className="gs-status">加载中…</div>}
           {!busy && items.length === 0 && (
             <div className="gs-status gs-hint">

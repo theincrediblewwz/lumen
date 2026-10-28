@@ -1,7 +1,16 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { AiGatewayError, normalizeGatewayUrl } from '../ai/gateway-client';
+import { AiGatewayError, normalizeGatewayUrl, gatewayRequestContext } from '../ai/gateway-client';
+import type { ExpansionContext } from '../ai/graph-patch';
+
+test('strict legacy gateways receive no new field when knowledge is disabled; authorized versions remain intact', () => {
+  const context = { project: { id: 'board', knowledgeReferences: [] } } as unknown as ExpansionContext;
+  assert.equal('knowledgeReferences' in gatewayRequestContext(context).project, false);
+  assert.deepEqual(context.project.knowledgeReferences, []);
+  context.project.knowledgeReferences = [{ entryId: 'own', revisionId: 'old-version', title: '理解', kind: 'understanding', excerpt: '我的观点', source: '', authorship: 'user', truncated: false }];
+  assert.deepEqual(gatewayRequestContext(context).project.knowledgeReferences, context.project.knowledgeReferences);
+});
 
 test('accepts an exact HTTPS origin and approved local emulator origins', () => {
   assert.equal(normalizeGatewayUrl('https://gateway.example.com/'), 'https://gateway.example.com');

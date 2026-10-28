@@ -3,7 +3,7 @@ import test from 'node:test';
 import { streamDiscussion } from '../ai/discussion-client';
 import type { ByokCredentials } from '../ai/byok-profile';
 
-const credentials: ByokCredentials = { profile: { kind: 'custom', label: 'Fixture', baseUrl: 'https://fixture.invalid/v1', model: 'fixture-model', jsonMode: false, tokenLimitField: 'max_tokens' }, apiKey: 'fixture-key' };
+const credentials: ByokCredentials = { profile: { kind: 'custom', label: 'Fixture', baseUrl: 'https://fixture.invalid/v1', model: 'fixture-model', jsonMode: false, tokenLimitField: 'max_tokens' }, apiKey: 'fixture-key-1' };
 const messages = [{ role: 'user' as const, content: '解释公式' }];
 const delta = (content: string) => `data: ${JSON.stringify({ choices: [{ delta: { content }, finish_reason: null }] })}\r\n\r\n`;
 const stop = 'data: {"choices":[{"delta":{},"finish_reason":"stop"}]}\n\n';

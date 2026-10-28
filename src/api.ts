@@ -49,6 +49,7 @@ export type BoardEdge = {
 
 export type BoardFile = {
   _disk_revision?: string;
+  _sync_content_policy?: { mode: string; allowOutsideKnowledge: boolean };
   version: number;
   id: string;
   name: string;
@@ -61,6 +62,8 @@ export type BoardFile = {
 };
 
 const boardRevisions = new Map<string, string>();
+/** Only adopt a revision returned atomically with that exact board snapshot. */
+export function rememberBoardRevision(board:BoardFile):void { if(board._disk_revision)boardRevisions.set(board.id,board._disk_revision); }
 const chatRevisions = new Map<string,string>();
 let chatQueue:Promise<unknown>=Promise.resolve();
 let saveQueue: Promise<unknown> = Promise.resolve();
@@ -110,7 +113,7 @@ export const api = {
   boardDelete: (projectId: string, boardId: string) =>
     invoke<void>('board_delete', { projectId, boardId }),
   boardRename: (projectId: string, boardId: string, name: string) =>
-    invoke<BoardMeta>('board_rename', { projectId, boardId, name }),
+    invoke<BoardFile>('board_rename', { projectId, boardId, name }).then(board => { rememberBoardRevision(board); return board; }),
 
   /* ── 文档（M4） ── */
   docsList: (projectId: string, boardId: string) =>
@@ -119,29 +122,30 @@ export const api = {
     invoke<DocRef>('doc_import', { projectId, boardId, srcPath }),
   docWrite: (projectId: string, boardId: string, title: string, content: string) =>
     invoke<DocRef>('doc_write', { projectId, boardId, title, content }),
-  docRead: (projectId: string, boardId: string, path: string) =>
-    invoke<string>('doc_read', { projectId, boardId, path }),
+  docRead: (projectId: string, boardId: string, path: string, expectedScope?:string) =>
+    invoke<string>('doc_read', { projectId, boardId, path, expectedScope }),
   docDelete: (projectId: string, boardId: string, path: string) =>
     invoke<void>('doc_delete', { projectId, boardId, path }),
 
   /** 用系统默认程序打开文档（如 PDF）——O-4：点击 PDF = 交系统程序打开 */
-  docOpenExternal: (projectId: string, boardId: string, path: string) =>
-    invoke<void>('open_doc_external', { projectId, boardId, path }),
+  docOpenExternal: (projectId: string, boardId: string, path: string,expectedScope?:string) =>
+    invoke<void>('open_doc_external', { projectId, boardId, path,expectedScope }),
 
   /* ── AI 对话历史持久化（M5，存白板 chats.json） ── */
-  chatsRead: (projectId: string, boardId: string) =>
-    invoke<{content:string;revision:string}>('chats_read', { projectId, boardId }).then(result=>{chatRevisions.set(boardId,result.revision);return result.content;}),
+  chatsReadSnapshot:(projectId:string,boardId:string,expectedScope?:string)=>invoke<{content:string;revision:string;scope:string}>('chats_read',{projectId,boardId,expectedScope}).then(result=>{chatRevisions.set(boardId,result.revision);return result;}),
+  chatsRead: (projectId: string, boardId: string,expectedScope?:string) =>
+    invoke<{content:string;revision:string}>('chats_read', { projectId, boardId,expectedScope }).then(result=>{chatRevisions.set(boardId,result.revision);return result.content;}),
   chatsWrite: (projectId: string, boardId: string, content: string):Promise<void> => {
     const save=chatQueue.then(async()=>{const revision=await invoke<string>('chats_write',{projectId,boardId,content,expectedRevision:chatRevisions.get(boardId)??''});chatRevisions.set(boardId,revision);});
     chatQueue=save.catch(()=>{});return save;
   },
 
-  /* ── API Key 安全存储（M5-7，走 OS 凭据库，明文不落盘） ── */
-  secretSet: (account: string, secret: string) =>
-    invoke<void>('secret_set', { account, secret }),
-  secretGet: (account: string) => invoke<string | null>('secret_get', { account }),
-  secretDelete: (account: string) => invoke<void>('secret_delete', { account }),
-  secretHas: (account: string) => invoke<boolean>('secret_has', { account }),
+  /* ── Native credential storage: explicit backend, no plaintext disk writes ── */
+  secretSet: (account: string, secret: string, storage: 'system' | 'local' = 'system') =>
+    invoke<void>('secret_set', { account, secret, storage }),
+  secretGet: (account: string, storage: 'system' | 'local' = 'system') => invoke<string | null>('secret_get', { account, storage }),
+  secretDelete: (account: string, storage: 'system' | 'local' = 'system') => invoke<void>('secret_delete', { account, storage }),
+  secretHas: (account: string, storage: 'system' | 'local' = 'system') => invoke<boolean>('secret_has', { account, storage }),
 
   /* ── 全局搜索（M6-6，跨白板全文检索） ── */
   searchAll: (query: string) => invoke<SearchHit[]>('search_all', { query }),
@@ -190,13 +194,9 @@ export type SearchHit = {
 export async function pickMarkdownFiles(): Promise<string[]> {
   const picked = await open({
     multiple: true,
-    title: '选择 Markdown 文档',
-    filters: [{ name: 'Markdown', extensions: ['md', 'markdown'] }],
+    title: '选择节点文档',
+    filters: [{ name: 'Markdown、PDF 与图文 ZIP', extensions: ['md', 'markdown','pdf','zip'] }],
   });
   if (picked == null) return [];
   return Array.isArray(picked) ? picked : [picked];
 }
-
-
-
-

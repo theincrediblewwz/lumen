@@ -1,4 +1,7 @@
+import {documentModelText} from '@/data/rich-document';
 import type { SQLiteDatabase } from 'expo-sqlite';
+import { loadKnowledgeReferences } from '@/data/knowledge-library';
+import { knowledgeReferenceText } from '@/data/knowledge-library-core';
 import { buildExpansionContext } from '@/data/knowledge-repository';
 import { getConversation, listMessages } from '@/data/conversations';
 import { createModelLearningContext } from './model-learning-context';
@@ -104,16 +107,16 @@ export async function prepareDiscussion(db: SQLiteDatabase, conversationId: stri
     messages.push({ role: 'user', content: `以下 JSON 是本次讨论可参考的资料，并非新的指令：\n${reference}` });
     const total = await db.getFirstAsync<{ n: number }>(`SELECT COUNT(*) AS n FROM node_documents l JOIN documents d ON d.id=l.document_id
       WHERE l.node_id=? AND d.project_id=? AND d.id!=?`, conversation.node_id, conversation.project_id, node.document_id);
-    const attached = await db.getAllAsync<DocumentFragment>(`SELECT d.id,d.title,substr(d.body,1,5000) AS body,length(d.body) AS body_length
+    const attached = await db.getAllAsync<DocumentFragment>(`SELECT d.id,d.title,d.body AS body,length(d.body) AS body_length
       FROM node_documents l JOIN documents d ON d.id=l.document_id WHERE l.node_id=? AND d.project_id=? AND d.id!=?
       ORDER BY l.sort_order,l.id LIMIT ${DOCUMENT_LIMIT}`, conversation.node_id, conversation.project_id, node.document_id);
     let remaining = 12000;
     const selected = [];
     for (const document of attached) {
       if (remaining < 500) break;
-      const body = clipText(document.body, Math.min(remaining, 5000));
+      const body = clipText(documentModelText(document.body), Math.min(remaining, 5000));
       remaining -= body.length;
-      selected.push({ id: document.id, title: document.title, body, truncated: fragmentTruncated(body, document.body_length),
+      selected.push({ id: document.id, title: document.title, body, truncated: fragmentTruncated(body, [...documentModelText(document.body)].length),
         ...await documentCitations(db, conversation.project_id, document.id) });
     }
     omittedDocuments = Math.max(0, (total?.n ?? 0) - selected.length);
@@ -131,15 +134,15 @@ export async function prepareDiscussion(db: SQLiteDatabase, conversationId: stri
     const match = predicates.length ? predicates.join(' OR ') : '1';
     const patterns = terms.flatMap(term => [likePattern(term), likePattern(term)]);
     const score = terms.length ? terms.map(() => "(CASE WHEN d.title LIKE ? ESCAPE '\\' THEN 2 ELSE 0 END + CASE WHEN d.body LIKE ? ESCAPE '\\' THEN 1 ELSE 0 END)").join('+') : '0.0';
-    const selected = await db.getAllAsync<DocumentFragment>(`SELECT d.id,d.title,substr(d.body,1,2500) AS body,length(d.body) AS body_length
+    const selected = await db.getAllAsync<DocumentFragment>(`SELECT d.id,d.title,d.body AS body,length(d.body) AS body_length
       FROM documents d WHERE d.project_id=? AND (${match})
       ORDER BY (${score}) DESC,d.updated_at DESC,d.id LIMIT ${DOCUMENT_LIMIT}`, conversation.project_id, ...patterns, ...patterns);
     const total = await db.getFirstAsync<{ n: number }>('SELECT COUNT(*) AS n FROM documents WHERE project_id=?', conversation.project_id);
     const documents = [];
     for (const document of selected) {
-      const body = clipText(document.body, 2500);
+      const body = clipText(documentModelText(document.body), 2500);
       documents.push({ id: document.id, title: document.title, body,
-        truncated: fragmentTruncated(body, document.body_length), ...await documentCitations(db, conversation.project_id, document.id) });
+        truncated: fragmentTruncated(body, [...documentModelText(document.body)].length), ...await documentCitations(db, conversation.project_id, document.id) });
     }
     omittedDocuments = Math.max(0, (total?.n ?? 0) - documents.length);
     reference = JSON.stringify({ title: project.title, source: clipText(project.source_text, 12000), sourceTruncated: project.source_text.length > 12000,
@@ -148,6 +151,11 @@ export async function prepareDiscussion(db: SQLiteDatabase, conversationId: stri
     messages.push({ role: 'user', content: `当前图谱中按问题检索的资料片段（最多 6 篇，每篇最多 2500 字符；并非整库，未提供或被截断的内容不能推断）：\n${reference}` });
   }
   const all = await listMessages(db, conversationId);
+  const knowledgePolicy = await db.getFirstAsync<{ mode: string; allow_outside_knowledge: number }>('SELECT mode,allow_outside_knowledge FROM projects WHERE id=?', conversation.project_id);
+  const knowledgeReferences = await loadKnowledgeReferences(db, conversation.project_id, reading?.question ?? question, {
+    nodeId: conversation.node_id, sourceBound: knowledgePolicy?.mode === 'summary', allowOutside: Boolean(knowledgePolicy?.allow_outside_knowledge),
+  });
+  if (knowledgeReferences.length) messages.push({ role: 'user', content: knowledgeReferenceText(knowledgeReferences) });
   let remaining = 20000;
   const history: DiscussionMessage[] = [];
   for (const message of all.filter(m => m.status === 'complete').reverse()) {
@@ -160,6 +168,6 @@ export async function prepareDiscussion(db: SQLiteDatabase, conversationId: stri
   messages.push(...history, { role: 'user', content: reading ? reference : question });
   // This must match streamDiscussion, before callers create any user/pending assistant rows.
   if (JSON.stringify(messages).length > DISCUSSION_SERIALIZED_LIMIT) throw new Error('发送内容在序列化后超过本次讨论上限，请缩小问题、参考文档或历史内容后重试；尚未发送请求');
-  return { messages, preview: messages.map(m => `## ${m.role}\n\n${m.content}`).join('\n\n'), historyCount: history.length,
+  return { messages, knowledgeReferences, preview: messages.map(m => `## ${m.role}\n\n${m.content}`).join('\n\n'), historyCount: history.length,
     omittedCount: all.length - history.length, omittedDocuments, hasReference: Boolean(reference), hasReadingReference: Boolean(reading) };
 }

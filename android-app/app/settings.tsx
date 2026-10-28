@@ -94,7 +94,7 @@ export default function SettingsScreen() {
       await refresh();
       Alert.alert(
         '备份副本已恢复',
-        `已新建 ${result.projectCount} 个项目副本、${result.importedTopicCount} 个专题，并恢复 ${result.importedFavoriteCount} 条收藏索引。\n\n源备份：v${result.sourceVersion}。现有项目和 API key 没有被覆盖；原始 PDF/图片不在备份中。`,
+        `已新建 ${result.projectCount} 个项目副本、${result.importedTopicCount} 个专题，并恢复 ${result.importedFavoriteCount} 条收藏索引。\n\n源备份：v${result.sourceVersion}。现有项目和 API key 没有被覆盖；${result.sourceVersion===6?'已恢复校验过的PDF和图片原件。':'旧版备份不含原始PDF/图片。'}`,
       );
     } catch (error) {
       Alert.alert('备份没有恢复', error instanceof Error ? error.message : '请稍后重试');
@@ -112,7 +112,7 @@ export default function SettingsScreen() {
       if (!snapshot) return;
       Alert.alert(
         '恢复为新副本？',
-        `检测到 LearnStuff v${snapshot.version} 备份，共 ${snapshot.projects.length} 个项目。\n\n恢复不会覆盖现有内容；API key、发送授权和原始 PDF/图片不会恢复。`,
+        `检测到 LearnStuff v${snapshot.version} 备份，共 ${snapshot.projects.length} 个项目。\n\n恢复不会覆盖现有内容；API key和发送授权不会恢复。${snapshot.version===6?'将恢复校验过的PDF和图片原件。':'旧版备份不含原始PDF/图片。'}`,
         [
           { text: '取消', style: 'cancel' },
           { text: '开始恢复', onPress: () => { void restoreBackup(snapshot); } },

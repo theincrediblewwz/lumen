@@ -27,8 +27,10 @@ export function typesetMath(root: HTMLElement, batchSize = 24): TypesetHandle {
   );
   let cancelled = false;
   let raf = 0;
+  let settle=()=>{};
 
   const done = new Promise<void>((resolve) => {
+    settle=resolve;
     let i = 0;
     const step = () => {
       if (cancelled) return resolve();
@@ -64,6 +66,7 @@ export function typesetMath(root: HTMLElement, batchSize = 24): TypesetHandle {
     cancel: () => {
       cancelled = true;
       if (raf) cancelAnimationFrame(raf);
+      settle();
     },
     done,
   };

@@ -25,6 +25,8 @@ Thumbs.db
 
 # ===== 私密文件（绝不入库，见 docs/DESIGN.md §11.6）=====
 .local/
+.playwright-cli/
+output/
 .env
 .env.*
 !.env.example
@@ -44,6 +46,8 @@ mcp-endpoint*
 
 # ===== 测试与覆盖率 =====
 coverage/
+mac-ui-evidence/
+mac-preview-artifact/
 
 # ===== 用户数据（数据由用户自行指定位置）=====
 userdata/

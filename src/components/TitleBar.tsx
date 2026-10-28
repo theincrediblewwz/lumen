@@ -22,7 +22,7 @@ export function TitleBar({
   sidebarCollapsed?: boolean;
 }) {
   const isMac = platform === 'macos';
-  const showWinControls = !isMac; // Windows / Linux 自绘按钮
+  const showWinControls = Boolean(platform) && !isMac; // 平台确认后再显示自绘按钮
   const win = getCurrentWindow();
   const [maximized, setMaximized] = useState(false);
 
@@ -40,7 +40,7 @@ export function TitleBar({
 
   return (
     <div
-      className={`titlebar${isMac ? ' is-mac' : ''}`}
+      className={`titlebar${isMac ? ' is-mac' : ''}${!platform ? ' is-platform-pending' : ''}`}
       data-tauri-drag-region
     >
       {/* 侧栏开关：三根横线，紧挨品牌名 */}

@@ -76,12 +76,12 @@ describe('executeTool', () => {
   });
   it('search_board 命中文档正文', async () => {
     const r = await executeTool('search_board', { query: '造纸术' }, ctx);
-    expect(r).toContain('#n1');
+    expect(JSON.parse(r).hits[0].nodeId).toBe('n1');
     expect(r).toContain('文档命中');
   });
   it('search_board 命中标题', async () => {
     const r = await executeTool('search_board', { query: '张骞' }, ctx);
-    expect(r).toContain('#n2');
+    expect(JSON.parse(r).hits[0].nodeId).toBe('n2');
   });
   it('search_board 无命中', async () => {
     const r = await executeTool('search_board', { query: '哈利波特' }, ctx);

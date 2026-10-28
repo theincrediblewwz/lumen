@@ -99,9 +99,13 @@ pub fn board_create(project_id: String, name: String) -> Result<storage::BoardMe
 pub fn board_load(project_id: String, board_id: String) -> Result<serde_json::Value, String> {
     let _io_guard = crate::sync::IO_LOCK.lock().map_err(|e| e.to_string())?;
     let root = root()?;
-    let board = storage::load_board(&root, &project_id, &board_id)?;
+    board_snapshot(&root, &project_id, &board_id)
+}
+
+fn board_snapshot(root: &std::path::Path, project_id: &str, board_id: &str) -> Result<serde_json::Value, String> {
+    let board = storage::load_board(root, project_id, board_id)?;
     let mut value = serde_json::to_value(board).map_err(|e| e.to_string())?;
-    value["_disk_revision"] = serde_json::Value::String(crate::sync::board_revision(&root, &project_id, &board_id)?);
+    value["_disk_revision"] = serde_json::Value::String(crate::sync::board_revision(root, project_id, board_id)?);
     Ok(value)
 }
 
@@ -127,9 +131,12 @@ pub fn board_rename(
     project_id: String,
     board_id: String,
     name: String,
-) -> Result<storage::BoardMeta, String> {
+) -> Result<serde_json::Value, String> {
     let _io_guard = crate::sync::IO_LOCK.lock().map_err(|e| e.to_string())?;
-    storage::rename_board(&root()?, &project_id, &board_id, &name)
+    let root = root()?;
+    storage::rename_board(&root, &project_id, &board_id, &name)?;
+    // Return content and its revision together while still holding the IO lock.
+    board_snapshot(&root, &project_id, &board_id)
 }
 
 
@@ -163,9 +170,11 @@ pub fn doc_write(
 }
 
 #[tauri::command]
-pub fn doc_read(project_id: String, board_id: String, path: String) -> Result<String, String> {
+pub fn doc_read(project_id: String, board_id: String, path: String, expected_scope: Option<String>) -> Result<String, String> {
     let _io_guard = crate::sync::IO_LOCK.lock().map_err(|e| e.to_string())?;
-    storage::read_doc(&root()?, &project_id, &board_id, &path)
+    let root=root()?;
+    if let Some(expected)=expected_scope { crate::board_operations::ensure_scope(&root,&expected)?; }
+    Ok(crate::documents::read_payload(&root, &project_id, &board_id, &path)?.markdown)
 }
 
 #[tauri::command]
@@ -177,16 +186,18 @@ pub fn doc_delete(project_id: String, board_id: String, path: String) -> Result<
 // ───────────────── AI 对话历史持久化（M5） ─────────────────
 
 #[tauri::command]
-pub fn chats_read(project_id: String, board_id: String) -> Result<serde_json::Value, String> {
+pub fn chats_read(project_id: String, board_id: String, expected_scope:Option<String>) -> Result<serde_json::Value, String> {
     let _io_guard = crate::sync::IO_LOCK.lock().map_err(|e| e.to_string())?;
     let root=root()?;
-    Ok(serde_json::json!({"content":storage::read_chats(&root,&project_id,&board_id)?,"revision":crate::sync::chats_revision(&root,&project_id,&board_id)?}))
+    if let Some(expected)=expected_scope { crate::board_operations::ensure_scope(&root,&expected)?; }
+    Ok(serde_json::json!({"content":storage::read_chats(&root,&project_id,&board_id)?,"revision":crate::sync::chats_revision(&root,&project_id,&board_id)?,"scope":crate::board_operations::scope(&root)?}))
 }
 
 #[tauri::command]
 pub fn chats_write(project_id: String, board_id: String, content: String, expected_revision:String) -> Result<String, String> {
     let _io_guard = crate::sync::IO_LOCK.lock().map_err(|e| e.to_string())?;
     let root=root()?;
+    crate::chat_history::ensure_content_live(&root,&project_id,&board_id,&content)?;
     if crate::sync::chats_revision(&root,&project_id,&board_id)?!=expected_revision{return Err("对话已由另一设备更新，当前消息仍保留在窗口中，请保存为文档后重新打开对话".into());}
     storage::write_chats(&root,&project_id,&board_id,&content)?;
     crate::sync::chats_revision(&root,&project_id,&board_id)
@@ -195,32 +206,28 @@ pub fn chats_write(project_id: String, board_id: String, content: String, expect
 // ───────────────── API Key 安全存储（M5-7，OS 凭据库加密） ─────────────────
 
 #[tauri::command]
-pub fn secret_set(account: String, secret: String) -> Result<(), String> {
-    let _io_guard = crate::sync::IO_LOCK.lock().map_err(|e| e.to_string())?;
-    if secret.is_empty() {
-        // 空视为清除，避免在凭据库留空条目
-        return secrets::delete_secret(&account);
-    }
-    secrets::set_secret(&account, &secret)
+pub async fn secret_set(account: String, secret: String, storage: Option<String>) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || secrets::set_stored(&account, &secret, storage.as_deref()))
+        .await.map_err(|_| "凭据操作未完成".to_string())?
 }
 
 #[tauri::command]
-pub fn secret_get(account: String) -> Result<Option<String>, String> {
-    let _io_guard = crate::sync::IO_LOCK.lock().map_err(|e| e.to_string())?;
-    secrets::get_secret(&account)
+pub async fn secret_get(account: String, storage: Option<String>) -> Result<Option<String>, String> {
+    tauri::async_runtime::spawn_blocking(move || secrets::get_stored(&account, storage.as_deref()))
+        .await.map_err(|_| "凭据操作未完成".to_string())?
 }
 
 #[tauri::command]
-pub fn secret_delete(account: String) -> Result<(), String> {
-    let _io_guard = crate::sync::IO_LOCK.lock().map_err(|e| e.to_string())?;
-    secrets::delete_secret(&account)
+pub async fn secret_delete(account: String, storage: Option<String>) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || secrets::delete_stored(&account, storage.as_deref()))
+        .await.map_err(|_| "凭据操作未完成".to_string())?
 }
 
-/// 只查询是否存在密钥，不回传明文（供 UI 显示「已保存」状态）。
+/// Does not return plaintext, but may require OS authorization on first access.
+/// Opening the UI uses profile metadata, never this credential-reading command.
 #[tauri::command]
-pub fn secret_has(account: String) -> Result<bool, String> {
-    let _io_guard = crate::sync::IO_LOCK.lock().map_err(|e| e.to_string())?;
-    Ok(secrets::get_secret(&account)?.is_some())
+pub async fn secret_has(account: String, storage: Option<String>) -> Result<bool, String> {
+    Ok(secret_get(account, storage).await?.is_some())
 }
 
 // ───────────────── 全局搜索（M6-6，跨白板全文检索） ─────────────────
@@ -307,9 +314,13 @@ pub fn open_doc_external(
     project_id: String,
     board_id: String,
     path: String,
+    expected_scope:Option<String>,
 ) -> Result<(), String> {
     let _io_guard = crate::sync::IO_LOCK.lock().map_err(|e| e.to_string())?;
-    let p = storage::resolve_doc_path(&root()?, &project_id, &board_id, &path)?;
+    let root=root()?;if let Some(scope)=expected_scope{crate::board_operations::ensure_scope(&root,&scope)?;}
+    let p = crate::documents::doc_path(&root, &project_id, &board_id, &path)?;
+    if !p.is_file(){return Err("原始文档不存在".into());}
+    if !p.extension().and_then(|s|s.to_str()).is_some_and(|s|matches!(s.to_lowercase().as_str(),"pdf"|"md"|"markdown")){return Err("只能用系统阅读器打开 PDF 或 Markdown".into());}
     open_path_os(&p)
 }
 

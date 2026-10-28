@@ -1,5 +1,9 @@
+import {File} from 'expo-file-system';
+import {sha256,syncAssets,readSyncBlob} from '@/sync/assets';
+import {validateOriginalAssets,type OriginalAsset} from './rich-backup';
 import * as FileSystem from 'expo-file-system/legacy';
 import type { SQLiteDatabase } from 'expo-sqlite';
+import { loadKnowledgeLibrary } from './knowledge-library';
 import { Platform } from 'react-native';
 
 import {
@@ -160,12 +164,12 @@ export async function runPendingLocalBackup(db: SQLiteDatabase): Promise<LocalBa
     claim = await claimLocalBackupJob(db);
     if (!claim) return null;
     await updateBackupProgress(db, 1, '正在整理本地项目');
-    const snapshot = await createLocalBackupSnapshot(db, claim.targetRevision);
+    let snapshot!:LocalBackupSnapshot;await db.withExclusiveTransactionAsync(async tx=>{snapshot=await createLocalBackupSnapshot(tx,claim!.targetRevision);});
     const selectedStore = createSafFileStore(claim.directoryUri);
     const store = await selectedStore.directory!('LearnStuff-Auto-Backup');
     await writeLocalBackupSnapshot(store, snapshot, claim.nextSlot, (current, label) => (
       updateBackupProgress(db, current, label)
-    ));
+    ),ref=>readSyncBlob({sha256:ref.sha256,size:ref.size,mediaType:ref.mediaType}));
     await completeLocalBackupJob(db, claim);
     return getLocalBackupStatus(db);
   } catch (error) {
@@ -183,7 +187,7 @@ export async function createLocalBackupSnapshot(
   const rows = await db.getAllAsync<{ id: string }>('SELECT id FROM projects ORDER BY created_at, id');
   if (rows.length > MAX_BACKUP_PROJECTS) throw new Error(`自动备份最多支持 ${MAX_BACKUP_PROJECTS} 个项目`);
   const projects: PortableGraphManifest[] = [];
-  for (const row of rows) projects.push(await createPortableManifest(db, row.id));
+  for (const row of rows) projects.push(await createPortableManifest(db, row.id, false));
   const answerRows = await db.getAllAsync<{
     id: string;
     project_id: string;
@@ -242,6 +246,7 @@ export async function createLocalBackupSnapshot(
     exportedAt: new Date().toISOString(),
     revision,
     projects,
+    knowledgeLibrary: await loadKnowledgeLibrary(db),
     answers: answerRows.map((answer) => ({
       id: answer.id,
       projectId: answer.project_id,
@@ -302,6 +307,9 @@ export async function createLocalBackupSnapshot(
       'SecureStore and environment secrets',
     ],
   };
+  const originals:OriginalAsset[]=[];
+  for(const project of projects){const sources=await db.getAllAsync<{id:string;asset_uri:string|null;media_type:string;byte_size:number}>('SELECT id,asset_uri,media_type,byte_size FROM source_items WHERE project_id=?',project.project.id);for(const source of sources){if(!source.asset_uri)continue;const ref=await syncAssets.exportFile(source.asset_uri,source.media_type);if(ref.size!==source.byte_size)throw Error('原件大小与来源不一致，备份未完成');originals.push({projectId:project.project.id,sourceId:source.id,sha256:ref.sha256,size:ref.size,mediaType:ref.mediaType??source.media_type});}}
+  snapshot.originalAssets=validateOriginalAssets(originals,projects);
   const serializedLength = JSON.stringify(snapshot).length;
   if (serializedLength > MAX_BACKUP_JSON_CHARS) throw new Error('自动备份内容超过 64 MB 上限，请改用单项目主动导出');
   return snapshot;
@@ -406,6 +414,12 @@ function createSafFileStore(directoryUri: string): BackupFileStore {
       const existing = entries.find((uri) => safName(uri) === fileName);
       const uri = existing ?? await StorageAccessFramework.createFileAsync(directoryUri, fileName, mimeType);
       await StorageAccessFramework.writeAsStringAsync(uri, contents);
+    },
+    async writeBytes(fileName,mimeType,bytes){
+      const expected=fileName.replace(/\.bin$/,'');if(!/^[a-f0-9]{64}$/.test(expected)||await sha256(bytes)!==expected)throw Error('备份原件校验失败');
+      const entries=await StorageAccessFramework.readDirectoryAsync(directoryUri);const existing=entries.find(uri=>safName(uri)===fileName);
+      if(existing){if(await sha256(await new File(existing).bytes())!==expected)throw Error('备份目录中已有原件损坏，请恢复原件或另选备份目录');return;}
+      const uri=await StorageAccessFramework.createFileAsync(directoryUri,fileName,mimeType);new File(uri).write(bytes);if(await sha256(await new File(uri).bytes())!==expected)throw Error('备份原件写入不完整');
     },
     async directory(directoryName) {
       const entries = await StorageAccessFramework.readDirectoryAsync(directoryUri);

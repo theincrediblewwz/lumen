@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { api } from '../api';
-import { ReaderView } from './ReaderView';
+import { DocumentReaderView } from './DocumentReaderView';
+import { documentPayload } from '../documents/client';
+import type { DocumentPayload } from '../documents/core';
 import { OPEN_READER_EVENT, type OpenReaderArgs } from '../reader/windowManager';
 
 /**
@@ -9,10 +10,10 @@ import { OPEN_READER_EVENT, type OpenReaderArgs } from '../reader/windowManager'
  * 监听 windowManager 派发的 open-reader 事件（当不在 Tauri、或开独立窗口失败时触发），
  * 拉取文档内容并以浮层呈现 ReaderView。真机 Tauri 下正常路径走独立窗口，不经这里。
  */
-export function ReaderOverlay({ guessMath = false }: { guessMath?: boolean }) {
+export function ReaderOverlay({ guessMath = false, suspended = false }: { guessMath?: boolean; suspended?: boolean }) {
   const [args, setArgs] = useState<OpenReaderArgs | null>(null);
   const [state, setState] = useState<
-    { kind: 'loading' } | { kind: 'ok'; md: string } | { kind: 'error'; msg: string }
+    { kind: 'loading' } | { kind: 'ok'; payload: DocumentPayload } | { kind: 'error'; msg: string }
   >({ kind: 'loading' });
 
   useEffect(() => {
@@ -28,9 +29,8 @@ export function ReaderOverlay({ guessMath = false }: { guessMath?: boolean }) {
   useEffect(() => {
     if (!args) return;
     let alive = true;
-    api
-      .docRead(args.projectId, args.boardId, args.path)
-      .then((md) => alive && setState({ kind: 'ok', md }))
+    documentPayload(args.projectId, args.boardId, args.path)
+      .then((payload) => alive && setState({ kind: 'ok', payload }))
       .catch((err) => alive && setState({ kind: 'error', msg: String(err) }));
     return () => {
       alive = false;
@@ -38,20 +38,20 @@ export function ReaderOverlay({ guessMath = false }: { guessMath?: boolean }) {
   }, [args]);
 
   useEffect(() => {
-    if (!args) return;
+    if (!args || suspended) return;
     const onKey = (e: KeyboardEvent) => e.key === 'Escape' && setArgs(null);
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [args]);
+  }, [args, suspended]);
 
   if (!args) return null;
 
   return createPortal(
-    <div className="reader-overlay" onMouseDown={(e) => e.target === e.currentTarget && setArgs(null)}>
+    <div className="reader-overlay" style={suspended ? { visibility: 'hidden', pointerEvents: 'none' } : undefined} onMouseDown={(e) => e.target === e.currentTarget && setArgs(null)}>
       {state.kind === 'ok' ? (
-        <ReaderView
+        <DocumentReaderView
           title={args.title}
-          markdown={state.md}
+          payload={state.payload}
           docKey={`${args.projectId}/${args.boardId}/${args.path}`}
           onClose={() => setArgs(null)}
           guessMath={guessMath}
@@ -67,4 +67,3 @@ export function ReaderOverlay({ guessMath = false }: { guessMath?: boolean }) {
     document.body,
   );
 }
-

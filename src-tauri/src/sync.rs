@@ -2,6 +2,7 @@
 use crate::{commands, secrets, storage};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
+use unicode_normalization::UnicodeNormalization;
 use std::{collections::BTreeMap, fs, hash::{Hash, Hasher}, io::Write, path::{Component, Path, PathBuf}, sync::Mutex};
 
 pub static IO_LOCK: Mutex<()> = Mutex::new(());
@@ -30,10 +31,16 @@ pub fn chats_revision(root:&Path,project:&str,board:&str)->Result<String,String>
 }
 fn safe_path(root: &Path, relative: &str) -> Result<PathBuf, String> {
     if relative.is_empty() || relative.contains('\\') || relative.contains(':') || relative.starts_with('/') { return Err("非法的同步路径".into()); }
+    for name in relative.split('/') {
+        let stem=name.split('.').next().unwrap_or("").to_uppercase();
+        if name.is_empty() || name.ends_with(['.',' ']) || name.chars().any(|c|c.is_control()||"<>:\"|?*".contains(c)) || ["CON","PRN","AUX","NUL"].contains(&stem.as_str()) || (stem.starts_with("COM")||stem.starts_with("LPT"))&&stem.chars().count()==4&&"123456789¹²³".contains(stem.chars().last().unwrap()) {return Err("非法的跨平台同步路径".into());}
+    }
     let rel = Path::new(relative);
     if rel.components().any(|c| !matches!(c, Component::Normal(_))) { return Err("非法的同步路径".into()); }
     let mut path = root.to_path_buf();
     for c in rel.components() {
+        let name=c.as_os_str().to_str().ok_or("文件名不是UTF-8")?;
+        if path.is_dir(){for entry in fs::read_dir(&path).map_err(err)?{let existing=entry.map_err(err)?.file_name();let existing=existing.to_str().ok_or("文件名不是UTF-8")?;if existing!=name&&existing.nfc().collect::<String>().to_lowercase()==name.nfc().collect::<String>().to_lowercase(){return Err("同步路径存在大小写或Unicode冲突，原文件未改动".into());}}}
         path.push(c);
         if fs::symlink_metadata(&path).map(|m| m.file_type().is_symlink()).unwrap_or(false) { return Err("同步目录不能包含符号链接".into()); }
     }
@@ -47,6 +54,9 @@ pub fn atomic_bytes(path: &Path, bytes: &[u8]) -> Result<(), String> {
     let mut file = fs::File::create(&tmp).map_err(err)?;
     file.write_all(bytes).and_then(|_| file.sync_all()).map_err(err)?;
     drop(file);
+    commit_temp_file(&tmp,path)
+}
+pub(crate) fn commit_temp_file(tmp:&Path,path:&Path)->Result<(),String>{
     #[cfg(windows)]
     {
         use std::os::windows::ffi::OsStrExt;
@@ -75,7 +85,9 @@ pub fn recover(root: &Path) -> Result<(), String> {
     fs::remove_file(path).map_err(err)
 }
 
-fn transaction(root: &Path, files: BTreeMap<String, Vec<u8>>) -> Result<(), String> {
+pub(crate) fn transaction(root: &Path, files: BTreeMap<String, Vec<u8>>) -> Result<(), String> {
+    let mut names=BTreeMap::new();
+    for path in files.keys(){safe_path(root,path)?;let mut prefix=String::new();for component in path.split('/'){if !prefix.is_empty(){prefix.push('/');}prefix.push_str(component);let key=prefix.nfc().collect::<String>().to_lowercase();if names.get(&key).is_some_and(|previous|previous!=&prefix){return Err("同步路径存在大小写或Unicode冲突，原文件未改动".into());}names.insert(key,prefix.clone());}}
     recover(root)?;
     let mut entries = Vec::new();
     for (path, after) in files {
@@ -88,7 +100,7 @@ fn transaction(root: &Path, files: BTreeMap<String, Vec<u8>>) -> Result<(), Stri
     let mut record=Journal{committed:false,entries};
     atomic_bytes(&journal, &serde_json::to_vec(&record).map_err(err)?)?;
     for e in &record.entries {
-        if let Err(error) = atomic_bytes(&safe_path(root, &e.path)?, &e.after) {
+        if let Err(error) = safe_path(root, &e.path).and_then(|path|atomic_bytes(&path, &e.after)) {
             recover(root).map_err(|rollback| format!("写入失败，恢复日志保留：{error}; {rollback}"))?;
             return Err(error);
         }
@@ -126,8 +138,9 @@ fn collect_dir(root: &Path, relative: &str, files: &mut BTreeMap<String, Vec<u8>
     }
     Ok(())
 }
-fn snapshot(root: &Path) -> Result<Snapshot, String> {
+pub(crate) fn snapshot(root: &Path) -> Result<Snapshot, String> {
     let mut files = BTreeMap::new(); let mut total = 0;
+    if safe_path(root, "knowledge/library.json")?.exists() { read_file(root, "knowledge/library.json", &mut files, &mut total)?; }
     if storage::index_path(root).exists() { read_file(root, "index.json", &mut files, &mut total)?; }
     for project in storage::read_index(root)?.projects {
         storage::safe_id(&project.id)?;
@@ -192,17 +205,27 @@ pub fn reading_position_set(project_id:String,board_id:String,path:String,ratio:
     atomic_bytes(&file,&serde_json::to_vec(&values).map_err(err)?)
 }
 #[tauri::command]
-pub fn sync_apply(expected_revision: String, files: BTreeMap<String, Vec<u8>>, ledger: Value) -> Result<String, String> {
+pub fn sync_apply(app:tauri::AppHandle,expected_revision: String, files: BTreeMap<String, Vec<u8>>, ledger: Value) -> Result<String, String> {
     let _g = IO_LOCK.lock().map_err(err)?; let root = commands::root()?;
     if !settings(&root)?.enabled { return Err("同步已暂停".into()); }
     if snapshot(&root)?.revision != expected_revision { return Err("本地内容已改变，保留更改并在下一轮重新同步".into()); }
     let mut writes = files;
+    if let Some(bytes)=writes.get("knowledge/library.json") {
+        let library:Value=serde_json::from_slice(bytes).map_err(err)?;
+        let before=snapshot(&root)?;
+        let previous:Value=before.files.get("knowledge/library.json").map(|bytes|serde_json::from_slice(bytes).map_err(err)).transpose()?.unwrap_or_else(||serde_json::json!({"version":1,"entries":[],"revisions":[],"bindings":[],"settings":[]}));
+        crate::knowledge::validate(&library,&previous)?;
+        let mut projected=before.files; projected.extend(writes.clone());
+        crate::knowledge::validate_ownership(&library,&projected)?;
+    }
     for path in writes.keys() {
         if path.starts_with('.') { return Err("同步不能写入保留路径".into()); }
         safe_path(&root, path)?;
     }
+    let changes=crate::chat_history::prepare_sync(&root,&mut writes,&ledger)?;
     writes.insert(format!("{META}/ledger.json"), serde_json::to_vec(&ledger).map_err(err)?);
     transaction(&root, writes)?;
+    {use tauri::Emitter;let scope=crate::board_operations::scope(&root)?;for(p,b,c,deleted)in changes{let _=app.emit("lumen://chat-history-changed",json!({"projectId":p,"boardId":b,"conversationId":c,"scope":scope,"deleted":deleted}));}}
     Ok(snapshot(&root)?.revision)
 }
 
@@ -235,11 +258,13 @@ pub async fn sync_http(url: String, method: String, headers: BTreeMap<String, St
 }
 
 #[tauri::command]
-pub fn chat_capture(project_id: String, board_id: String, key: String, title: String, markdown: String, conversation_id: String, conversation: Value, message_ids: Vec<String>, parent_id: Option<String>) -> Result<storage::BoardFile, String> {
+pub fn chat_capture(project_id: String, board_id: String, key: String, title: String, markdown: String, conversation_id: String, conversation: Value, message_ids: Vec<String>, parent_id: Option<String>, expected_scope: Option<String>) -> Result<storage::BoardFile, String> {
     let _g = IO_LOCK.lock().map_err(err)?; let root = commands::root()?;
+    if let Some(expected)=expected_scope { crate::board_operations::ensure_scope(&root,&expected)?; }
     capture_at(&root,project_id,board_id,key,title,markdown,conversation_id,conversation,message_ids,parent_id)
 }
 fn capture_at(root: &Path, project_id: String, board_id: String, key: String, title: String, markdown: String, conversation_id: String, conversation: Value, message_ids: Vec<String>, parent_id: Option<String>) -> Result<storage::BoardFile, String> {
+    crate::chat_history::ensure_live(root,&project_id,&board_id,&conversation_id)?;
     if key.len() != 64 || !key.chars().all(|c| c.is_ascii_hexdigit()) || message_ids.is_empty() || markdown.trim().is_empty() || title.trim().is_empty() { return Err("保存内容无效".into()); }
     let mut board = storage::load_board(&root, &project_id, &board_id)?;
     let selection_key=format!("chat:{}:{}",conversation_id,message_ids.join(","));
@@ -255,6 +280,8 @@ fn capture_at(root: &Path, project_id: String, board_id: String, key: String, ti
     if parent_id.is_some() && parent.is_none() { return Err("来源节点已不存在".into()); }
     let (x,y) = parent.map(|n| (n.x + n.w + 80.0, n.y + 80.0)).unwrap_or((80.0, 80.0 + board.nodes.len() as f64 * 40.0));
     let now = storage::now_iso(); let doc_path = format!("docs/chat_{key}.md");
+    let target=safe_path(root,&format!("{base}/{doc_path}"))?;
+    if target.exists()&&fs::read(&target).map_err(err)?!=markdown.as_bytes(){return Err("原捕获文档已有编辑，已保留原文件；请使用新文档保存。".into());}
     board.nodes.push(storage::BoardNode { id: node_id.clone(), title: title.trim().into(), summary: Some(format!("来自对话：{conversation_id}")), x,y,w:240.0,color:None, docs: vec![storage::DocRef { path:doc_path.clone(),title:title.trim().into(),bytes:Some(markdown.len() as u64) }],created_at:now.clone(),updated_at:now.clone() });
     if let Some(parent) = parent_id { board.edges.push(storage::BoardEdge { id:format!("capture_{key}"),from:parent,to:node_id.clone(),directed:true,label:Some("对话笔记".into()),created_at:now.clone() }); }
     board.updated_at = now.clone();
@@ -263,16 +290,7 @@ fn capture_at(root: &Path, project_id: String, board_id: String, key: String, ti
     if conversation["id"].as_str() != Some(&conversation_id) || !conversation["messages"].is_array() { return Err("原对话内容无效".into()); }
     let messages = conversation["messages"].as_array().unwrap();
     if message_ids.iter().any(|id| !messages.iter().any(|m| m["id"].as_str() == Some(id))) { return Err("所选消息不存在于原对话".into()); }
-    let raw = storage::read_chats(&root, &project_id, &board_id)?;
-    let mut chats: Value = if raw.trim().is_empty() { json!({"version":1,"conversations":[]}) } else { serde_json::from_str(&raw).map_err(err)? };
-    let conversations = chats["conversations"].as_array_mut().ok_or("原对话文件结构无效")?;
-    if let Some(existing) = conversations.iter_mut().find(|c| c["id"].as_str() == Some(&conversation_id)) {
-        // A stale AI window must never replace newer messages already on disk.
-        let saved=existing["messages"].as_array_mut().ok_or("原对话消息结构无效")?;
-        for message in messages { if !saved.iter().any(|m|m["id"]==message["id"]){saved.push(message.clone());} }
-        if conversation["updatedAt"].as_str()>existing["updatedAt"].as_str(){existing["updatedAt"]=conversation["updatedAt"].clone();}
-    } else { conversations.push(conversation); }
-    files.insert(format!("{base}/chats.json"),serde_json::to_vec_pretty(&chats).map_err(err)?);
+    files.insert(format!("{base}/chats.json"),crate::board_operations::merged_chat(root,&project_id,&board_id,conversation)?);
     files.insert(format!("{base}/{doc_path}"), markdown.into_bytes());
     files.insert(format!("{base}/board.json"),serde_json::to_vec_pretty(&board).map_err(err)?);
     files.insert(captures_path,serde_json::to_vec(&captures).map_err(err)?);
@@ -283,6 +301,23 @@ fn capture_at(root: &Path, project_id: String, board_id: String, key: String, ti
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]fn recapture_never_overwrites_edited_orphan_markdown(){
+        let root=temp();let p=storage::create_project(&root,"Synthetic").unwrap();let b=storage::create_board(&root,&p.id,"Synthetic").unwrap();let base=storage::board_dir(&root,&p.id,&b.id);let key="a".repeat(64);let target=base.join(format!("docs/chat_{key}.md"));fs::write(&target,b"user edited original").unwrap();let board=fs::read(base.join("board.json")).unwrap();let convo=json!({"id":"c","messages":[{"id":"m","role":"assistant","content":"AI answer"}]});
+        assert!(capture_at(&root,p.id.clone(),b.id.clone(),key,"title".into(),"AI answer".into(),"c".into(),convo,vec!["m".into()],None).is_err());assert_eq!(fs::read(&target).unwrap(),b"user edited original");assert_eq!(fs::read(base.join("board.json")).unwrap(),board);assert!(!base.join("chat-captures.json").exists());assert!(!base.join("chats.json").exists());fs::remove_dir_all(root).unwrap();
+    }
+    #[test] fn sync_snapshot_excludes_device_credentials_even_beside_library_files() {
+        let root = temp();
+        let p = storage::create_project(&root,"Project").unwrap();
+        let b = storage::create_board(&root,&p.id,"Board").unwrap();
+        let credentials = root.join("credentials-local"); fs::create_dir(&credentials).unwrap();
+        fs::write(credentials.join("device.key"),b"synthetic-device-key").unwrap();
+        fs::write(credentials.join("vault.json"),b"synthetic-ciphertext").unwrap();
+        let files = snapshot(&root).unwrap().files;
+        assert!(files.contains_key(&format!("{}/{}/board.json",p.id,b.id)));
+        assert!(!files.keys().any(|path|path.contains("credentials-local")||path.contains("device.key")));
+        assert!(!files.values().any(|bytes|bytes.windows(10).any(|value|value==b"synthetic-")));
+        fs::remove_dir_all(root).unwrap();
+    }
     fn temp() -> PathBuf { let p = std::env::temp_dir().join(storage::new_id("sync_test")); fs::create_dir_all(&p).unwrap(); p }
     #[test] fn interrupted_transaction_restores_before_images() {
         let root = temp(); let p = root.join("a.json"); atomic_bytes(&p,b"before").unwrap();
@@ -293,6 +328,12 @@ mod tests {
         fs::remove_dir_all(root).unwrap();
     }
     #[test] fn traversal_is_rejected() { let root = temp(); for p in ["../x","/x","a/../x","C:/x","a\\x"] { assert!(safe_path(&root,p).is_err()); } fs::remove_dir_all(root).unwrap(); }
+    #[test] fn cross_platform_aliases_cannot_replace_an_existing_document() {
+        let root=temp();fs::create_dir(root.join("docs")).unwrap();fs::write(root.join("docs/answer.md"),b"original").unwrap();
+        for path in ["docs/answer.md.","docs/answer.md ","docs/CON.txt","docs/COM1.png","docs/LPT².png","docs/a|b.png","docs/ANSWER.MD"] {assert!(safe_path(&root,path).is_err(),"{path}");let files=BTreeMap::from([(path.into(),b"replacement".to_vec())]);assert!(transaction(&root,files).is_err());assert_eq!(fs::read(root.join("docs/answer.md")).unwrap(),b"original");}
+        for (a,b) in [("docs/Image.png","docs/image.png"),("docs/é.png","docs/e\u{301}.png"),("New/a.txt","new/b.txt"),("É/a.txt","E\u{301}/b.txt")] {assert!(transaction(&root,BTreeMap::from([(a.into(),vec![1]),(b.into(),vec![2])])).is_err());assert!(!root.join(a).exists());assert!(!root.join(META).join("pending.json").exists());}
+        fs::write(root.join("docs/é.png"),b"image").unwrap();assert!(safe_path(&root,"docs/e\u{301}.png").is_err());assert!(!root.join(META).join("pending.json").exists());fs::remove_dir_all(root).unwrap();
+    }
     #[test] fn durable_commit_marker_is_not_rolled_back_on_recovery(){
         let root=temp();atomic_bytes(&root.join("a.json"),b"after").unwrap();
         let journal=Journal{committed:true,entries:vec![WriteEntry{path:"a.json".into(),before:Some(b"before".to_vec()),after:b"after".to_vec()}]};
@@ -324,5 +365,25 @@ mod tests {
         let other=capture_at(&root,p.id.clone(),b.id.clone(),"c".repeat(64),"Second press".into(),"older selected text".into(),"c1".into(),older,vec!["m1".into()],None).unwrap();
         assert_eq!(other.nodes.len(),1);assert_eq!(other.nodes[0].id,board.nodes[0].id);
         let captures:Value=serde_json::from_slice(&fs::read(storage::board_dir(&root,&p.id,&b.id).join("chat-captures.json")).unwrap()).unwrap();assert_eq!(captures[0]["selection_key"],"chat:c1:m1");fs::remove_dir_all(root).unwrap();
+    }
+    #[test] fn captured_question_and_answer_are_readable_verbatim_and_source_chat_is_retained() {
+        let root=temp();let p=storage::create_project(&root,"Project").unwrap();let b=storage::create_board(&root,&p.id,"Board").unwrap();
+        let markdown="# 问答\n\n[返回原对话](lumen://conversation/c_1?messages=q_1,a_1)\n\n## 提问\n\n我的问题\n\n---\n\n## 回答\n\n完整回答\n\n|项|值|\n|---|---|\n|数学|$x_i^2$|\n\n```js\nconst x_i = 2;\n```\n";
+        let conversation=json!({"id":"c_1","title":"问答","createdAt":"2026-10-22","updatedAt":"2026-10-22","messages":[{"id":"q_1","role":"user","content":"我的问题","at":"2026-10-22"},{"id":"a_1","role":"assistant","content":"完整回答","at":"2026-10-22"}]});
+        let key="e".repeat(64);let saved=capture_at(&root,p.id.clone(),b.id.clone(),key.clone(),"问答".into(),markdown.into(),"c_1".into(),conversation.clone(),vec!["q_1".into(),"a_1".into()],None).unwrap();
+        assert_eq!(saved.nodes.len(),1);assert_eq!(storage::read_doc(&root,&p.id,&b.id,&saved.nodes[0].docs[0].path).unwrap(),markdown);
+        let source:Value=serde_json::from_str(&storage::read_chats(&root,&p.id,&b.id).unwrap()).unwrap();assert_eq!(source["conversations"][0],conversation);
+        let again=capture_at(&root,p.id.clone(),b.id.clone(),key,"问答".into(),markdown.into(),"c_1".into(),conversation,vec!["q_1".into(),"a_1".into()],None).unwrap();assert_eq!(again.nodes.len(),1);
+        fs::remove_dir_all(root).unwrap();
+    }
+    #[test] fn capture_write_failure_rolls_back_board_chat_and_capture_index() {
+        let root=temp();let p=storage::create_project(&root,"Project").unwrap();let b=storage::create_board(&root,&p.id,"Board").unwrap();let directory=storage::board_dir(&root,&p.id,&b.id);
+        let before=fs::read(directory.join("board.json")).unwrap();
+        // Only the empty docs directory created inside this fresh test fixture.
+        fs::remove_dir(directory.join("docs")).unwrap();fs::write(directory.join("docs"),b"synthetic blocker").unwrap();
+        let source=json!({"id":"c1","messages":[{"id":"q1","role":"user","content":"问题"},{"id":"a1","role":"assistant","content":"回答"}]});
+        assert!(capture_at(&root,p.id,b.id,"f".repeat(64),"笔记".into(),"问题与回答".into(),"c1".into(),source,vec!["q1".into(),"a1".into()],None).is_err());
+        assert_eq!(fs::read(directory.join("board.json")).unwrap(),before);assert!(!directory.join("chat-captures.json").exists());assert!(!directory.join("chats.json").exists());
+        fs::remove_dir_all(root).unwrap();
     }
 }

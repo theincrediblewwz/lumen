@@ -5,9 +5,18 @@ import type { SQLiteDatabase } from 'expo-sqlite';
 import type { GraphPatch } from '../ai/graph-patch';
 import { migrateDatabase } from '../data/database';
 import { beginConversationTurn, createConversation, saveDiscussionAsNode, updateConversationReply } from '../data/conversations';
-import { addNodeDocument, attachDocument, connectNodes, createFreeBoard, createManualNode, detachDocument, listNodeDocuments, moveNode, saveDocumentRevision } from '../data/node-workspace';
+import { addNodeDocument, attachDocument, connectNodes, createFreeBoard, createManualNode, detachDocument, disconnectNodes, listNodeDocuments, moveNode, moveNodeDocumentPriority, restoreDisconnectedNodes, saveDocumentRevision } from '../data/node-workspace';
 import { buildExpansionContext, commitGraphPatch, deleteKnowledgeNode, deleteProject, getDocument, getGraph, getLatestAppliedGraphMutationBatch, undoGraphMutationBatch } from '../data/knowledge-repository';
 import { readingBlocks, restoreReadingIndex, saveReadingPosition } from '../data/reading-position';
+import { createTopic } from '../data/personal-context';
+import { listProjects } from '../data/knowledge-repository';
+import { createLocalExpansion } from '../ai/local-expansion-adapter';
+import { validateLearningExpansion } from '../ai/graph-patch';
+import { createModelLearningContext } from '../ai/model-learning-context';
+import { createContextPlan } from '../ai/context-plan';
+import { parseStoredContextPlan, parseStoredExpansionContext, StoredExpansionDataError } from '../ai/stored-expansion';
+import { prepareDiscussion } from '../ai/discussion-context';
+import { findDeepBuildResumeCandidate } from '../data/expansion-jobs';
 
 async function fixture() {
   const sqlite = new DatabaseSync(':memory:');
@@ -30,6 +39,135 @@ function counts(sqlite: DatabaseSync) {
   return Object.fromEntries(['projects','nodes','edges','documents','node_documents','conversations','conversation_messages','conversation_documents','source_items','source_citations'].map(table => [table, (sqlite.prepare(`SELECT COUNT(*) AS n FROM ${table}`).get() as { n: number }).n]));
 }
 
+test('document priorities reorder every preview without changing the AI primary; disconnect undo restores only the edge', async t => {
+  const { sqlite, db } = await fixture(); t.after(() => sqlite.close());
+  const board = await createFreeBoard(db, '多文档白板', '# 第一篇');
+  const original = (await listNodeDocuments(db, board.nodeId))[0];
+  const second = await addNodeDocument(db, board.nodeId, '第二篇', '## 第二篇正文');
+  const third = await addNodeDocument(db, board.nodeId, '第三篇', '**第三篇正文**');
+  await moveNodeDocumentPriority(db, board.nodeId, third, -1);
+  await moveNodeDocumentPriority(db, board.nodeId, third, -1);
+  assert.deepEqual((await listNodeDocuments(db, board.nodeId)).map(doc => doc.id), [third, original.id, second]);
+  assert.equal((await getGraph(db, board.projectId))!.nodes[0].documentId, original.id);
+
+  const child = await createManualNode(db, { projectId: board.projectId, title: '关联节点', body: '关联正文' });
+  await connectNodes(db, board.projectId, board.nodeId, child);
+  const edge = (await getGraph(db, board.projectId))!.edges.find(item => item.relationKind === 'related')!;
+  const before = counts(sqlite);
+  const removed = await disconnectNodes(db, board.projectId, edge.id);
+  assert.equal((await getGraph(db, board.projectId))!.edges.some(item => item.id === edge.id), false);
+  assert.equal(counts(sqlite).documents, before.documents);
+  await restoreDisconnectedNodes(db, removed);
+  assert.deepEqual((await getGraph(db, board.projectId))!.edges.find(item => item.id === edge.id), edge);
+  assert.deepEqual(counts(sqlite), before);
+  assert.deepEqual(sqlite.prepare('PRAGMA foreign_key_check').all(), []);
+});
+
+test('a board created inside a topic stays in that topic, and a missing topic creates nothing', async t => {
+  const { sqlite, db } = await fixture(); t.after(() => sqlite.close());
+  const topicId = await createTopic(db, '学习专题', null);
+  const board = await createFreeBoard(db, '专题白板', '# 起点', topicId);
+  assert.deepEqual((await listProjects(db, topicId)).map(project => project.id), [board.projectId]);
+  assert.equal((await listProjects(db, null)).some(project => project.id === board.projectId), false);
+  const before = counts(sqlite);
+  await assert.rejects(createFreeBoard(db, '不能归属', '', 'missing-topic'), /专题不存在/);
+  assert.deepEqual(counts(sqlite), before);
+});
+
+test('expanding a node with an existing child and discussion commits another answer and graph patch', async t => {
+  const { sqlite, db } = await fixture(); t.after(() => sqlite.close());
+  const board = await createFreeBoard(db, '测试白板', '原始 Markdown');
+  const firstChild = await createManualNode(db, { projectId: board.projectId, parentId: board.nodeId, title: '已有子节点', body: '已有内容' });
+  const chat = await createConversation(db, board.projectId, board.nodeId, '已有讨论');
+  const turn = await beginConversationTurn(db, chat, '之前的问题');
+  await updateConversationReply(db, turn.assistantId, '之前的完整回答', 'complete', null);
+  const context = await buildExpansionContext(db, board.nodeId, '继续补充', 'request-with-child-and-chat');
+  assert.equal(context.relatedKnowledge.some(item => item.id === firstChild), true);
+  const expansion = validateLearningExpansion(createLocalExpansion(context));
+  const now = new Date().toISOString();
+  sqlite.prepare('INSERT INTO ai_expansion_jobs (id,project_id,selection_type,selection_id,prompt,adapter,status,request_json,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?)').run('job-with-child-and-chat', board.projectId, 'node', board.nodeId, context.prompt, 'local', 'running', JSON.stringify(context), now, now);
+  const result = await commitGraphPatch(db, context, expansion.patch, 'job-with-child-and-chat', { adapter: 'local', actualModel: null, body: expansion.answerMarkdown });
+  const graph = await getGraph(db, board.projectId);
+  assert.equal(graph!.nodes.length, 2 + result.nodeCount);
+  assert.equal(graph!.edges.length, 1 + result.edgeCount);
+  assert.ok(sqlite.prepare('SELECT id FROM node_answers WHERE id=?').get(result.answerId));
+  assert.deepEqual(sqlite.prepare('PRAGMA foreign_key_check').all(), []);
+});
+
+test('node questions, discussions and saved notes coexist across root, child and captured nodes', async t => {
+  const { sqlite, db } = await fixture(); t.after(() => sqlite.close());
+  const board = await createFreeBoard(db, '多入口白板', '# 已有正文');
+  const child = await createManualNode(db, { projectId: board.projectId, parentId: board.nodeId, title: '已有下一层', body: '下一层正文' });
+  await addNodeDocument(db, board.nodeId, '额外资料', '额外 Markdown');
+  const originalChat = await createConversation(db, board.projectId, board.nodeId, '已有讨论');
+  const turn = await beginConversationTurn(db, originalChat, '已有问题');
+  await updateConversationReply(db, turn.assistantId, '已有回答', 'complete', null);
+  const captured = await saveDiscussionAsNode(db, { title: '从讨论保存', conversationId: originalChat });
+  assert.ok(captured.nodeId);
+  for (const nodeId of [board.nodeId, child, captured.nodeId!]) {
+    const chat = await createConversation(db, board.projectId, nodeId, '继续讨论');
+    const discussion = await prepareDiscussion(db, chat, '这里还缺什么？');
+    assert.equal(discussion.hasReference, true);
+    const requestId = `matrix-${nodeId}`;
+    const context = await buildExpansionContext(db, nodeId, '继续展开', requestId);
+    const restored = parseStoredExpansionContext(JSON.parse(JSON.stringify(context)), board.projectId, nodeId);
+    const plan = createContextPlan(createModelLearningContext(restored));
+    assert.equal(parseStoredContextPlan(JSON.parse(JSON.stringify(plan))).fingerprint, plan.fingerprint);
+    const expansion = validateLearningExpansion(createLocalExpansion(context));
+    const now = new Date().toISOString();
+    sqlite.prepare('INSERT INTO ai_expansion_jobs (id,project_id,selection_type,selection_id,prompt,adapter,status,request_json,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?)')
+      .run(requestId, board.projectId, 'node', nodeId, context.prompt, 'local', 'running', JSON.stringify(context), now, now);
+    const saved = await commitGraphPatch(db, context, expansion.patch, requestId, { adapter: 'local', actualModel: null, body: expansion.answerMarkdown });
+    assert.ok(sqlite.prepare('SELECT id FROM node_answers WHERE id=?').get(saved.answerId));
+  }
+  assert.deepEqual(sqlite.prepare('PRAGMA foreign_key_check').all(), []);
+});
+
+test('incomplete resumed job data fails with a specific error before nested fields are read', async t => {
+  const { sqlite, db } = await fixture(); t.after(() => sqlite.close());
+  const board = await createFreeBoard(db, '恢复校验', '正文');
+  const context = await buildExpansionContext(db, board.nodeId, '问题', 'resume-check');
+  const plan = createContextPlan(createModelLearningContext(context));
+  assert.equal(parseStoredExpansionContext(context, board.projectId, board.nodeId).requestId, context.requestId);
+  assert.equal(parseStoredContextPlan(plan).fingerprint, plan.fingerprint);
+  for (const corrupt of [null, {}, { ...context, project: null }, { ...context, selection: { id: board.nodeId } }, { ...context, relatedKnowledge: [null] }]) {
+    assert.throws(() => parseStoredExpansionContext(corrupt, board.projectId, board.nodeId), StoredExpansionDataError);
+  }
+  for (const corrupt of [null, {}, { ...plan, modelContext: null }, { ...plan, modelContext: { currentQuestion: null } }]) {
+    assert.throws(() => parseStoredContextPlan(corrupt), StoredExpansionDataError);
+  }
+  const now = new Date().toISOString();
+  sqlite.prepare(`INSERT INTO ai_expansion_jobs
+    (id,project_id,selection_type,selection_id,prompt,adapter,quality_path,status,request_json,error_code,created_at,updated_at)
+    VALUES (?,?,?,?,?,'byok','deep','failed',?,'invalid_saved_plan',?,?)`)
+    .run('bad-resume', board.projectId, 'node', board.nodeId, context.prompt, JSON.stringify(context), now, now);
+  assert.equal(await findDeepBuildResumeCandidate(db, board.projectId, board.nodeId, context.prompt), null);
+});
+
+test('expansion context ignores a cross-project edge instead of reading a missing neighbor', async t => {
+  const { sqlite, db } = await fixture(); t.after(() => sqlite.close());
+  const board = await createFreeBoard(db, '当前白板', '当前资料');
+  const other = await createFreeBoard(db, '另一白板', '不能泄露的资料');
+  const documentId = (await listNodeDocuments(db, board.nodeId))[0].id;
+  sqlite.prepare('INSERT INTO edges (id,project_id,source_id,target_id,relation,importance,document_id) VALUES (?,?,?,?,?,?,?)').run('cross-project-edge', board.projectId, board.nodeId, other.nodeId, 'support', 5, documentId);
+  const context = await buildExpansionContext(db, board.nodeId, '继续学习', 'cross-project-request');
+  assert.deepEqual(context.relatedKnowledge, []);
+  assert.equal(JSON.stringify(context).includes('不能泄露的资料'), false);
+});
+
+test('node question refuses a cross-project primary document and excludes a foreign neighbor document', async t => {
+  const { sqlite, db } = await fixture(); t.after(() => sqlite.close());
+  const board = await createFreeBoard(db, '当前白板', '本图正文');
+  const child = await createManualNode(db, { projectId: board.projectId, parentId: board.nodeId, title: '子节点', body: '子节点正文' });
+  const other = await createFreeBoard(db, '另一个白板', '不能发送的私人正文');
+  const foreignDocument = (await listNodeDocuments(db, other.nodeId))[0].id;
+  sqlite.prepare('UPDATE nodes SET document_id=? WHERE id=?').run(foreignDocument, child);
+  const context = await buildExpansionContext(db, board.nodeId, '解释关联', 'foreign-neighbor');
+  assert.equal(context.relatedKnowledge.find(item => item.id === child)?.document.body, '');
+  assert.doesNotMatch(JSON.stringify(context), /不能发送的私人正文/);
+  await assert.rejects(buildExpansionContext(db, child, '解释这个节点', 'foreign-primary'), /主文档已变化/);
+});
+
 test('migrate14 free board supports manual nodes, multiple documents, attachment boundaries and manual positions', async t => {
   const { sqlite, db } = await fixture(); t.after(() => sqlite.close());
   const board = await createFreeBoard(db, '我的自由图', '# 起点\n\n原文 $x$');
@@ -37,6 +175,7 @@ test('migrate14 free board supports manual nodes, multiple documents, attachment
   const child = await createManualNode(db, { projectId: board.projectId, title: '子问题', body: '手工正文', parentId: board.nodeId });
   const third = await createManualNode(db, { projectId: board.projectId, title: '并列节点', body: '另一个问题' });
   await connectNodes(db, board.projectId, child, third);
+  await assert.rejects(connectNodes(db, board.projectId, third, child), /已经连接/);
   const added = await addNodeDocument(db, child, '第二篇', '更多理解');
   assert.equal((await listNodeDocuments(db, child)).length, 2);
   await attachDocument(db, third, added); await attachDocument(db, third, added);

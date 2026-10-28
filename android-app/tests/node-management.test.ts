@@ -33,7 +33,7 @@ test('node deletion reports impact and removes only the selected node owned reco
   const impact = await getNodeDeleteImpact(adapter as never, 'child');
   assert.deepEqual(impact, {
     nodeId: 'child', title: '子节点', isRoot: false,
-    edgeCount: 2, answerCount: 2, favoriteCount: 0, activeJobCount: 0,
+    edgeCount: 2, answerCount: 2, reviewEventCount: 0, favoriteCount: 0, activeJobCount: 0,
   });
 
   const deleted = await deleteKnowledgeNode(adapter as never, 'child');

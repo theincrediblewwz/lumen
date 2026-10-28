@@ -1,7 +1,11 @@
 import { useEffect, useState } from 'react';
 import { api } from './api';
-import { ReaderView } from './components/ReaderView';
+import { DocumentReaderView } from './components/DocumentReaderView';
+import { documentPayload } from './documents/client';
+import type { DocumentPayload } from './documents/core';
 import { loadSettings, applySettings, subscribeSettings } from './settings';
+import { REFRESH_READER_EVENT, type OpenReaderArgs } from './reader/windowManager';
+import { loadWritePolicy } from './ai/boardOperations';
 
 /**
  * 独立阅读窗口的根组件（M4-4）。从 URL query 读取 project/board/path，
@@ -20,7 +24,7 @@ export function ReaderApp() {
   const settings = loadSettings();
   const [platform, setPlatform] = useState<string>('');
   const [state, setState] = useState<
-    { kind: 'loading' } | { kind: 'ok'; md: string } | { kind: 'error'; msg: string }
+    { kind: 'loading' } | { kind: 'ok'; payload: DocumentPayload } | { kind: 'error'; msg: string }
   >({ kind: 'loading' });
 
   // 应用软件主体的主题到本窗口（不启用原生玻璃：阅读窗用系统装饰、纯实色更稳），
@@ -39,13 +43,18 @@ export function ReaderApp() {
 
   useEffect(() => {
     document.title = `${title} — 脉络 Lumen`;
-    let alive = true;
-    api
-      .docRead(projectId, boardId, path)
-      .then((md) => alive && setState({ kind: 'ok', md }))
-      .catch((e) => alive && setState({ kind: 'error', msg: String(e) }));
+    let alive = true,epoch=0;const stops:Array<()=>void>=[];
+    const scope=loadWritePolicy().then(policy=>policy.scope??undefined);
+    const read=()=>{const current=++epoch;void scope.then(s=>documentPayload(projectId,boardId,path,s)).then(payload=>{if(alive&&current===epoch)setState({kind:'ok',payload});}).catch(e=>{if(alive&&current===epoch)setState({kind:'error',msg:String(e)});});};
+    const refresh=(target?:OpenReaderArgs)=>{if(!target||(target.projectId===projectId&&target.boardId===boardId&&target.path===path))read();};
+    const local=(event:Event)=>refresh((event as CustomEvent<OpenReaderArgs>).detail);
+    window.addEventListener(REFRESH_READER_EVENT,local);read();
+    if('__TAURI_INTERNALS__' in window)void import('@tauri-apps/api/event').then(async({listen})=>{
+      const retain=(stop:()=>void)=>{if(alive)stops.push(stop);else stop();};
+      await Promise.all([listen<OpenReaderArgs>(REFRESH_READER_EVENT,e=>refresh(e.payload)).then(retain),listen('lumen://library-changed',()=>read()).then(retain)]);
+    }).catch(e=>{if(alive)setState({kind:'error',msg:`无法监听文档更新：${String(e)}`});});
     return () => {
-      alive = false;
+      alive = false;epoch++;stops.forEach(stop=>stop());window.removeEventListener(REFRESH_READER_EVENT,local);
     };
   }, [projectId, boardId, path, title]);
 
@@ -56,15 +65,13 @@ export function ReaderApp() {
     return <div className="reader-splash reader-splash-error">无法打开文档：{state.msg}</div>;
   }
   return (
-    <ReaderView
+    <DocumentReaderView
       standalone
       platform={platform}
       title={title}
-      markdown={state.md}
+      payload={state.payload}
       docKey={`${projectId}/${boardId}/${path}`}
       guessMath={settings.guessMath}
     />
   );
 }
-
-

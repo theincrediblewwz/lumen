@@ -741,3 +741,4 @@ lumen/
 | ADR-045 | Android 共同行协议与可恢复 WebDAV 同步 | 用户批准首版跨设备自动同步。每个 Lumen 白板映射 portable projects，桌面夹与未知字段原样保留。协议 core 精确 vendor 并记录 SHA-256；先落盘 outbox 再网络，冲突不静默覆盖，跨实体引用冲突保留投影。Rust 统一原子替换、before-image journal 与完整库 CAS；网络阶段不阻塞编辑。 |
 | ADR-046 | 对话转文档/新节点共享幂等来源 | 对话单条、勾选多条、全部已完成消息均保存原文；共享键 chat:conversationId:orderedMessageIds，路径另作 SHA-256。文档、节点、可选父连线、原会话和来源记录同事务；保留更晚的磁盘聊天内容。预览构建独立配置和凭据命名空间，不触正式资料。 |
 | ADR-047 | Android 预览独立于桌面正式发布 | 用户要求安卓版进入 Lumen 公开仓库并发布。仅导入已跟踪 Android 客户端源码，保留既有包名和本地数据身份；`android-v*` 标签避开桌面 `v*` 构建工作流。当前 APK 使用调试证书且真实三端/物理机验收未完成，所以标为 GitHub prerelease，附 SHA-256、签名和备份/升级限制；正式签名与跨证书迁移另立验收门槛。 |
+| ADR-048 | 全局独立知识库与个人理解的版本引用 | 用户要求理解、经验和材料独立于白板积累。库根 `knowledge/library.json` 保存条目与不可变修订，白板只存引用和默认关闭的授权；与 Android v19 使用同一知识 core 和行同步契约。AI 有界检索、发送精确摘录预览、回答附版本引用，材料是证据而非指令；个人理解不等同于掌握证明。副本导入重映射链接且不自动继承白板权限。HistoryandKnowledge 正式格式等待用户提供，内部交换不冒充该格式。源码已接入 LearnStuffQuickly 单 master，发布与真实跨端另验。 |

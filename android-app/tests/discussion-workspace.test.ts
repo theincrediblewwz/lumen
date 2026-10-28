@@ -4,6 +4,8 @@ import test from 'node:test';
 import type { SQLiteDatabase } from 'expo-sqlite';
 import { CURRENT_DATABASE_VERSION, migrateDatabase } from '../data/database';
 import { beginConversationTurn, createConversation, listMessages, saveDiscussionAsNode, updateConversationReply } from '../data/conversations';
+import { getNoteDraft, noteSources, openNoteDraft, organizationMessages, saveOrganizedNoteAsNode, setNoteGeneration, updateNoteDraft } from '../data/note-drafts';
+import { createPortableManifest, importPortableManifestWithMapping, parsePortableManifest } from '../data/portable-knowledge';
 
 async function fixture() {
   const sqlite = new DatabaseSync(':memory:');
@@ -25,13 +27,80 @@ async function fixture() {
 const project = 'project-transformer'; const parent = 'node-transformer';
 function count(sqlite: DatabaseSync, table: string) { return (sqlite.prepare(`SELECT COUNT(*) AS n FROM ${table}`).get() as { n: number }).n; }
 function snapshot(sqlite: DatabaseSync) {
-  return Object.fromEntries(['documents','nodes','edges','node_documents','conversation_documents','source_citations','conversation_messages','sync_changes'].map(table => [table, count(sqlite, table)]));
+  return Object.fromEntries(['documents','nodes','edges','node_documents','conversation_documents','source_citations','conversation_messages','sync_changes','note_drafts'].map(table => [table, count(sqlite, table)]));
 }
 
-test('real SQLite migrates to v14 and conversation capture keeps exact Markdown, LaTeX and node/document links', async t => {
+test('one, many and all messages produce ordered recoverable editable drafts; raw capture stays exact and separate', async t => {
+  const { sqlite, db } = await fixture(); t.after(() => sqlite.close());
+  const chat = await createConversation(db, project, parent, '问题');
+  const one = await beginConversationTurn(db, chat, '第一问  '); await updateConversationReply(db, one.assistantId, '第一答 $x$', 'complete', null);
+  const two = await beginConversationTurn(db, chat, '第二问'); await updateConversationReply(db, two.assistantId, '第二答', 'complete', null);
+  const all = await listMessages(db, chat);
+  for (const ids of [[all[0].id], [all[3].id, all[0].id], all.map(m => m.id)]) {
+    const draft = await openNoteDraft(db, chat, ids);
+    assert.deepEqual(noteSources(draft).map(m => m.id), all.filter(m => ids.includes(m.id)).map(m => m.id));
+    assert.equal((await openNoteDraft(db, chat, [...ids].reverse())).id, draft.id);
+    assert.match(organizationMessages(draft).preview, /不要编造事实/);
+  }
+  const draft = await openNoteDraft(db, chat, [one.assistantId]);
+  await updateNoteDraft(db, draft.id, { title: '我的结论', body: '## 核心结论\n\n我的理解 $x$', parentNodeId: parent });
+  const restored = await getNoteDraft(db, draft.id); assert.equal(restored?.body, '## 核心结论\n\n我的理解 $x$');
+  const note = await saveOrganizedNoteAsNode(db, draft.id);
+  assert.equal(note.reused, false);
+  assert.deepEqual(await saveOrganizedNoteAsNode(db, draft.id), { ...note, reused: true });
+  assert.equal((sqlite.prepare('SELECT body FROM documents WHERE id=?').get(note.documentId) as { body: string }).body, restored?.body);
+  assert.equal((sqlite.prepare('SELECT selection_key FROM conversation_documents WHERE document_id=?').get(note.documentId) as { selection_key: string }).selection_key, `note:v1:${draft.id}`);
+  const raw = await saveDiscussionAsNode(db, { title: '逐字原文', conversationId: chat, messageIds: [one.assistantId] });
+  assert.notEqual(raw.documentId, note.documentId);
+  assert.equal((sqlite.prepare('SELECT body FROM documents WHERE id=?').get(raw.documentId) as { body: string }).body, '## AI\n\n第一答 $x$');
+  assert.equal((await listMessages(db, chat))[1].body, '第一答 $x$');
+  const another = await openNoteDraft(db, chat, [one.assistantId], true); assert.notEqual(another.id, draft.id);
+});
+
+test('note save failure rolls back all synced entities; source change blocks stale draft without loss', async t => {
+  const { sqlite, db } = await fixture(); t.after(() => sqlite.close());
+  const chat = await createConversation(db, project, parent, '问题');
+  const turn = await beginConversationTurn(db, chat, '原始问题'); await updateConversationReply(db, turn.assistantId, '原始回答', 'complete', null);
+  const draft = await openNoteDraft(db, chat, [turn.assistantId]);
+  await updateNoteDraft(db, draft.id, { title: '整理笔记', body: '## 核心结论\n\n保留草稿', parentNodeId: parent });
+  const before = snapshot(sqlite);
+  sqlite.exec("CREATE TRIGGER fail_note_last BEFORE UPDATE ON projects BEGIN SELECT RAISE(ABORT,'note rollback'); END;");
+  await assert.rejects(saveOrganizedNoteAsNode(db, draft.id), /note rollback/);
+  assert.deepEqual(snapshot(sqlite), before); assert.equal((await getNoteDraft(db, draft.id))?.status, 'editing');
+  sqlite.exec('DROP TRIGGER fail_note_last');
+  await db.runAsync('UPDATE conversation_messages SET body=? WHERE id=?', '来源已变', turn.assistantId);
+  await assert.rejects(saveOrganizedNoteAsNode(db, draft.id), /来源消息已变化/);
+  assert.equal((await getNoteDraft(db, draft.id))?.body, '## 核心结论\n\n保留草稿');
+});
+
+test('interrupted AI draft is restored without retry; final provenance survives portable copy independently of raw capture', async t => {
+  const { sqlite, db } = await fixture(); t.after(() => sqlite.close());
+  const chat = await createConversation(db, project, parent, '问题'); const turn = await beginConversationTurn(db, chat, '题');
+  await updateConversationReply(db, turn.assistantId, '答', 'complete', null);
+  const draft = await openNoteDraft(db, chat, [turn.userId, turn.assistantId]);
+  await setNoteGeneration(db, draft.id, 'generating', '## 核心结论\n\n半段');
+  await migrateDatabase(db);
+  assert.equal((await getNoteDraft(db, draft.id))?.status, 'interrupted');
+  await setNoteGeneration(db, draft.id, 'editing', '## 核心结论\n\n完整');
+  const note = await saveOrganizedNoteAsNode(db, draft.id);
+  const raw = await saveDiscussionAsNode(db, { title: '原文', conversationId: chat, messageIds: [turn.userId, turn.assistantId] });
+  const portable = await createPortableManifest(db, project);
+  assert.equal(portable.fusion?.conversationDocuments.length, 2);
+  assert.equal(JSON.stringify(portable).includes('note_drafts'), false);
+  const map = await importPortableManifestWithMapping(db, parsePortableManifest(JSON.stringify(portable)));
+  const copied = await createPortableManifest(db, map.projectId);
+  const keys = copied.fusion!.conversationDocuments.map(row => row.selection_key);
+  assert.equal(new Set(keys).size, 2); assert.equal(keys.some(key => key.startsWith('note:v1:')), true);
+  assert.equal(keys.some(key => key.startsWith('chat:')), true);
+  assert.equal((sqlite.prepare('SELECT body FROM documents WHERE id=?').get(map.documentIds.get(note.documentId)!) as { body: string }).body, '## 核心结论\n\n完整');
+  assert.ok(map.documentIds.get(raw.documentId));
+  assert.equal(count(sqlite, 'note_drafts'), 1);
+});
+
+test('real SQLite migrates to v19 and conversation capture keeps exact Markdown, LaTeX and node/document links', async t => {
   const { sqlite, db } = await fixture(); t.after(() => sqlite.close());
   assert.equal((sqlite.prepare('PRAGMA user_version').get() as { user_version: number }).user_version, CURRENT_DATABASE_VERSION);
-  assert.equal(CURRENT_DATABASE_VERSION, 14);
+  assert.equal(CURRENT_DATABASE_VERSION, 19);
   const chat = await createConversation(db, project, parent, '积分讨论');
   const question = '  为什么 $\\int_0^1 x^2 dx$？\n\n保留原文空格。  ';
   const answer = '# 推导\n\n$$\n\\int_0^1 x^2 \\,dx=\\frac{1}{3}\n$$\n\n```ts\nconst x = "<tag>";\n```\n\n[来源](https://example.invalid/学习)';

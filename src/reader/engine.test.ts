@@ -1,6 +1,25 @@
 import { describe, it, expect } from 'vitest';
 import { renderMarkdown, slugify, createEngine, looksLikeMath, preprocessGuessMath, normalizeMathDelims } from './engine';
 
+describe('guessing respects parsed Markdown structure',()=>{
+  it('preserves custom links, nested/escaped destinations, references, image targets and raw URIs',()=>{
+    const source=['[返回原对话](lumen://conversation/c_123?messages=m_1,m_2&project=p_1&board=b_1)','[普通链接](https://example.com/path_with_(round)?x=1&y=2)','[转义](https://example.com/path_with_\\(round\\)?x=1)','[引用][ref]','[ref]: https://example.com/a_b?x=1&y=2','![预览](https://example.com/a_b.png?width=200)','<lumen://conversation/c_123?messages=m_1>','裸链接 lumen://conversation/c_123?messages=m_1&project=p_1&board=b_1'].join('\n\n');
+    const plain=renderMarkdown(source,undefined,{guessMath:false}).html;
+    expect(renderMarkdown(source,undefined,{guessMath:true}).html).toBe(plain);
+    expect(plain).toContain('href="lumen://conversation/c_123?messages=m_1,m_2&amp;project=p_1&amp;board=b_1"');
+    expect(plain).toContain('href="https://example.com/path_with_(round)?x=1"');
+    expect(renderMarkdown('[相对路径](/docs/path_\\(round\\).md)',undefined,{guessMath:true}).html).toContain('href="/docs/path_(round).md"');
+  });
+  it('keeps code, escaped literal Markdown, tables and explicit math while guessing plain text',()=>{
+    const source='\\*literal\\* 中文 x^2\n\n`x_i`\n\n|标题|内容|\n|---|---|\n|正常|$x_i$|\n\n$$\nx^2+y^2\n$$\n\n```md\n[原文](lumen://conversation/c_1?messages=m_1)\n```';
+    const {html}=renderMarkdown(source,undefined,{guessMath:true});
+    expect(html).toContain('*literal*');expect(html).not.toContain('<em>literal</em>');
+    expect(html).toContain('<code>x_i</code>');expect(html).toContain('<table>');
+    expect(html).toContain('data-tex="x^2"');expect(html).toContain('math-block');
+    expect(html).toContain('[原文](lumen://conversation/c_1?messages=m_1)');
+  });
+});
+
 describe('slugify', () => {
   it('英文标题转小写连字符', () => {
     expect(slugify('Hello World')).toBe('hello-world');
@@ -230,6 +249,3 @@ describe('renderMarkdown - guessMath 选项', () => {
     expect(html).not.toContain('math-inline');
   });
 });
-
-
-

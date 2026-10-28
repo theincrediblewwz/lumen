@@ -1,0 +1,38 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "urn:historyandknowledge:knowledge-document:v1",
+  "title": "Knowledge document v1 YAML frontmatter",
+  "type": "object",
+  "required": ["format", "record_type", "id", "title"],
+  "properties": {
+    "format": { "const": "knowledge-document/v1" },
+    "record_type": { "enum": ["source", "note", "article"] },
+    "id": { "type": "string", "minLength": 1, "pattern": "^(?!\\.{1,2}$)[A-Za-z0-9_.-]+$" },
+    "title": { "type": "string" },
+    "created_at": { "type": "string" },
+    "updated_at": { "type": "string" },
+    "entity_ids": { "$ref": "#/definitions/ids" },
+    "topic_ids": { "$ref": "#/definitions/ids" },
+    "source_ids": { "$ref": "#/definitions/ids" },
+    "citation_ids": { "$ref": "#/definitions/ids" },
+    "extensions": { "type": "object", "additionalProperties": true },
+    "attachments": { "type": "array", "items": { "$ref": "#/definitions/attachment" } }
+  },
+  "additionalProperties": true,
+  "definitions": {
+    "ids": { "type": "array", "uniqueItems": true, "items": { "type": "string", "minLength": 1 } },
+    "attachment": {
+      "type": "object",
+      "required": ["id", "path", "sha256", "size_bytes", "media_type"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "path": { "type": "string", "pattern": "^(?!/)(?![A-Za-z]:)(?!.*\\\\)(?!.*(?:^|/)\\.\\.(?:/|$)).+$" },
+        "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "size_bytes": { "type": "integer", "minimum": 0 },
+        "media_type": { "type": "string", "minLength": 1 },
+        "immutable": { "type": "boolean" }
+      },
+      "additionalProperties": true
+    }
+  }
+}

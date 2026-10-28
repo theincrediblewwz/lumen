@@ -1,15 +1,18 @@
 import type { PortableGraphManifest } from '@/data/portable-knowledge';
 import type { NodeAnswer, PromptTemplate } from '@/types/domain';
+import type { KnowledgeLibrary } from './knowledge-library-core';
+import {validateOriginalAssets,type OriginalAsset} from './rich-backup';
 
 export const APP_BACKUP_FORMAT = 'learnstuff-app-backup' as const;
-export const APP_BACKUP_VERSION = 4 as const;
+export const APP_BACKUP_VERSION = 6 as const;
 export const BACKUP_PROGRESS_TOTAL = 5;
 
 export type LocalBackupSlot = 'a' | 'b';
 
 export type LocalBackupSnapshot = {
   format: typeof APP_BACKUP_FORMAT;
-  version: 2 | 3 | typeof APP_BACKUP_VERSION;
+  version: 2 | 3 | 4 | 5 | typeof APP_BACKUP_VERSION;
+  originalAssets?:OriginalAsset[];
   exportedAt: string;
   revision: number;
   projects: PortableGraphManifest[];
@@ -55,11 +58,13 @@ export type LocalBackupSnapshot = {
     createdAt: string;
   }>;
   exclusions: string[];
+  knowledgeLibrary?: KnowledgeLibrary;
 };
 
 export type BackupFileStore = {
   write: (fileName: string, mimeType: string, contents: string) => Promise<void>;
   directory?: (directoryName: string) => Promise<BackupFileStore>;
+  writeBytes?:(fileName:string,mimeType:string,bytes:Uint8Array)=>Promise<void>;
 };
 
 export function nextLocalBackupSlot(activeSlot: LocalBackupSlot | null): LocalBackupSlot {
@@ -71,7 +76,9 @@ export async function writeLocalBackupSnapshot(
   snapshot: LocalBackupSnapshot,
   slot: LocalBackupSlot,
   onProgress?: (current: number, label: string) => Promise<void> | void,
+  readAsset?:(asset:OriginalAsset)=>Promise<Uint8Array>,
 ) {
+  if(snapshot.version===6){const originals=validateOriginalAssets(snapshot.originalAssets,snapshot.projects);if(originals.length){if(!store.directory||!readAsset)throw Error('备份原件写入不可用');const folder=await store.directory('原件');if(!folder.writeBytes)throw Error('备份目录不支持原件写入');const seen=new Set<string>();for(const original of originals){if(seen.has(original.sha256))continue;seen.add(original.sha256);await folder.writeBytes(`${original.sha256}.bin`,'application/octet-stream',await readAsset(original));}}}
   const jsonName = `learnstuff-backup-slot-${slot}.json`;
   const markdownName = `learnstuff-backup-slot-${slot}.md`;
   const commitName = `learnstuff-backup-commit-${slot}.json`;
@@ -84,7 +91,7 @@ export async function writeLocalBackupSnapshot(
   await store.write(
     'README-LearnStuff-Backup.md',
     'text/markdown',
-    '# LearnStuff 自动本地备份 v4\n\n这是应用私有 SQLite 的单向恢复副本，不是可直接编辑的工作目录。\n\nA/B 两个槽位轮换写入；`learnstuff-backup-latest.json` 指向最近完整版本。请勿只保留其中一个文件。\n\nv4 还包含自由图谱、节点多文档、全部对话与保存为文档的来源、阅读位置。项目内容设置、提取后的资料与定位、掌握记录、资料引用和 AI 图谱修改批次一并保留。API key、同步凭据、同步设备身份及原始二进制资料不在此备份中；原始附件由 WebDAV 同步另行保存。\n',
+    '# LearnStuff 自动本地备份 v6\n\nA/B 两槽轮换，latest指向最近完整版本。v6包含全部图谱、正文、对话、来源、知识历史和引用权限；原件先保存并校验到“原件”文件夹，完成标记最后写。恢复时选择槽位JSON并授权同一备份目录。请保留整个文件夹。API key、同步凭据和设备身份不参与备份。旧版v2–v5仍可恢复文字；旧记录中已经缺失的原件无法重建。\n',
   );
   const pointer = {
     format: 'learnstuff-app-backup-pointer',
@@ -115,7 +122,7 @@ async function writeReadableProjectMirrors(store: BackupFileStore, snapshot: Loc
     await projectStore.write(
       'README.md',
       'text/markdown',
-      `# ${project.project.title}\n\n这是自动备份中的可读项目镜像。应用私有 SQLite 与根目录 A/B 完整快照仍是恢复正本；请勿把这里当成双向编辑目录。\n\n- 内容模式：${project.project.contentPolicy?.mode === 'summary' ? '总结图' : '学习图'}\n- 展开方向：${project.project.layoutDirection === 'horizontal' ? '从左到右' : '从上到下'}\n- 节点：${project.nodes.length}\n- 关系：${project.edges.length}\n- 文档：${project.documents.length}\n- 资料来源：${project.sourceItems?.length ?? 0}\n- 掌握记录：${project.masteryAttempts?.length ?? 0}\n- 图谱修改批次：${project.graphMutationBatches?.length ?? 0}\n- 全部回答：${projectAnswers.length}\n\n> 原始 PDF/图片等二进制资料默认不复制；清单保留原名、媒体类型、大小、哈希、提取文本和页码/段落等定位。\n`,
+      `# ${project.project.title}\n\n这是自动备份中的可读项目镜像。应用私有 SQLite 与根目录 A/B 完整快照仍是恢复正本；请勿把这里当成双向编辑目录。\n\n- 内容模式：${project.project.contentPolicy?.mode === 'summary' ? '总结图' : '学习图'}\n- 展开方向：${project.project.layoutDirection === 'horizontal' ? '从左到右' : '从上到下'}\n- 节点：${project.nodes.length}\n- 关系：${project.edges.length}\n- 文档：${project.documents.length}\n- 资料来源：${project.sourceItems?.length ?? 0}\n- 掌握记录：${project.masteryAttempts?.length ?? 0}\n- 复习记录：${project.reviewEvents?.length ?? 0}\n- 图谱修改批次：${project.graphMutationBatches?.length ?? 0}\n- 全部回答：${projectAnswers.length}\n\n> v6 原件在备份根目录“原件”文件夹，按哈希校验。此镜像供文字查阅；恢复到应用后可阅读图文和PDF。\n`,
     );
     for (const [index, document] of project.documents.entries()) {
       await markdownStore.write(
@@ -166,6 +173,7 @@ function backupMarkdown(snapshot: LocalBackupSnapshot) {
     `- AI 对你的了解：${snapshot.aiUnderstandingDocuments.length}`,
     `- 收藏数量：${snapshot.favorites.length}`,
     `- 询问模板：${snapshot.promptTemplates.length}`,
+    `- 独立知识：${snapshot.knowledgeLibrary?.entries.length ?? 0}`,
     '',
     '> 这是便于人工检查的合并目录。完整恢复数据以同槽位 JSON 为准。',
   ];
@@ -186,6 +194,10 @@ function backupMarkdown(snapshot: LocalBackupSnapshot) {
     for (const answer of snapshot.answers) {
       lines.push('', `## ${answer.saved ? '已收藏' : '未收藏'}：${answer.question}`, '', answer.body);
     }
+  }
+  if (snapshot.knowledgeLibrary?.entries.length) {
+    lines.push('', '# 独立知识库');
+    for (const entry of snapshot.knowledgeLibrary.entries) lines.push('', `## ${entry.title}${entry.archived ? '（已归档）' : ''}`, '', entry.body, '', `出处：${entry.source || '无'}`);
   }
   if (snapshot.promptTemplates.length) {
     lines.push('', '# 询问模板');

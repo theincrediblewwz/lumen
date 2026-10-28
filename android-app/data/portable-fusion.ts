@@ -1,3 +1,4 @@
+import {remapFormalLinks} from './formal-links';
 import type { SQLiteDatabase } from 'expo-sqlite';
 import { remapReadingReferences } from './reading-reference';
 import type { Conversation, ConversationMessage } from './conversations';
@@ -6,23 +7,28 @@ type Link = { id: string; node_id: string; document_id: string; sort_order: numb
 type Provenance = { id: string; conversation_id: string | null; source_answer_id: string | null; document_id: string; node_id: string | null; message_ids_json: string; selection_key: string; created_at: string };
 type Position = { id: string; document_id: string; anchor: string; ratio: number; updated_at: string };
 type EdgePresentation = { id: string; relation_kind: string | null; directed: number; label: string };
+type PortableCanvasGroup = { id: string; title: string; created_at: string; updated_at: string };
+type PortableCanvasMember = { id: string; group_id: string; node_id: string; created_at: string };
 export type PortableFusion = {
   graphKind: 'free' | 'learning' | 'summary'; nodeDocuments: Link[];
   conversations: Omit<Conversation, 'project_id'>[]; messages: ConversationMessage[];
   conversationDocuments: Provenance[]; readingPositions: Position[]; edgePresentation: EdgePresentation[];
+  canvasGroups?: PortableCanvasGroup[]; canvasGroupMembers?: PortableCanvasMember[];
 };
 
 export async function exportPortableFusion(db: SQLiteDatabase, projectId: string): Promise<PortableFusion> {
   const project = await db.getFirstAsync<{ graph_kind: PortableFusion['graphKind'] }>('SELECT graph_kind FROM projects WHERE id=?', projectId);
-  const [nodeDocuments, conversations, messages, conversationDocuments, readingPositions, edgePresentation] = await Promise.all([
+  const [nodeDocuments, conversations, messages, conversationDocuments, readingPositions, edgePresentation, canvasGroups, canvasGroupMembers] = await Promise.all([
     db.getAllAsync<Link>('SELECT d.* FROM node_documents d JOIN nodes n ON n.id=d.node_id WHERE n.project_id=? ORDER BY d.id', projectId),
     db.getAllAsync<Omit<Conversation, 'project_id'>>('SELECT id,node_id,title,created_at,updated_at FROM conversations WHERE project_id=? ORDER BY id', projectId),
     db.getAllAsync<ConversationMessage>('SELECT m.* FROM conversation_messages m JOIN conversations c ON c.id=m.conversation_id WHERE c.project_id=? ORDER BY m.conversation_id,m.ordinal,m.id', projectId),
     db.getAllAsync<Provenance>('SELECT p.* FROM conversation_documents p JOIN documents d ON d.id=p.document_id WHERE d.project_id=? ORDER BY p.id', projectId),
     db.getAllAsync<Position>('SELECT r.* FROM reading_positions r JOIN documents d ON d.id=r.document_id WHERE d.project_id=? ORDER BY r.id', projectId),
     db.getAllAsync<EdgePresentation>('SELECT id,relation_kind,directed,label FROM edges WHERE project_id=? ORDER BY id', projectId),
+    db.getAllAsync<PortableCanvasGroup>('SELECT id,title,created_at,updated_at FROM canvas_groups WHERE project_id=? ORDER BY id', projectId),
+    db.getAllAsync<PortableCanvasMember>('SELECT id,group_id,node_id,created_at FROM canvas_group_members WHERE project_id=? ORDER BY id', projectId),
   ]);
-  return { graphKind: project?.graph_kind ?? 'learning', nodeDocuments, conversations, messages, conversationDocuments, readingPositions, edgePresentation };
+  return { graphKind: project?.graph_kind ?? 'learning', nodeDocuments, conversations, messages, conversationDocuments, readingPositions, edgePresentation, canvasGroups, canvasGroupMembers };
 }
 
 function obj(value: unknown) {
@@ -59,7 +65,9 @@ export function validatePortableFusion(value: unknown, refs: { nodes: Set<string
   const conversationDocuments = rows(root.conversationDocuments).map((r): Provenance => ({ id: text(r.id), conversation_id: nullable(r.conversation_id), source_answer_id: nullable(r.source_answer_id), document_id: text(r.document_id), node_id: nullable(r.node_id), message_ids_json: text(r.message_ids_json, 1000000), selection_key: text(r.selection_key, 1000000), created_at: text(r.created_at, 80) }));
   const readingPositions = rows(root.readingPositions).map((r): Position => ({ id: text(r.id), document_id: text(r.document_id), anchor: text(r.anchor, 4000, true), ratio: num(r.ratio, 0, 1), updated_at: text(r.updated_at, 80) }));
   const edgePresentation = rows(root.edgePresentation).map((r): EdgePresentation => ({ id: text(r.id), relation_kind: nullable(r.relation_kind), directed: num(r.directed, 0, 1, true), label: text(r.label, 4000, true) }));
-  for (const list of [nodeDocuments, conversations, messages, conversationDocuments, readingPositions, edgePresentation]) unique(list);
+  const canvasGroups = rows(root.canvasGroups ?? []).map((r): PortableCanvasGroup => ({ id: text(r.id), title: text(r.title, 80), created_at: text(r.created_at, 80), updated_at: text(r.updated_at, 80) }));
+  const canvasGroupMembers = rows(root.canvasGroupMembers ?? []).map((r): PortableCanvasMember => ({ id: text(r.id), group_id: text(r.group_id), node_id: text(r.node_id), created_at: text(r.created_at, 80) }));
+  for (const list of [nodeDocuments, conversations, messages, conversationDocuments, readingPositions, edgePresentation, canvasGroups, canvasGroupMembers]) unique(list);
   if (edgePresentation.length !== refs.edges.size || [...refs.nodes].some((id) => !nodeDocuments.some((link) => link.node_id === id))) throw new Error('图谱清单缺少边设置或节点文档绑定');
   if (new Set(readingPositions.map((item) => item.document_id)).size !== readingPositions.length) throw new Error('同一文档的阅读位置重复');
   if (new Set(nodeDocuments.map((r) => JSON.stringify([r.node_id, r.document_id]))).size !== nodeDocuments.length) throw new Error('节点文档绑定重复');
@@ -75,14 +83,20 @@ export function validatePortableFusion(value: unknown, refs: { nodes: Set<string
   }
   for (const position of readingPositions) referenced(refs.documents, position.document_id);
   for (const edge of edgePresentation) referenced(refs.edges, edge.id);
+  const groupIds = new Set(canvasGroups.map(group => group.id));
+  for (const member of canvasGroupMembers) {
+    if (member.id !== member.node_id) throw new Error('分组成员标识与节点不一致');
+    referenced(groupIds, member.group_id); referenced(refs.nodes, member.node_id);
+  }
+  if (canvasGroupMembers.length && canvasGroups.length === 0) throw new Error('分组成员缺少分组');
   if (messages.reduce((sum, r) => sum + r.body.length, 0) > 12000000) throw new Error('对话内容超过 12 MB 上限');
-  return { graphKind: root.graphKind as PortableFusion['graphKind'], nodeDocuments, conversations, messages, conversationDocuments, readingPositions, edgePresentation };
+  return { graphKind: root.graphKind as PortableFusion['graphKind'], nodeDocuments, conversations, messages, conversationDocuments, readingPositions, edgePresentation, canvasGroups, canvasGroupMembers };
 }
 
-export async function importPortableFusion(tx: SQLiteDatabase, fusion: PortableFusion | undefined, map: { projectId: string; sourceProjectId: string; documentIds: Map<string, string>; nodeIds: Map<string, string>; answerIds: Map<string, string>; edgeIds: Map<string, string> }, id: (prefix: string) => string) {
+export async function importPortableFusion(tx: SQLiteDatabase, fusion: PortableFusion | undefined, map: { projectId: string; sourceProjectId: string; documentIds: Map<string, string>; nodeIds: Map<string, string>; answerIds: Map<string, string>; edgeIds: Map<string, string>;conversationIds?:Map<string,string>;messageIds?:Map<string,string> }, id: (prefix: string) => string) {
   if (!fusion) return;
-  const conversations = new Map(fusion.conversations.map((r) => [r.id, id('chat')]));
-  const messages = new Map(fusion.messages.map((r) => [r.id, id('msg')]));
+  const conversations = map.conversationIds ?? new Map(fusion.conversations.map((r) => [r.id, id('chat')]));
+  const messages = map.messageIds ?? new Map(fusion.messages.map((r) => [r.id, id('msg')]));
   await tx.runAsync('UPDATE projects SET graph_kind=? WHERE id=?', fusion.graphKind, map.projectId);
   for (const edge of fusion.edgePresentation) await tx.runAsync('UPDATE edges SET relation_kind=?,directed=?,label=? WHERE id=?', edge.relation_kind, edge.directed, edge.label, map.edgeIds.get(edge.id)!);
   for (const link of fusion.nodeDocuments) {
@@ -90,16 +104,24 @@ export async function importPortableFusion(tx: SQLiteDatabase, fusion: PortableF
     await tx.runAsync('INSERT INTO node_documents(id,node_id,document_id,sort_order) VALUES(?,?,?,?) ON CONFLICT(node_id,document_id) DO UPDATE SET sort_order=excluded.sort_order', `link-${nodeId}-${documentId}`, nodeId, documentId, link.sort_order);
   }
   for (const c of fusion.conversations) await tx.runAsync('INSERT INTO conversations VALUES(?,?,?,?,?,?)', conversations.get(c.id)!, map.projectId, c.node_id ? map.nodeIds.get(c.node_id)! : null, c.title, c.created_at, c.updated_at);
-  for (const m of fusion.messages) await tx.runAsync('INSERT INTO conversation_messages VALUES(?,?,?,?,?,?,?,?,?,?)', messages.get(m.id)!, conversations.get(m.conversation_id)!, m.role, remapReadingReferences(m.body, map.sourceProjectId, map.projectId, map.documentIds), m.status === 'pending' ? 'interrupted' : m.status, m.ordinal, null, m.actual_model, m.created_at, m.updated_at);
+  for (const m of fusion.messages) await tx.runAsync('INSERT INTO conversation_messages VALUES(?,?,?,?,?,?,?,?,?,?)', messages.get(m.id)!, conversations.get(m.conversation_id)!, m.role, remapFormalLinks(remapReadingReferences(m.body, map.sourceProjectId, map.projectId, map.documentIds),new Map([...map.nodeIds,...conversations,...messages]),map.projectId), m.status === 'pending' ? 'interrupted' : m.status, m.ordinal, null, m.actual_model, m.created_at, m.updated_at);
   for (const saved of fusion.conversationDocuments) {
     const conversationId = saved.conversation_id ? conversations.get(saved.conversation_id)! : null;
     const answerId = saved.source_answer_id ? map.answerIds.get(saved.source_answer_id)! : null;
     const messageIds = (JSON.parse(saved.message_ids_json) as string[]).map((oldId) => messages.get(oldId) ?? oldId);
-    const selectionKey = answerId ? `answer:${answerId}` : conversationId ? `chat:${conversationId}:${messageIds.join(',')}` : `import:${id('capture')}`;
+    const selectionKey = saved.selection_key.startsWith('note:v1:')
+      ? `note:v1:${map.documentIds.get(saved.document_id)!}`
+      : answerId ? `answer:${answerId}` : conversationId ? `chat:${conversationId}:${messageIds.join(',')}` : `import:${id('capture')}`;
     await tx.runAsync('INSERT INTO conversation_documents VALUES(?,?,?,?,?,?,?,?)', id('capture'), conversationId, answerId, map.documentIds.get(saved.document_id)!, saved.node_id ? map.nodeIds.get(saved.node_id)! : null, JSON.stringify(messageIds), selectionKey, saved.created_at);
   }
   for (const r of fusion.readingPositions) {
     const documentId = map.documentIds.get(r.document_id)!;
     await tx.runAsync('INSERT INTO reading_positions VALUES(?,?,?,?,?)', documentId, documentId, r.anchor, r.ratio, r.updated_at);
+  }
+  const groupIds = new Map((fusion.canvasGroups ?? []).map(group => [group.id, id('group')]));
+  for (const group of fusion.canvasGroups ?? []) await tx.runAsync('INSERT INTO canvas_groups VALUES(?,?,?,?,?)', groupIds.get(group.id)!, map.projectId, group.title, group.created_at, group.updated_at);
+  for (const member of fusion.canvasGroupMembers ?? []) {
+    const nodeId = map.nodeIds.get(member.node_id)!;
+    await tx.runAsync('INSERT INTO canvas_group_members VALUES(?,?,?,?,?)', nodeId, map.projectId, groupIds.get(member.group_id)!, nodeId, member.created_at);
   }
 }

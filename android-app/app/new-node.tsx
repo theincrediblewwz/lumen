@@ -8,13 +8,14 @@ import { createFreeBoard, createManualNode } from '@/data/node-workspace';
 import { colors } from '@/theme/tokens';
 
 export default function NewNodeScreen() {
-  const {projectId,parentId}=useLocalSearchParams<{projectId?:string;parentId?:string}>(); const db=useSQLiteContext(); const insets=useSafeAreaInsets();
+  const {projectId,parentId,topicId}=useLocalSearchParams<{projectId?:string;parentId?:string;topicId?:string}>(); const db=useSQLiteContext(); const insets=useSafeAreaInsets();
   const [title,setTitle]=useState(''); const [body,setBody]=useState(''); const [error,setError]=useState(''); const [busy,setBusy]=useState(false); const gate=useRef(false);
   async function save() {
     if(gate.current)return; gate.current=true;setBusy(true);setError('');
     try {
-      const result=projectId ? {projectId,nodeId:await createManualNode(db,{projectId,parentId,title,body})} : await createFreeBoard(db,title,body);
-      router.replace({pathname:'/project/[id]',params:{id:result.projectId,initialNodeId:result.nodeId}});
+      const result=projectId ? {projectId,nodeId:await createManualNode(db,{projectId,parentId,title,body})} : await createFreeBoard(db,title,body,topicId);
+      try {router.replace({pathname:'/project/[id]',params:{id:result.projectId,initialNodeId:result.nodeId}});}
+      catch {setError('文档与节点已经保存。请返回白板列表重新打开。');}
     } catch(e){setError(e instanceof Error?e.message:'保存失败');}finally{gate.current=false;setBusy(false);}
   }
   return <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={{padding:18,paddingBottom:24+insets.bottom,gap:16}}>

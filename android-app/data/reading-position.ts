@@ -1,3 +1,4 @@
+import {documentText} from './rich-document';
 import type { SQLiteDatabase } from 'expo-sqlite';
 import { lexer } from 'marked';
 import { decodeMarkdownMathPayload, prepareMarkdownMathForRenderer } from '../ai/markdown-math';
@@ -6,7 +7,7 @@ export type ReadingBlock={anchor:string;index:number;heading?:string;depth:numbe
 /** Mirrors the stock marked renderer's top-level blocks; fenced headings stay code. */
 export function readingBlocks(markdown:string):ReadingBlock[] {
   const seen=new Map<string,number>();
-  return lexer(prepareMarkdownMathForRenderer(markdown||'_这份文档还没有正文。_'),{gfm:true}).filter(t=>t.type!=='space').map((token,index)=>{
+  return lexer(prepareMarkdownMathForRenderer(documentText(markdown)||'_这份文档还没有正文。_'),{gfm:true}).filter(t=>t.type!=='space').map((token,index)=>{
     let hash=2166136261;for(let i=0;i<token.raw.length;i++){hash=Math.imul(hash^token.raw.charCodeAt(i),16777619);}
     const key=(hash>>>0).toString(36);const occurrence=(seen.get(key)??0)+1;seen.set(key,occurrence);
     const heading=token.type==='heading'?token.text.replace(/`\u0000learnstuff-math:(inline|display):([^`]+)`/gu,(_match:string,kind:string,payload:string)=>`${kind==='display'?'$$':'$'}${decodeMarkdownMathPayload(payload)}${kind==='display'?'$$':'$'}`):undefined;

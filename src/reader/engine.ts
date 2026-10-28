@@ -197,15 +197,30 @@ export function normalizeMathDelims(src: string): string {
     .join('');
 }
 
+const markdownSyntaxHelpers = new MarkdownIt().helpers;
+function protectedDestinations(text: string): { start: number; end: number }[] {
+  const ranges = [...text.matchAll(/(?:[a-z][a-z0-9+.-]*:\/\/|mailto:)[^\s<>]+/gi)].map(match=>({start:match.index!,end:match.index!+match[0].length}));
+  for (const expression of [/\]\(\s*/g, /^\s{0,3}\[[^\]\n]+\]:\s*/gm]) {
+    for (const match of text.matchAll(expression)) {
+      const start=match.index!+match[0].length;
+      const destination=markdownSyntaxHelpers.parseLinkDestination(text,start,text.length);
+      if(destination.ok)ranges.push({start,end:destination.pos});
+    }
+  }
+  return ranges;
+}
+function replaceDelimiters(text: string, expression: RegExp, convert: (inner: string)=>string): string {
+  const destinations=protectedDestinations(text);
+  return text.replace(expression,(match,inner,offset:number)=>destinations.some(range=>offset>=range.start&&offset<range.end)?match:convert(inner));
+}
 function convertDelimsOutsideCode(text: string): string {
   // 保护行内代码 `…`（奇数段），只在普通段转换
   const segs = text.split(/(`[^`\n]*`)/g);
   return segs
     .map((s, i) => {
       if (i % 2 === 1) return s;
-      return s
-        .replace(/\\\[\s*([\s\S]+?)\s*\\\]/g, (_m, inner) => `\n\n$$\n${inner}\n$$\n\n`)
-        .replace(/\\\(\s*([\s\S]+?)\s*\\\)/g, (_m, inner) => `$${inner}$`);
+      const blocks=replaceDelimiters(s,/\\\[\s*([\s\S]+?)\s*\\\]/g,inner=>`\n\n$$\n${inner}\n$$\n\n`);
+      return replaceDelimiters(blocks,/\\\(\s*([\s\S]+?)\s*\\\)/g,inner=>`$${inner}$`);
     })
     .join('');
 }
@@ -455,17 +470,22 @@ function splitTableRow(line: string): { head: string; cells: string[]; tail: str
  * token 边界：空白与中文标点/中文字符。允许公式内包含 \ { } ^ _ | ( ) [ ] 数字字母
  * 与常见运算符 + - = < > / ~ 等。
  */
-function wrapMathTokens(text: string): string {
+function wrapMathTokens(text: string, onGuess?: (start: number, end: number, tex: string) => void): string {
   // 允许出现在“数学串”里的字符
   const mathChar = /[A-Za-z0-9\\{}\^_|()\[\].,;:+\-*/=<>~'"!]/;
   let res = '';
   let i = 0;
   const n = text.length;
+  const uris = [...text.matchAll(/(?:[a-z][a-z0-9+.-]*:\/\/|mailto:)[^\s<>]+/gi)];
+  let uriIndex = 0;
   while (i < n) {
+    while (uris[uriIndex] && uris[uriIndex].index! + uris[uriIndex][0].length <= i) uriIndex++;
+    const uri = uris[uriIndex];
+    if (uri && i === uri.index) { res += uri[0]; i += uri[0].length; continue; }
     if (mathChar.test(text[i])) {
       let j = i;
       let buf = '';
-      while (j < n && (mathChar.test(text[j]) || /\s/.test(text[j]))) {
+      while (j < n && (!uri || j < uri.index!) && (mathChar.test(text[j]) || /\s/.test(text[j]))) {
         // 允许公式内部含单个空格（如 a \sim b），但遇到两个连续空格或换行就停
         if (/\s/.test(text[j])) {
           // 向前看：空白后紧跟数学字符才并入，否则断开
@@ -485,6 +505,7 @@ function wrapMathTokens(text: string): string {
         // 保留尾随空白到外面
         const tail = buf.slice(trimmed.length);
         res += `$${trimmed}$${tail}`;
+        onGuess?.(i, i + trimmed.length, trimmed);
       } else {
         res += buf;
       }
@@ -497,15 +518,47 @@ function wrapMathTokens(text: string): string {
   return res;
 }
 
+/** Guess only parsed plain text. Markdown structure, link destinations, images,
+ * code, reference definitions and explicit math are already separate tokens.
+ * Never reparse unescaped text: that would turn literal \* into emphasis. */
+function guessParsedText(tokens: Token[]): void {
+  let tableCell = false;
+  for (const block of tokens) {
+    if (block.type === 'td_open' || block.type === 'th_open') tableCell = true;
+    if (block.type === 'td_close' || block.type === 'th_close') tableCell = false;
+    if (block.type !== 'inline' || !block.children) continue;
+    let linkDepth = 0;
+    block.children = block.children.flatMap(token => {
+      if (token.type === 'link_open') linkDepth++;
+      if (token.type === 'link_close') linkDepth--;
+      if (token.type !== 'text' || linkDepth > 0) return [token];
+      // Normalized table cells may contain escaped norm/absolute-value pipes.
+      // Keep those literal, as the original table recovery intentionally does.
+      if (tableCell && token.content.includes('|')) return [token];
+      const guesses: { start: number; end: number; tex: string }[] = [];
+      wrapMathTokens(token.content, (start, end, tex) => guesses.push({ start, end, tex }));
+      if (!guesses.length) return [token];
+      const result: Token[] = [];
+      const Constructor = token.constructor as new (type: string, tag: string, nesting: number) => Token;
+      const append = (type: string, content: string) => { if (!content) return; const fragment = new Constructor(type, type === 'math_inline' ? 'math' : '', 0); fragment.content = content; fragment.level = token.level; result.push(fragment); };
+      let start = 0;
+      for (const guess of guesses) { append('text', token.content.slice(start, guess.start)); append('math_inline', guess.tex); start = guess.end; }
+      append('text', token.content.slice(start));
+      return result;
+    });
+  }
+}
+
 /** 创建配置好的 markdown-it 实例（含公式插件）。 */
-export function createEngine(): MD {
+export function createEngine(allowSanitizedHtml = false): MD {
   const md = new MarkdownIt({
-    html: false, // 不信任外部 md 的原始 HTML（安全）
+    html: allowSanitizedHtml, // Rich-document callers must sanitize before DOM insertion.
     linkify: true,
     breaks: false,
     typographer: true,
   });
   md.use(mathPlugin);
+  if(!allowSanitizedHtml)md.renderer.rules.image=(tokens,index)=>`<span class="document-image-missing" role="img">${escapeAttr(tokens[index].content||'图片')}（请导入含图片的 ZIP）</span>`;
   return md;
 }
 
@@ -524,9 +577,9 @@ export function renderMarkdown(src: string, engine?: MD, opts?: RenderOptions): 
   // 两步归一化，与 guessMath 无关、始终执行：
   // 先救数学定界符 \(\) \[\]，再救表格（分隔用了形近字符时整张表会降级成段落）
   const normalized = normalizeTablePipes(normalizeMathDelims(src));
-  const source = opts?.guessMath ? preprocessGuessMath(normalized) : normalized;
   const env = {};
-  const tokens = md.parse(source, env);
+  const tokens = md.parse(normalized, env);
+  if (opts?.guessMath) guessParsedText(tokens);
   const toc: TocItem[] = [];
   const used = new Map<string, number>();
 
@@ -560,7 +613,3 @@ export function renderMarkdown(src: string, engine?: MD, opts?: RenderOptions): 
   const html = md.renderer.render(tokens, md.options, env);
   return { html, toc };
 }
-
-
-
-

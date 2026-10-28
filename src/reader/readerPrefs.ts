@@ -123,4 +123,3 @@ export function setProgress(docKey: string, ratio: number) {
     void import('@tauri-apps/api/core').then(({invoke})=>invoke('reading_position_set',{projectId,boardId,path:parts.join('/'),ratio:Math.max(0,Math.min(1,ratio))})).catch(()=>{});
   }
 }
-

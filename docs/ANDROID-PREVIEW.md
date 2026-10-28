@@ -1,6 +1,8 @@
-# Lumen Android 2.1.0-preview.3
+# Lumen Android 源码 2.1.0-preview.8
 
-这是与桌面 Lumen 同仓库的 **Android 预览版**。下载入口：[GitHub Release](https://github.com/theincrediblewwz/lumen/releases/tag/android-v2.1.0-preview.3)。APK 支持 Android 7.0 及以上，包含 arm64-v8a 和 x86_64，应用包名 `com.learnstuffquickly.app`、versionCode 18。启动器暂显示 LearnStuff，以延续原 Android 客户端的应用身份。
+当前源码为 **2.1.0-preview.8 / versionCode 23**，应用包名仍为 `com.learnstuffquickly.app`，启动器显示 LearnStuff，保留既有应用身份。此次源码同步不替换原有Release附件。
+
+[旧公开preview.3 APK](https://github.com/theincrediblewwz/lumen/releases/tag/android-v2.1.0-preview.3) 仍供历史预览：该附件为versionCode18，支持Android7.0及以上、arm64-v8a与x86_64，不能当作当前preview.8源码构建的二进制。新安装包请以对应Release的明确元数据、签名和校验和为准。
 
 ## 安装和数据
 
@@ -16,10 +18,10 @@ APK 使用 Android 调试证书签名，供公开预览体验，并非应用商�
 
 ## 源码、验证和版本关系
 
-- Android 源码：[android-app](../android-app/README.md)；桌面源码仍在 `src/` 和 `src-tauri/`。五个共享同步核心文件在当前 Git 内容中一致，`src/sync/core-provenance.json` 记录摘要。
-- Android 源码来自 LearnStuffQuickly 提交 `52ddd8313e28168cc39a5a6adf4b86c8432736c9`，只复制了已跟踪文件。桌面同步适配来自 Lumen 提交 `875440d5f660214dd2ef9934fb712f701b3292de`。
-- Android 原提交通过 220/220 合同测试、typecheck、lint、release APK 构建/签名与 Android 15 合成数据模拟器流程。Lumen 桌面适配此前通过 268 项前端测试、20 项 Rust 测试及源码构建；本次仓库 CI 会分别运行两端的非设备检查。
-- APK 是原 Android 提交对应的已验证二进制；公开仓库的改动限文档、CI、示例环境、合成测试字符串和依赖独立私有 Gateway 的旧开发脚本，不改变应用运行代码或构建设置。
-- `android-v*` 是 Android 标签，不触发原有 `v*` 桌面发布工作流。正式桌面版仍见 [v0.1.8](https://github.com/theincrediblewwz/lumen/releases/tag/v0.1.8)。
+- Android源码：[android-app](../android-app/README.md)；桌面源码位于根 `src/` 和 `src-tauri/`。共享同步核心通过 `node scripts/verify-sync-core.mjs` 对照两端真实文件及来源摘要核验。
+- 当前桌面0.1.14与Androidpreview.8产品文件来自已跟踪来源提交 `68eeb939571cc31115d92ba445ae6f0ec1b5d635`，公共Git历史独立保留。未带入其他服务、用户资料、私有开发记录或任何凭据。
+- preview.8源码包括节点PDF/图文原件保留、知识交换、独立知识库、备份和原有阅读/讨论/同步能力。本次桌面的AI重构/忠实逐轮导入没有宣称已提供Android同名入口。
+- 公开仓库的合同、类型与lint检查会验证当前根布局适配。此前Android15合成模拟器验证不代替物理手机、TalkBack、真实WebDAV三端与后台行为验收。
+- 不改动或覆盖旧公开版本资产。桌面新增项目/全库资料包暂不声明Android恢复兼容；原有跨端单板包按其版本兼容规则使用。
 
-原始 Android 模拟器证据和本地交付包位于开发机的独立验收目录，不包含在公开仓库或 APK 中。公开 Release 给出源码提交、安装包、包元数据、校验和与验证边界。
+安装前请保留现有版本的完整备份，并核实相同包名、相同证书的更新条件。恢复资料使用新副本核对，不把源码同步当作用户资料迁移。

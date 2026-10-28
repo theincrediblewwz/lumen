@@ -1,6 +1,6 @@
 {
   "platforms": ["android"],
   "android": {
-    "modules": ["expo.modules.contentextractor.ExpoContentExtractorModule", "expo.modules.contentextractor.ExpoSelectionActionsModule"]
+    "modules": ["expo.modules.contentextractor.ExpoContentExtractorModule", "expo.modules.contentextractor.ExpoSelectionActionsModule", "expo.modules.contentextractor.ExpoShareInboxModule"]
   }
 }

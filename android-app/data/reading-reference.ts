@@ -1,3 +1,4 @@
+import {documentText} from './rich-document';
 import { lexer } from 'marked';
 import { decodeMarkdownMathPayload, prepareMarkdownMathForRenderer } from '../ai/markdown-math';
 
@@ -21,7 +22,7 @@ export const readingQuestions: Record<ReadingAction, string> = {
   ask: '关于这段内容，我想问：',
 };
 export function referenceBlocks(body: string) {
-  return lexer(prepareMarkdownMathForRenderer(body || '_这份文档还没有正文。_'), { gfm: true })
+  return lexer(prepareMarkdownMathForRenderer(documentText(body) || '_这份文档还没有正文。_'), { gfm: true })
     .filter(token => token.type !== 'space').map(token => ({
       raw: token.raw,
       text: token.raw.replace(/`\u0000learnstuff-math:(inline|display):([^`]+)`/gu,

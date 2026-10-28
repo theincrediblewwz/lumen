@@ -1,0 +1,120 @@
+// Actual App UI; disposable storage, no user files, credentials or Provider calls.
+const fs = require('node:fs'), path = require('node:path'), assert = require('node:assert/strict');
+const { chromium, webkit } = require(process.env.LSQ_PLAYWRIGHT_MODULE || 'playwright');
+const base = process.env.LSQ_UI_URL || 'http://127.0.0.1:5198';
+const output = process.env.LSQ_UI_EVIDENCE || 'output/playwright';
+fs.mkdirSync(output, { recursive: true });
+const checks = [], errors = [];
+let browser, page;
+const project = name => page.locator('.pane-projects .list-item').filter({ hasText: name });
+const board = name => page.locator('.pane-boards .list-item').filter({ hasText: name });
+const input = () => page.getByRole('textbox', { name: '名称', exact: true });
+async function rename(row, name) {
+  await row.click({ button: 'right' }); await page.getByRole('menuitem', { name: '重命名', exact: true }).click();
+  await input().fill(name);
+}
+async function menu() { await page.getByRole('button', { name: '菜单', exact: true }).click(); }
+async function drag(dx, dy) {
+  const box = await page.locator('.node-card').boundingBox();
+  await page.mouse.move(box.x + 60, box.y + 24); await page.mouse.down();
+  await page.mouse.move(box.x + 60 + dx, box.y + 24 + dy, { steps: 3 }); await page.mouse.up();
+}
+(async () => {
+  const engine = process.env.LSQ_UI_BROWSER || 'chromium';
+  browser = await (engine === 'webkit' ? webkit : chromium).launch({ headless: true, ...(engine === 'chromium' && process.env.LSQ_UI_CHANNEL ? { channel: process.env.LSQ_UI_CHANNEL } : {}) });
+  page = await browser.newPage({ viewport: { width: 1440, height: 1024 } });
+  page.on('pageerror', e => errors.push(e.message));
+  const url = `${base}/scripts/knowledge-ui-fixture.html?platform=macos&nodes=1&captureQA=1&navigationQA=1`;
+  await page.goto(url); await project('桌面夹').click(); await board('合成学习白板').click(); await page.locator('.node-card').waitFor();
+  await rename(project('桌面夹'), '学习项目'); await input().press('Enter'); await project('学习项目').waitFor();
+  await page.waitForFunction(() => window.__fixtureNavigationCalls.length === 1);
+  assert.equal(await input().count(), 0); checks.push('project rename renders an editor, persists once, updates selected heading');
+  await rename(project('学习项目'), '取消名称'); await input().press('Escape');
+  assert.equal(await project('学习项目').count(), 1); assert.equal(await page.evaluate(() => window.__fixtureNavigationCalls.length), 1);
+  checks.push('Escape cancels without a blur submission or changing selection');
+  await rename(project('学习项目'), '中文输入');
+  await input().evaluate(el => el.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, isComposing: true, keyCode: 229 })));
+  assert.equal(await input().count(), 1); assert.equal(await page.evaluate(() => window.__fixtureNavigationCalls.length), 1);
+  await input().press('Escape'); checks.push('IME composition Enter does not prematurely rename');
+  await rename(board('合成学习白板'), '重命名白板');
+  await page.evaluate(() => { window.__fixtureNavigationFailure = true; }); await input().press('Enter');
+  await page.locator('.error-bar').filter({ hasText: '合成磁盘写入失败' }).waitFor();
+  assert.equal(await input().inputValue(), '重命名白板');
+  await page.evaluate(() => { window.__fixtureNavigationFailure = false; window.__fixtureNavigationDelay = 500; });
+  await input().press('Enter'); await page.locator('.sync-edit-lock').waitFor();
+  assert.equal(await input().isDisabled(), true);
+  await page.keyboard.press('Delete'); await page.keyboard.press('n'); await page.keyboard.press('ArrowRight');
+  assert.equal(await page.locator('.node-card').count(), 1);
+  assert.equal(await page.locator('.node-card').evaluate(el => parseFloat(el.style.left)), 100);
+  await board('重命名白板').waitFor(); await page.locator('.sync-edit-lock').waitFor({ state: 'hidden' });
+  await page.evaluate(() => { window.__fixtureNavigationDelay = 0; });
+  checks.push('failed rename keeps the draft; retry holds an edit lock until the renamed board is reloaded');
+  await drag(25, 15);
+  await rename(board('重命名白板'), '最终白板'); await input().press('Enter'); await board('最终白板').waitFor();
+  await page.reload(); await project('学习项目').click(); await board('最终白板').click(); await page.locator('.node-card').waitFor();
+  assert.equal(await page.locator('.node-card').evaluate(el => parseFloat(el.style.left)), 125);
+  checks.push('rename flushes pending canvas changes; content, project and board names survive reloading');
+  await menu(); assert.equal(await page.getByRole('menuitem', { name: 'PNG · 图片', exact: true }).count(), 0);
+  await page.getByRole('menuitem', { name: '导出', exact: true }).click();
+  for (const label of ['完整白板资料包（含原件）', 'Markdown · 保留层级', 'HTML · 离线阅读', 'SVG · 矢量图', 'PNG · 图片']) await page.getByRole('menuitem', { name: label, exact: true }).waitFor();
+  await page.screenshot({ path: path.join(output, 'mac-navigation-menu.png'), animations: 'disabled' });
+  await page.getByRole('menuitem', { name: '完整白板资料包（含原件）', exact: true }).click();
+  await page.waitForFunction(() => window.__fixtureExports.length === 1);
+  await page.locator('.sync-edit-lock').waitFor({ state: 'hidden' });
+  assert.equal(await page.evaluate(() => window.__fixtureExports[0].boardId), 'board');
+  await menu();
+  await page.getByRole('menuitem', { name: '导入', exact: true }).click();
+  assert.equal(await page.getByRole('menuitem', { name: 'PNG · 图片', exact: true }).count(), 0);
+  await page.getByRole('menuitem', { name: '对话 → 当前白板…', exact: true }).waitFor();
+  await page.keyboard.press('Home'); assert.equal(await page.evaluate(() => document.activeElement.textContent), '全局搜索  Ctrl/Cmd+K');
+  await page.keyboard.press('End'); assert.equal(await page.evaluate(() => document.activeElement.textContent), '设置…');
+  await page.keyboard.press('Escape'); checks.push('import/export groups expand exclusively; five export formats remain available with keyboard navigation');
+  await page.getByRole('button', { name: '知识库', exact: true }).click();
+  await page.getByRole('button', { name: '写下理解', exact: true }).click();
+  await page.getByRole('textbox', { name: '知识标题', exact: true }).fill('不可丢失的理解');
+  await page.getByRole('textbox', { name: '知识正文', exact: true }).fill('仍在写作。');
+  for (const label of ['白板资料包…', '对话 → 当前白板…']) {
+    await menu(); await page.getByRole('menuitem', { name: '导入', exact: true }).click(); await page.getByRole('menuitem', { name: label, exact: true }).click();
+    await page.getByRole('alertdialog').getByRole('button', { name: '取消', exact: true }).click();
+    assert.equal(await page.getByRole('textbox', { name: '知识正文', exact: true }).inputValue(), '仍在写作。');
+    assert.equal(await page.getByRole('dialog').count(), 0);
+  }
+  await page.getByRole('button', { name: '返回白板', exact: true }).click();
+  await page.getByRole('alertdialog').getByRole('button', { name: '确认', exact: true }).click();
+  checks.push('both topbar import paths honor unsaved knowledge drafts; cancel leaves text intact and starts no import');
+  for (const theme of ['light', 'paper', 'dark']) for (const glassMode of ['native', 'css', 'off']) {
+    await page.evaluate(async ({ theme, glassMode }) => { const { DEFAULT_SETTINGS, applySettings } = await import('/src/settings.ts'); applySettings({ ...DEFAULT_SETTINGS, theme, glass: glassMode !== 'off', glassMode }, 'macos'); }, { theme, glassMode });
+    const seam = await page.evaluate(() => { const top = document.querySelector('.titlebar'), side = document.querySelector('.sidebar'); const style = getComputedStyle(side); return { gap: side.getBoundingClientRect().top - top.getBoundingClientRect().bottom, border: style.borderTopWidth, shadow: style.boxShadow, radius: style.borderRadius }; });
+    assert.equal(seam.gap, 0); assert.equal(seam.border, '0px'); assert.equal(seam.shadow, 'none'); assert.equal(seam.radius, '0px');
+  }
+  checks.push('sidebar touches the topbar with no floating border/shadow/radius in three themes and three material modes');
+  await page.setViewportSize({ width: 720, height: 480 }); await menu(); await page.getByRole('menuitem', { name: '导出', exact: true }).click();
+  const bounds = await page.getByRole('menu').boundingBox(); assert.ok(bounds.x >= 0 && bounds.y >= 0 && bounds.x + bounds.width <= 721 && bounds.y + bounds.height <= 481);
+  await page.keyboard.press('Escape'); await page.setViewportSize({ width: 1440, height: 1024 }); checks.push('expanded menu stays within a small window');
+  await page.locator('.pane-projects .pane-add').click(); await input().fill('新项目'); await input().press('Enter'); await project('新项目').waitFor();
+  assert.equal(await page.locator('.node-card').count(), 0); assert.equal(await page.locator('.ai-fab').count(), 0);
+  checks.push('creating a project clears the old board and its AI context');
+  await project('学习项目').click(); await board('最终白板').click(); await page.locator('.node-card').waitFor(); await drag(5, 5);
+  await board('最终白板').click({ button: 'right' }); await page.getByRole('menuitem', { name: '删除白板', exact: true }).click();
+  const protectedPosition = await page.locator('.node-card').evaluate(el => [el.style.left, el.style.top]);
+  for (const key of ['Delete', 'Backspace', 'ArrowRight', 'n', 'Control+z']) await page.keyboard.press(key);
+  assert.equal(page.url(), url, 'modal keys must not invoke browser back navigation');
+  assert.equal(await page.locator('.node-card').count(), 1);
+  assert.deepEqual(await page.locator('.node-card').evaluate(el => [el.style.left, el.style.top]), protectedPosition);
+  await page.getByRole('alertdialog').getByRole('button', { name: '取消', exact: true }).focus(); await page.keyboard.press('Enter');
+  await page.getByRole('alertdialog').waitFor({state:'hidden'}); assert.equal(await board('最终白板').count(), 1);
+  await board('最终白板').click({ button: 'right' }); await page.getByRole('menuitem', { name: '删除白板', exact: true }).click();
+  await page.getByRole('button', { name: '确认删除', exact: true }).click(); await board('最终白板').waitFor({ state: 'hidden' });
+  assert.equal(await page.locator('.node-card').count(), 0); await board('第二块合成白板').click();
+  await page.waitForFunction(() => !document.querySelector('.error-bar'));
+  checks.push('app-owned deletion confirmation supports cancel; deleting a board with pending saves does not poison subsequent navigation');
+  await project('学习项目').click({ button: 'right' }); await page.getByRole('menuitem', { name: '删除项目', exact: true }).click();
+  await page.getByRole('button', { name: '确认删除', exact: true }).click(); await project('学习项目').waitFor({ state: 'hidden' });
+  assert.equal(await page.locator('.node-card').count(), 0); await project('另一项目').click(); await board('另一项目的白板').click();
+  await page.reload(); assert.equal(await project('学习项目').count(), 0); checks.push('deleting the active project clears its canvas; other projects and persisted storage remain usable');
+  await page.getByRole('button', { name: '知识库', exact: true }).click(); await page.locator('.knowledge-reading article').waitFor();
+  await page.evaluate(async () => { const { DEFAULT_SETTINGS, applySettings } = await import('/src/settings.ts'); applySettings({ ...DEFAULT_SETTINGS, theme: 'light', glassMode: 'native' }, 'macos'); });
+  await page.screenshot({ path: path.join(output, 'mac-knowledge-reference.png'), animations: 'disabled' });
+  assert.deepEqual(errors, []); fs.writeFileSync(path.join(output, 'mac-navigation-qa.json'), JSON.stringify({ checks, errors, realProviderCalls: 0, realCredentialsRead: 0 }, null, 2));
+  await browser.close(); console.log(JSON.stringify({ pass: true, checks: checks.length, output }));
+})().catch(async error => { if (page) { await page.screenshot({ path: path.join(output, 'mac-navigation-failure.png') }).catch(() => {}); fs.writeFileSync(path.join(output, 'mac-navigation-failure.txt'), await page.locator('body').ariaSnapshot().catch(() => '')); } if (browser) await browser.close(); console.error(error); process.exitCode = 1; });

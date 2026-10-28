@@ -1,7 +1,8 @@
-import { useEffect } from 'react';
+import { useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import type { Settings, ThemeName, GlassMode, EdgeStyle } from '../settings';
 import { SyncSettings } from './SyncSettings';
+import { BoardWriteSettings } from './BoardWriteSettings';
 
 const THEMES: { id: ThemeName; label: string }[] = [
   { id: 'light', label: '浅色' },
@@ -28,26 +29,47 @@ const EDGE_STYLES: { id: EdgeStyle; label: string }[] = [
 export function SettingsPanel({
   settings,
   platform,
+  storageRoot,
+  storageBusy,
+  onChooseStorage,
   onChange,
   onClose,
 }: {
   settings: Settings;
   platform: string;
+  storageRoot: string | null;
+  storageBusy: boolean;
+  onChooseStorage: () => void;
   onChange: (patch: Partial<Settings>) => void;
   onClose: () => void;
 }) {
   const isMac = platform === 'macos';
+  const effectiveGlassMode = !settings.glass || (settings.glassMode === 'native' && !isMac) ? 'off' : settings.glassMode;
+  const card = useRef<HTMLDivElement>(null);
+  const close = useRef(onClose); close.current = onClose;
   useEffect(() => {
-    const onKey = (e: KeyboardEvent) => e.key === 'Escape' && onClose();
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [onClose]);
+    const previous = document.activeElement as HTMLElement | null;
+    card.current?.querySelector<HTMLButtonElement>('.settings-close')?.focus();
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') { event.preventDefault(); event.stopImmediatePropagation(); close.current(); }
+      if (event.key === 'Tab') {
+        const controls = Array.from(card.current?.querySelectorAll<HTMLElement>('button:not(:disabled),input:not(:disabled),summary,select:not(:disabled),a[href]') ?? []).filter(el => el.getClientRects().length > 0);
+        const first = controls[0], last = controls[controls.length - 1];
+        if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last?.focus(); }
+        else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first?.focus(); }
+      }
+    };
+    window.addEventListener('keydown', onKey, true);
+    return () => { window.removeEventListener('keydown', onKey, true); previous?.focus(); };
+  }, []);
 
   return createPortal(
     <div className="settings-overlay" onMouseDown={onClose}>
       <div
-        className="settings-card glass-surface"
+        ref={card}
+        className="settings-card settings-preferences glass-surface"
         role="dialog"
+        aria-modal="true"
         aria-label="设置"
         onMouseDown={(e) => e.stopPropagation()}
       >
@@ -61,14 +83,20 @@ export function SettingsPanel({
         </div>
 
         <div className="settings-body">
-        <SyncSettings />
+        <BoardWriteSettings/>
+        <section className="settings-section settings-storage">
+          <div className="settings-row"><h3 className="settings-label">保存位置</h3><button type="button" className="btn" disabled={storageBusy} onClick={onChooseStorage}>更改目录</button></div>
+          <p className="settings-storage-path" title={storageRoot ?? undefined}>{storageRoot ?? '尚未选择保存目录'}</p>
+          <p className="settings-hint">白板、文档和知识库共用此目录；知识库保存在其中的 knowledge 文件夹。切换目录时，原资料留在原处。</p>
+        </section>
         <section className="settings-section">
-          <label className="settings-label">主题</label>
-          <div className="seg">
+          <h3 className="settings-label">主题</h3>
+          <div className="seg" role="group" aria-label="主题">
             {THEMES.map((t) => (
               <button
                 key={t.id}
                 type="button"
+                aria-pressed={settings.theme === t.id}
                 className={`seg-btn${settings.theme === t.id ? ' is-active' : ''}`}
                 onClick={() => onChange({ theme: t.id })}
               >
@@ -78,20 +106,16 @@ export function SettingsPanel({
           </div>
         </section>
 
-        <section className="settings-section">
-          <label className="settings-label">液态玻璃</label>
-          <div className="seg" style={{ marginTop: 10 }}>
-            {GLASS_MODES.map((m) => {
-              const disabled = m.id === 'native' && !isMac;
+        <details className="settings-section settings-disclosure">
+          <summary><span>窗口材质</span><span className="settings-summary-value">{GLASS_MODES.find(mode => mode.id === effectiveGlassMode)?.label}</span></summary>
+          <div className="seg" role="group" aria-label="窗口材质">
+            {GLASS_MODES.filter(mode => mode.id !== 'native' || isMac).map((m) => {
               return (
                 <button
                   key={m.id}
                   type="button"
-                  disabled={disabled}
-                  title={disabled ? '原生材质仅 macOS 支持' : undefined}
-                  className={`seg-btn${settings.glass && settings.glassMode === m.id ? ' is-active' : ''}${
-                    !settings.glass && m.id === 'off' ? ' is-active' : ''
-                  }`}
+                  aria-pressed={effectiveGlassMode === m.id}
+                  className={`seg-btn${effectiveGlassMode === m.id ? ' is-active' : ''}`}
                   onClick={() =>
                     m.id === 'off'
                       ? onChange({ glass: false })
@@ -99,25 +123,22 @@ export function SettingsPanel({
                   }
                 >
                   {m.label}
-                  {disabled ? ' ·仅Mac' : ''}
                 </button>
               );
             })}
           </div>
-          <p className="settings-hint">
-            <b>原生</b>：仅 macOS——26+ 为 Apple 液态玻璃、旧版为毛玻璃（透出桌面，最佳观感）。
-            <b>网页</b>：跨平台一致的 CSS 毛玻璃（浮层可见）。Windows 建议用「网页」或「关闭」。
-          </p>
+          <p className="settings-hint">调整浮层的透明感，不影响正文阅读。</p>
 
-          <div className={`settings-sliders${settings.glass ? '' : ' is-disabled'}`}>
+          <div className={`settings-sliders${effectiveGlassMode === 'off' ? ' is-disabled' : ''}`}>
             <div className="slider-row">
               <span className="slider-name">通透度</span>
               <input
                 type="range"
+                aria-label="通透度"
                 min={0}
                 max={100}
                 value={settings.glassClarity}
-                disabled={!settings.glass}
+                disabled={effectiveGlassMode === 'off'}
                 onChange={(e) => onChange({ glassClarity: Number(e.target.value) })}
               />
               <span className="slider-val">{settings.glassClarity}</span>
@@ -126,24 +147,26 @@ export function SettingsPanel({
               <span className="slider-name">模糊</span>
               <input
                 type="range"
+                aria-label="模糊"
                 min={0}
                 max={100}
                 value={settings.glassBlur}
-                disabled={!settings.glass}
+                disabled={effectiveGlassMode === 'off'}
                 onChange={(e) => onChange({ glassBlur: Number(e.target.value) })}
               />
               <span className="slider-val">{settings.glassBlur}</span>
             </div>
           </div>
-        </section>
+        </details>
 
         <section className="settings-section">
-          <label className="settings-label">连线样式</label>
-          <div className="seg" style={{ marginTop: 10 }}>
+          <h3 className="settings-label">连线样式</h3>
+          <div className="seg" role="group" aria-label="连线样式">
             {EDGE_STYLES.map((s) => (
               <button
                 key={s.id}
                 type="button"
+                aria-pressed={(settings.edgeStyle ?? 'curved') === s.id}
                 className={`seg-btn${(settings.edgeStyle ?? 'curved') === s.id ? ' is-active' : ''}`}
                 onClick={() => onChange({ edgeStyle: s.id })}
               >
@@ -151,16 +174,16 @@ export function SettingsPanel({
               </button>
             ))}
           </div>
-          <p className="settings-hint">节点之间连线的形状：曲线更柔和、直线最简洁、折线走直角。</p>
         </section>
 
         <section className="settings-section">
           <div className="settings-row">
-            <label className="settings-label">数学公式猜测渲染</label>
+            <span className="settings-label">自动识别公式</span>
             <button
               type="button"
               className={`switch${settings.guessMath ? ' is-on' : ''}`}
               role="switch"
+              aria-label="自动识别公式"
               aria-checked={settings.guessMath}
               onClick={() => onChange({ guessMath: !settings.guessMath })}
             >
@@ -168,32 +191,29 @@ export function SettingsPanel({
             </button>
           </div>
           <p className="settings-hint">
-            开启后，阅读器会把「明显是数学、但没用 $ 包起来」的内容（如 |\varepsilon|^&#123;1/3&#125;\sim\delta）
-            自动识别并渲染成公式。适合读 GPT 导出、公式没加分界符的文档。
+            识别正文中没有标记的数学公式。
           </p>
         </section>
 
         <section className="settings-section">
           <div className="settings-row">
-            <label className="settings-label">动画特效</label>
+            <span className="settings-label">动画</span>
             <button
               type="button"
               className={`switch${settings.motion ? ' is-on' : ''}`}
               role="switch"
+              aria-label="动画"
               aria-checked={settings.motion}
               onClick={() => onChange({ motion: !settings.motion })}
             >
               <span className="switch-knob" />
             </button>
           </div>
-          <p className="settings-hint">关闭后所有过渡与位移动画立即停用（也尊重系统「减少动态效果」）。</p>
         </section>
+        <SyncSettings key={storageRoot ?? ''} />
         </div>
       </div>
     </div>,
     document.body,
   );
 }
-
-
-

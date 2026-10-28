@@ -13,7 +13,7 @@ import {
 
 const credentials: ByokCredentials = {
   profile: { ...MIMO_BYOK_PRESET },
-  apiKey: 'mimo-fixture',
+  apiKey: 'fixture-key-1',
 };
 const prepared = preparePromptLabRequest(PROMPT_LAB_CASES[0], createBlindPromptOrder('test')[0]);
 
@@ -39,7 +39,7 @@ test('captures usage, latency-safe metadata and diagnostics without retrying', a
   let calls = 0;
   const fetchImpl = (async (_input: string | URL | Request, init?: RequestInit) => {
     calls += 1;
-    assert.equal((init?.headers as Record<string, string>).Authorization, 'Bearer mimo-fixture');
+    assert.equal((init?.headers as Record<string, string>).Authorization, 'Bearer fixture-key-1');
     const content = JSON.stringify({
       answerMarkdown: '这是足够长的直接回答。'.repeat(12),
       keyPoints: [],

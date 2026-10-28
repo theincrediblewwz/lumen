@@ -22,6 +22,7 @@ import {
   normalizeGraphStructuralDraft,
   normalizeKnowledgeDossierDraft,
   normalizeTeachingPlanDraft,
+  restoreGraphCompilationArtifact,
 } from '../ai/deep-build-prompts';
 
 test('new goals default to deep while ordinary node questions remain quick', () => {
@@ -134,6 +135,25 @@ test('local graph composition locks the teaching answer and only accepts a struc
   const composed = composeGraphCompilation(structuralDraft, dossier, teachingPlan);
   assert.equal(composed.learningExpansion.answerMarkdown, teachingPlan.adaptedAnswerMarkdown);
   assert.equal(composed.learningExpansion.keyPoints.length, structuralDraft.nodes.length);
+});
+
+test('restoring a completed graph stage rejects partial nested results without a property-read crash', () => {
+  const dossier = validateKnowledgeDossier(dossierFixture());
+  const teachingPlan = validateTeachingPlan(teachingPlanFixture(dossier), dossier);
+  const full = graphCompilationFixture(dossier, teachingPlan);
+  assert.deepEqual(restoreGraphCompilationArtifact(full, dossier, teachingPlan), full);
+  for (const invalid of [
+    { ...full, learningExpansion: null },
+    { ...full, learningExpansion: {} },
+    { ...full, learningExpansion: { patch: null } },
+    { ...full, learningExpansion: { patch: { nodes: null } } },
+  ]) {
+    assert.throws(
+      () => restoreGraphCompilationArtifact(invalid, dossier, teachingPlan),
+      (error: unknown) => error instanceof DeepBuildValidationError
+        && !/Cannot read (?:property|properties)/iu.test(error.message),
+    );
+  }
 });
 
 test('provider adapter normalizes harmless MiMo schema drift before strict persistence validation', () => {

@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useState } from 'react';
-import { router, useLocalSearchParams } from 'expo-router';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { router, useFocusEffect, useLocalSearchParams } from 'expo-router';
 import { useSQLiteContext } from 'expo-sqlite';
 import {
   ActivityIndicator,
@@ -41,6 +41,11 @@ import {
   listProjectSourceItems,
 } from '@/data/source-items';
 import { colors, radii } from '@/theme/tokens';
+import { KnowledgeReferenceOptions } from '@/components/knowledge-reference-options';
+import { loadKnowledgeReferenceStatus, setKnowledgePolicy } from '@/data/knowledge-library';
+import type { KnowledgePolicy } from '@/data/knowledge-library-core';
+import { onSyncUpdate } from '@/sync/runtime';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import type {
   DetailLevel,
   ExplanationStyle,
@@ -50,13 +55,21 @@ import type {
 } from '@/types/domain';
 
 export default function ProjectSettingsScreen() {
-  const { projectId } = useLocalSearchParams<{ projectId: string }>();
+  const { projectId, showAiOptions } = useLocalSearchParams<{ projectId: string; showAiOptions?: string }>();
   const db = useSQLiteContext();
+  const insets = useSafeAreaInsets();
+  const scroll = useRef<ScrollView>(null);
+  const sourceRangeY = useRef<number | null>(null);
+  const pendingSourceRange = useRef(false);
   const [graph, setGraph] = useState<KnowledgeGraph | null>(null);
   const [mode, setMode] = useState<ProjectMode>('learning');
+  const [advancedVisible, setAdvancedVisible] = useState(false);
   const [explanationStyle, setExplanationStyle] = useState<ExplanationStyle>('plain_language');
   const [detailLevel, setDetailLevel] = useState<DetailLevel>('detailed');
   const [allowOutsideKnowledge, setAllowOutsideKnowledge] = useState(true);
+  const [knowledgeStatus, setKnowledgeStatus] = useState<{ policy: KnowledgePolicy; boundCount: number } | null>(null);
+  const [knowledgeSaving, setKnowledgeSaving] = useState(false);
+  const [knowledgeError, setKnowledgeError] = useState('');
   const [saving, setSaving] = useState(false);
   const [sources, setSources] = useState<SourceItem[]>([]);
   const [sourceBusy, setSourceBusy] = useState<string | null>(null);
@@ -83,6 +96,30 @@ export default function ProjectSettingsScreen() {
       .catch((error) => Alert.alert('无法读取项目设置', error instanceof Error ? error.message : '请稍后重试'));
     return () => { active = false; };
   }, [db, projectId]);
+
+  useEffect(() => {
+    if (showAiOptions === '1') { pendingSourceRange.current = true; setAdvancedVisible(true); }
+  }, [showAiOptions]);
+  const openSourceRange = () => {
+    if (advancedVisible && sourceRangeY.current !== null) {
+      scroll.current?.scrollTo({ y: Math.max(0, sourceRangeY.current - 20), animated: true });
+    } else { pendingSourceRange.current = true; setAdvancedVisible(true); }
+  };
+  const refreshKnowledge = useCallback(async () => {
+    if (!projectId) return;
+    setKnowledgeStatus(await loadKnowledgeReferenceStatus(db, projectId));
+  }, [db, projectId]);
+  useFocusEffect(useCallback(() => {
+    void refreshKnowledge().catch(error => setKnowledgeError(error.message));
+    return onSyncUpdate(() => { void refreshKnowledge().catch(error => setKnowledgeError(error.message)); });
+  }, [refreshKnowledge]));
+  const changeKnowledgePolicy = async (value: KnowledgePolicy) => {
+    if (knowledgeSaving || !projectId) return;
+    setKnowledgeSaving(true); setKnowledgeError('');
+    try { await setKnowledgePolicy(db, projectId, value); await refreshKnowledge(); }
+    catch (error) { setKnowledgeError(error instanceof Error ? error.message : '引用设置没有保存'); }
+    finally { setKnowledgeSaving(false); }
+  };
 
   const modeChanged = Boolean(graph && mode !== graph.project.contentPolicy.mode);
   const requiresCopy = Boolean(modeChanged && graph && graph.nodes.length > 1);
@@ -211,17 +248,31 @@ export default function ProjectSettingsScreen() {
 
   return (
     <ScrollView
+      ref={scroll}
       contentInsetAdjustmentBehavior="automatic"
-      contentContainerStyle={{ padding: 20, paddingBottom: 48, gap: 22 }}
+      contentContainerStyle={{ padding: 20, paddingBottom: 48 + insets.bottom, gap: 22 }}
     >
       <View style={{ gap: 6 }}>
-        <Text style={{ color: colors.ink, fontSize: 24, fontWeight: '800' }}>内容与讲解</Text>
+        <Text style={{ color: colors.ink, fontSize: 24, fontWeight: '800' }}>白板资料与 AI 讲解</Text>
         <Text style={{ color: colors.inkMuted, fontSize: 14, lineHeight: 21 }}>
-          这些设置会进入发送预览、快速生成和三阶段深入构建。它们控制 AI 怎么讲，不会偷偷改写已有文档。
+          为这块白板添加资料。AI 如何讲解可在下方高级选项调整，已有文档不会被改写。
         </Text>
       </View>
 
-      <Section title="图谱模式">
+      <KnowledgeReferenceOptions
+        value={knowledgeStatus?.policy ?? 'disabled'}
+        boundCount={knowledgeStatus?.boundCount ?? 0}
+        disabled={!knowledgeStatus || knowledgeSaving}
+        onChange={value => void changeKnowledgePolicy(value)}
+        onChooseEntries={() => router.push({ pathname: '/knowledge-library', params: { projectId: graph.project.id, returnTo: 'settings' } })}
+        sourceRestricted={graph.project.contentPolicy.mode === 'summary' && !graph.project.contentPolicy.allowOutsideKnowledge}
+        onOpenSourceSettings={openSourceRange}
+      />
+      {knowledgeError ? <Text accessibilityRole="alert" style={{ color: colors.coral, fontSize: 13, lineHeight: 20 }}>{knowledgeError}</Text> : null}
+
+      <Pressable accessibilityRole="button" accessibilityState={{ expanded: advancedVisible }} onPress={() => setAdvancedVisible(value => !value)} style={{ minHeight: 48, justifyContent: 'center', paddingHorizontal: 14, backgroundColor: colors.surfaceStrong, borderRadius: radii.medium }}><Text style={{ color: colors.ink, fontWeight: '700' }}>{advancedVisible ? '收起 AI 讲解选项' : '高级：AI 讲解选项'}</Text></Pressable>
+      {advancedVisible ? <>
+      <Section title="AI 整理方向">
         <View style={{ flexDirection: 'row', gap: 10 }}>
           {(['learning', 'summary'] as const).map((value) => (
             <OptionCard
@@ -229,8 +280,8 @@ export default function ProjectSettingsScreen() {
               selected={mode === value}
               title={PROJECT_MODE_LABELS[value]}
               description={value === 'learning'
-                ? '从目标反向寻找前置、直觉与验证点'
-                : '忠实提炼资料的层级、主张、证据与例子'}
+                ? '从问题找关键知识点与前置知识'
+                : '围绕资料提炼主张、依据与例子'}
               onPress={() => chooseMode(value)}
             />
           ))}
@@ -274,7 +325,13 @@ export default function ProjectSettingsScreen() {
         </Text>
       </Section>
 
-      <View style={{
+      <View onLayout={event => {
+        sourceRangeY.current = event.nativeEvent.layout.y;
+        if (pendingSourceRange.current) {
+          pendingSourceRange.current = false;
+          scroll.current?.scrollTo({ y: Math.max(0, sourceRangeY.current - 20), animated: true });
+        }
+      }} style={{
         padding: 16,
         borderRadius: radii.medium,
         borderCurve: 'continuous',
@@ -287,17 +344,20 @@ export default function ProjectSettingsScreen() {
           <Text style={{ color: colors.ink, fontSize: 15, fontWeight: '800' }}>允许资料外补充</Text>
           <Text style={{ color: colors.inkMuted, fontSize: 12.5, lineHeight: 18 }}>
             {mode === 'summary'
-              ? '开启后仍需把资料之外的内容明确标成“补充背景”。'
-              : '学习模式可使用通用知识，但不确定内容必须标明。'}
+              ? '允许通用背景；知识库需在上方单独授权。关闭时仅依据本白板资料。'
+              : '从问题学习可用通用知识；此开关限制按资料整理，知识库需在上方单独授权。'}
           </Text>
         </View>
         <Switch
+          accessibilityLabel="允许资料外补充"
+          disabled={mode !== 'summary'}
           value={allowOutsideKnowledge}
           onValueChange={setAllowOutsideKnowledge}
           trackColor={{ false: colors.line, true: colors.blueSoft }}
           thumbColor={allowOutsideKnowledge ? colors.blue : colors.gray}
         />
       </View>
+      </> : null}
 
       <Section title="资料来源">
         <Text style={{ color: colors.inkMuted, fontSize: 12.5, lineHeight: 19 }}>

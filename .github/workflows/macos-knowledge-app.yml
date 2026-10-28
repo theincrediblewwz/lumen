@@ -1,0 +1,118 @@
+name: macOS knowledge app
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: macos-knowledge-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build-macos-app:
+    runs-on: macos-15
+    timeout-minutes: 60
+    defaults:
+      run:
+        shell: bash
+    env:
+      CI: '1'
+      CARGO_TARGET_DIR: ${{ github.workspace }}/src-tauri/target
+      MACOSX_DEPLOYMENT_TARGET: '11.0'
+
+    steps:
+      - name: Check out the requested source
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Use project Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 24.15.0
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Install locked frontend dependencies
+        run: npm ci --no-audit --no-fund
+
+      - name: Verify source and frontend
+        run: |
+          set -euo pipefail
+          test ! -e .env.local
+          npm run check:secrets
+          npm test
+          npm run build
+
+      - name: Check Mac interface in WebKit
+        env:
+          LSQ_UI_BROWSER: webkit
+          LSQ_UI_URL: http://127.0.0.1:5198
+          LSQ_UI_EVIDENCE: ${{ github.workspace }}/mac-ui-evidence
+        run: |
+          set -euo pipefail
+          qa_runtime="$RUNNER_TEMP/lumen-ui-qa"
+          npm install --prefix "$qa_runtime" --no-audit --no-fund --package-lock=false playwright@1.64.0
+          export LSQ_PLAYWRIGHT_MODULE="$qa_runtime/node_modules/playwright"
+          node "$LSQ_PLAYWRIGHT_MODULE/cli.js" install webkit
+          npm run dev -- --host 127.0.0.1 --port 5198 --strictPort > "$RUNNER_TEMP/lumen-vite.log" 2>&1 &
+          qa_server=$!
+          trap 'kill "$qa_server" 2>/dev/null || true' EXIT
+          for attempt in {1..30}; do
+            if curl --fail --silent http://127.0.0.1:5198/scripts/knowledge-ui-fixture.html > /dev/null; then break; fi
+            sleep 1
+          done
+          node scripts/mac-ui-qa.cjs
+          node scripts/mac-navigation-qa.cjs
+          node scripts/knowledge-library-qa.cjs
+          node scripts/share-rounds-qa.cjs
+          node scripts/mac-ai-refinement-qa.cjs
+          node scripts/model-catalog-qa.cjs
+          node scripts/credentials-qa.cjs
+          node scripts/chat-capture-qa.cjs
+          node scripts/node-operations-qa.cjs
+          node scripts/chat-lifecycle-qa.cjs
+          node scripts/conversation-import-qa.cjs
+          node scripts/retrieval-context-qa.cjs
+          node scripts/rolling-memory-qa.cjs
+          node scripts/audit-rounds-qa.cjs
+          node scripts/history-tree-qa.cjs
+          node scripts/import-reliability-qa.cjs
+          node scripts/long-markdown-import-qa.cjs
+          node scripts/faithful-import-qa.cjs
+          node scripts/rich-documents-qa.cjs
+
+      - name: Install universal Mac Rust targets
+        run: rustup toolchain install 1.95.0 --profile minimal --target aarch64-apple-darwin,x86_64-apple-darwin
+
+      - name: Build universal native app
+        env:
+          RUSTUP_TOOLCHAIN: 1.95.0
+        run: |
+          set -euo pipefail
+          cargo test --manifest-path src-tauri/Cargo.toml --locked --lib
+          npm run tauri -- build --target universal-apple-darwin --bundles app --ci -- --locked
+
+      - name: Verify, archive and identify app
+        run: bash scripts/package-macos-app.sh
+
+      - name: Native launch smoke on the build Mac
+        run: python3 scripts/mac-native-smoke.py
+
+      - name: Upload Mac test bundle
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: lumen-mac-universal-${{ github.run_number }}
+          path: mac-preview-artifact/
+          if-no-files-found: error
+          retention-days: 14
+          compression-level: 0
+
+      - name: Upload interface evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: lumen-mac-ui-${{ github.run_number }}
+          path: mac-ui-evidence/
+          if-no-files-found: warn
+          retention-days: 14

@@ -39,6 +39,7 @@ const SCAN_SKIP = (file) =>
 
 /** 这些路径一旦被跟踪/暂存就直接判失败（私密目录与 env） */
 const FORBIDDEN_PATH = (file) =>
+  /(^|\/)credentials-local\//i.test(file) ||
   /(^|\/)\.local\//.test(file) ||
   /(^|\/)\.env$/i.test(file) ||
   /(^|\/)\.env\.(?!example$)[^/]+$/i.test(file);
@@ -78,7 +79,7 @@ function main() {
 
   for (const f of new Set([...staged, ...tracked])) {
     if (FORBIDDEN_PATH(f)) {
-      problems.push({ file: f, kind: '路径', name: '私密文件不该入库', detail: '.local/ 或 .env* 只能存在于本地' });
+      problems.push({ file: f, kind: '路径', name: '私密文件不该入库', detail: 'credentials-local/、.local/ 或 .env* 只能存在于本地' });
     }
   }
 

@@ -1,13 +1,16 @@
-import { useCallback, useState } from 'react';
+import {importRichBoard} from '@/data/rich-board-files';
+import { useCallback, useEffect, useState } from 'react';
 import { Link, router, Stack, useFocusEffect, useLocalSearchParams } from 'expo-router';
 import { useSQLiteContext } from 'expo-sqlite';
 import { ActivityIndicator, Alert, Modal, Pressable, ScrollView, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { AppIcon } from '@/components/app-icon';
+import { shareInbox } from '@/components/share-inbox';
 import { CanvasIconButton, canvasControlStyles } from '@/components/canvas-controls';
 import { onSyncUpdate } from '@/sync/runtime';
 import { listProjects } from '@/data/knowledge-repository';
+import { getRecentBoardId, hasOpenedBoardThisProcess } from '@/data/canvas-state';
 import { pickAndImportKnowledgeFolder } from '@/data/android-folder-transfer';
 import {
   deleteEmptyTopic,
@@ -18,6 +21,9 @@ import {
 } from '@/data/personal-context';
 import { colors, radii } from '@/theme/tokens';
 import type { LearningProject, Topic } from '@/types/domain';
+
+let coldStartResumeFinished = false;
+let coldStartResumePromise: Promise<string | null> | null = null;
 
 export default function ProjectsScreen() {
   const { topicId } = useLocalSearchParams<{ topicId?: string }>();
@@ -31,7 +37,23 @@ export default function ProjectsScreen() {
   const [importing, setImporting] = useState(false);
   const [menuVisible, setMenuVisible] = useState(false);
   const [createVisible, setCreateVisible] = useState(false);
+  const [resuming, setResuming] = useState(() => !shareInbox?.peekPendingShare() && !coldStartResumeFinished && !hasOpenedBoardThisProcess() && !topicId);
 
+  useEffect(() => {
+    if (shareInbox?.peekPendingShare()) { setResuming(false); return; }
+    if (coldStartResumeFinished || hasOpenedBoardThisProcess() || topicId) { setResuming(false); return; }
+    coldStartResumePromise ??= getRecentBoardId(db);
+    let active = true;
+    void coldStartResumePromise.then((projectId) => {
+      if (!active) return;
+      coldStartResumeFinished = true;
+      if (projectId) router.replace({ pathname: '/project/[id]', params: { id: projectId } });
+      else setResuming(false);
+    }).catch(() => { if (active) { coldStartResumeFinished = true; setResuming(false); } });
+    return () => { active = false; };
+  }, [db, topicId]);
+
+  const importPackage=async()=>{if(importing)return;setImporting(true);try{const id=await importRichBoard(db);if(id){if(topicId)await moveProjectToTopic(db,id,topicId);router.push({pathname:'/project/[id]',params:{id}});}}catch(e){Alert.alert('导入失败',e instanceof Error?e.message:'未导入');}finally{setImporting(false);}};
   const importFolder = async () => {
     if (importing) return;
     setImporting(true);
@@ -40,6 +62,7 @@ export default function ProjectsScreen() {
       if (!result) return;
       if (topicId) await moveProjectToTopic(db, result.projectId, topicId);
       router.push({ pathname: '/project/[id]', params: { id: result.projectId } });
+      if (result.kind === 'portable') Alert.alert('导入完成', `恢复 ${result.markdownCount} 篇文档、${result.restoredAssetCount} 份原件。${result.missingAssetCount ? `另有 ${result.missingAssetCount} 份旧来源原件缺失，仅保留提取文本。` : ''}`);
     } catch (error) {
       const message = error instanceof Error ? error.message : '请确认文件夹可读后重试';
       Alert.alert('导入失败', message);
@@ -93,6 +116,8 @@ export default function ProjectsScreen() {
     ]);
   };
 
+  if (resuming) return <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.canvas }}><ActivityIndicator color={colors.ink} /></View>;
+
   return (
     <View style={{ flex: 1, backgroundColor: '#FAFAF9' }}>
       <Stack.Screen
@@ -137,6 +162,11 @@ export default function ProjectsScreen() {
             </View>
           ))}
         </ScrollView>
+
+        <Pressable accessibilityRole="button" accessibilityLabel="打开独立知识库" onPress={() => router.push('/knowledge-library')} style={({ pressed }) => ({ minHeight: 48, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', borderBottomWidth: 1, borderBottomColor: colors.line, opacity: pressed ? 0.6 : 1 })}>
+          <Text style={{ color: colors.ink, fontSize: 16 }}>知识库</Text>
+          <AppIcon name="chevron-right" color={colors.inkMuted} size={18} />
+        </Pressable>
 
         {currentTopic ? (
           <View style={{ padding: 15, borderRadius: radii.large, borderCurve: 'continuous', backgroundColor: colors.surfaceStrong, gap: 10 }}>
@@ -266,12 +296,12 @@ export default function ProjectsScreen() {
         <Pressable onPress={() => { setCreateVisible(false); setMenuVisible(false); }} style={{ flex: 1, justifyContent: 'flex-end', backgroundColor: colors.scrim }}>
           <Pressable onPress={() => undefined} style={{ margin: 14, marginBottom: insets.bottom + 14, padding: 12, borderRadius: 22, backgroundColor: colors.white, gap: 6 }}>
             {createVisible ? <>
-              <BottomAction label="新建白板" icon="edit-note" onPress={() => { setCreateVisible(false); router.push('/new-node'); }} />
+              <BottomAction label="新建白板" icon="edit-note" onPress={() => { setCreateVisible(false); router.push({ pathname: '/new-node', params: topicId ? { topicId } : {} }); }} />
               <BottomAction label="从学习目标开始" icon="account-tree" onPress={() => { setCreateVisible(false); router.push({ pathname: '/new-project', params: topicId ? { topicId } : {} }); }} />
-              <BottomAction label={importing ? '导入中' : '导入 Markdown 文件夹'} icon="folder-open" loading={importing} disabled={importing} onPress={() => { setCreateVisible(false); void importFolder(); }} />
+              <BottomAction label="导入完整白板 ZIP" icon="folder-open" disabled={importing} onPress={()=>{setCreateVisible(false);void importPackage();}}/>
+              <BottomAction label={importing ? '导入中' : '导入项目或 Markdown 文件夹'} icon="folder-open" loading={importing} disabled={importing} onPress={() => { setCreateVisible(false); void importFolder(); }} />
               <BottomAction label="新建专题" icon="create-new-folder" onPress={() => { setCreateVisible(false); router.push({ pathname: '/new-topic', params: topicId ? { parentId: topicId } : {} }); }} />
             </> : <>
-              <BottomAction label="收藏" icon="bookmark-outline" onPress={() => { setMenuVisible(false); router.push('/favorites'); }} />
               <BottomAction label="应用与同步设置" icon="tune" onPress={() => { setMenuVisible(false); router.push('/settings'); }} />
             </>}
           </Pressable>

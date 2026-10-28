@@ -5,6 +5,7 @@ import { createPortal } from 'react-dom';
 export type MenuItem =
   | { type: 'separator' }
   | { type: 'info'; text: string; sub?: string }
+  | { type: 'group'; label: string; disabled?: boolean; items: Extract<MenuItem, { type: 'item' }>[] }
   | { type: 'item'; label: string; onClick: () => void; danger?: boolean; disabled?: boolean };
 
 export interface ContextMenuState {
@@ -26,6 +27,7 @@ export function ContextMenu({
   onClose: () => void;
 }) {
   const ref = useRef<HTMLDivElement>(null);
+  const [expanded, setExpanded] = useState<number | null>(null);
   const [pos, setPos] = useState({ x: state.x, y: state.y, ready: false });
 
   // 防溢出：布局后测量实际尺寸再定位（首帧不可见，避免闪跳）
@@ -37,20 +39,33 @@ export function ContextMenu({
     const x = Math.max(pad, Math.min(state.x, window.innerWidth - width - pad));
     const y = Math.max(pad, Math.min(state.y, window.innerHeight - height - pad));
     setPos({ x, y, ready: true });
-  }, [state]);
+  }, [state, expanded]);
+
+  useEffect(() => { setExpanded(null); }, [state]);
 
   useEffect(() => {
     const onDown = (e: MouseEvent) => {
       if (ref.current && !ref.current.contains(e.target as Node)) onClose();
     };
-    const onKey = (e: KeyboardEvent) => e.key === 'Escape' && onClose();
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        e.preventDefault(); e.stopImmediatePropagation(); onClose();
+      } else if (['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(e.key)) {
+        const items = [...(ref.current?.querySelectorAll<HTMLButtonElement>('button:not(:disabled)') ?? [])];
+        if (!items.length) return;
+        e.preventDefault(); e.stopImmediatePropagation();
+        const index = items.indexOf(document.activeElement as HTMLButtonElement);
+        const next = e.key === 'Home' ? 0 : e.key === 'End' ? items.length - 1 : (index + (e.key === 'ArrowDown' ? 1 : -1) + items.length) % items.length;
+        items[next].focus();
+      }
+    };
     window.addEventListener('mousedown', onDown);
-    window.addEventListener('keydown', onKey);
+    window.addEventListener('keydown', onKey, true);
     window.addEventListener('resize', onClose);
     window.addEventListener('blur', onClose);
     return () => {
       window.removeEventListener('mousedown', onDown);
-      window.removeEventListener('keydown', onKey);
+      window.removeEventListener('keydown', onKey, true);
       window.removeEventListener('resize', onClose);
       window.removeEventListener('blur', onClose);
     };
@@ -59,7 +74,7 @@ export function ContextMenu({
   return createPortal(
     <div
       ref={ref}
-      className="ctx-menu"
+      className={`ctx-menu${state.items.some(item => item.type === 'group') ? ' has-groups' : ''}`}
       role="menu"
       style={{ left: pos.x, top: pos.y, visibility: pos.ready ? 'visible' : 'hidden' }}
       onContextMenu={(e) => e.preventDefault()}
@@ -76,6 +91,13 @@ export function ContextMenu({
               {it.sub && <span className="ctx-info-sub">{it.sub}</span>}
             </div>
           );
+        if (it.type === 'group') return <div key={i} className="ctx-group">
+          <button type="button" role="menuitem" className="ctx-item ctx-group-toggle" disabled={it.disabled}
+            aria-expanded={expanded === i} onClick={() => setExpanded(expanded === i ? null : i)}>
+            <span>{it.label}</span><svg width="14" height="14" viewBox="0 0 16 16" aria-hidden="true"><path d={expanded === i ? 'M4 10l4-4 4 4' : 'M4 6l4 4 4-4'} fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" /></svg>
+          </button>
+          {expanded === i && <div className="ctx-group-items" role="group" aria-label={it.label}>{it.items.map((child, index) => <button key={index} type="button" role="menuitem" className={`ctx-item${child.danger ? ' is-danger' : ''}`} disabled={child.disabled} onClick={() => { onClose(); child.onClick(); }}>{child.label}</button>)}</div>}
+        </div>;
         return (
           <button
             key={i}

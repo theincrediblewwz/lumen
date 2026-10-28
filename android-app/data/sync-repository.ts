@@ -1,4 +1,6 @@
 import type { SQLiteDatabase } from 'expo-sqlite';
+import { loadKnowledgeLibrary } from './knowledge-library';
+import { validateKnowledgeLibrary } from './knowledge-library-core';
 import { canonicalJson, createSyncState, entityKey, getConflicts, parseSyncState, queueLocalChanges } from '../sync/core';
 import type { BlobRef, LocalChange, Sha256, SyncApplication, SyncCommit, SyncConflict, SyncEntity, SyncState } from '../sync/core/types';
 import { SYNC_PRIMARY_KEYS, SYNC_TABLES, syncIdSql, type SyncTable } from './sync-schema';
@@ -145,7 +147,9 @@ async function saveProjection(tx: SQLiteDatabase, entity: SyncEntity) {
 const order = new Map<string, number>([
   'topics', 'projects', 'documents', 'nodes', 'edges', 'node_answers', 'prompt_templates', 'ai_understanding_documents',
   'project_ai_scope_settings', 'favorites', 'favorite_bindings', 'source_items', 'source_segments', 'source_citations',
-  'mastery_attempts', 'graph_mutation_batches', 'conversations', 'conversation_messages', 'node_documents', 'conversation_documents', 'reading_positions',
+  'mastery_attempts', 'review_events', 'graph_mutation_batches', 'conversations', 'conversation_messages', 'node_documents', 'conversation_documents', 'reading_positions',
+  'canvas_groups', 'canvas_group_members',
+  'knowledge_entries', 'knowledge_revisions', 'knowledge_bindings', 'knowledge_reference_settings',
 ].map((kind, index) => [kind, index]));
 
 async function projectEntities(tx: SQLiteDatabase, entities: SyncEntity[], assets: SyncAssets) {
@@ -162,6 +166,7 @@ async function projectEntities(tx: SQLiteDatabase, entities: SyncEntity[], asset
     }
     const kind = entity.kind as SyncTable;
     if (entity.data === null) {
+      if (kind === 'knowledge_entries' || kind === 'knowledge_revisions') throw new Error('知识正文与历史不能删除，请在原设备归档');
       await tx.runAsync(`DELETE FROM ${kind} WHERE ${syncIdSql(kind)}=?`, entity.id);
     } else {
       const row = { ...entity.data };
@@ -183,6 +188,7 @@ async function projectEntities(tx: SQLiteDatabase, entities: SyncEntity[], asset
         throw new Error(`同步字段格式不正确：${kind}.${key}`);
       });
       const existing = await tx.getFirstAsync<Row>(`SELECT * FROM ${kind} WHERE ${syncIdSql(kind)}=?`, entity.id);
+      if (kind === 'knowledge_revisions' && existing && keys.some(key => existing[key] !== row[key])) throw new Error('历史知识版本不能覆盖，已保留原始知识');
       if (existing) {
         const updates = keys.filter((key) => !primaryKeys.includes(key) && existing[key] !== row[key]);
         if (updates.length) await tx.runAsync(`UPDATE ${kind} SET ${updates.map((key) => `${key}=?`).join(',')} WHERE ${syncIdSql(kind)}=?`, ...updates.map((key) => values[keys.indexOf(key)]), entity.id);
@@ -192,6 +198,7 @@ async function projectEntities(tx: SQLiteDatabase, entities: SyncEntity[], asset
     await saveProjection(tx, entity);
   }
   await validateOwnership(tx);
+  validateKnowledgeLibrary(await loadKnowledgeLibrary(tx));
   // SQLite cascades must never erase a retained/conflicting child implicitly.
   // Every removal has to be represented by its own durable tombstone.
   for (const table of SYNC_TABLES) {
@@ -211,6 +218,7 @@ async function validateOwnership(tx: SQLiteDatabase) {
     'SELECT 1 FROM node_documents nd JOIN nodes n ON n.id=nd.node_id JOIN documents d ON d.id=nd.document_id WHERE n.project_id!=d.project_id',
     'SELECT 1 FROM node_answers a JOIN nodes n ON n.id=a.node_id WHERE a.project_id!=n.project_id',
     'SELECT 1 FROM mastery_attempts a JOIN nodes n ON n.id=a.node_id WHERE a.project_id!=n.project_id',
+    'SELECT 1 FROM review_events r JOIN nodes n ON n.id=r.node_id LEFT JOIN documents d ON d.id=r.document_id WHERE r.project_id!=n.project_id OR (d.id IS NOT NULL AND d.project_id!=r.project_id)',
     'SELECT 1 FROM favorites f JOIN nodes n ON n.id=f.node_id LEFT JOIN node_answers a ON f.target_type=\'answer\' AND a.id=f.target_id WHERE f.project_id!=n.project_id OR (f.target_type=\'node\' AND f.target_id!=f.node_id) OR (f.target_type=\'answer\' AND (a.id IS NULL OR a.project_id!=f.project_id OR a.node_id!=f.node_id))',
     'SELECT 1 FROM source_items s JOIN documents d ON d.id=s.derived_document_id WHERE s.project_id!=d.project_id',
     'SELECT 1 FROM source_citations c JOIN source_items s ON s.id=c.source_item_id WHERE c.project_id!=s.project_id',
@@ -220,7 +228,9 @@ async function validateOwnership(tx: SQLiteDatabase) {
      ) target ON target.kind=c.target_type AND target.id=c.target_id WHERE target.id IS NULL OR c.project_id!=target.project_id`,
     'SELECT 1 FROM graph_mutation_batches b JOIN node_answers a ON a.id=b.answer_id WHERE b.project_id!=a.project_id',
     'SELECT 1 FROM conversations c JOIN nodes n ON n.id=c.node_id WHERE c.project_id!=n.project_id',
+    'SELECT 1 FROM knowledge_bindings b JOIN nodes n ON n.id=b.node_id WHERE b.project_id!=n.project_id',
     'SELECT 1 FROM conversation_documents c JOIN documents d ON d.id=c.document_id LEFT JOIN nodes n ON n.id=c.node_id LEFT JOIN conversations conv ON conv.id=c.conversation_id LEFT JOIN node_answers a ON a.id=c.source_answer_id WHERE (n.id IS NOT NULL AND d.project_id!=n.project_id) OR (conv.id IS NOT NULL AND conv.project_id!=d.project_id) OR (a.id IS NOT NULL AND a.project_id!=d.project_id)',
+    'SELECT 1 FROM canvas_group_members m JOIN canvas_groups g ON g.id=m.group_id JOIN nodes n ON n.id=m.node_id WHERE m.project_id!=g.project_id OR m.project_id!=n.project_id OR m.id!=m.node_id',
   ];
   for (const check of checks) if (await tx.getFirstAsync(`${check} LIMIT 1`)) throw new Error('同步内容包含跨图谱引用，已回滚此次接收');
 }

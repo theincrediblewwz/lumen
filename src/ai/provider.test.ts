@@ -9,6 +9,20 @@ import {
   type ChatRequestConfig,
 } from './provider';
 
+it('parses all SSE line endings and every split including a split CRLF',()=>{
+ for(const ending of ['\n','\r\n','\r']){
+  const stream=`data: {"choices":[{"delta":{"content":"中文"}}]}${ending}${ending}data: [DONE]${ending}${ending}`;
+  for(let split=0;split<=stream.length;split++){
+   let rest='',text='',done=false;
+   for(const part of [stream.slice(0,split),stream.slice(split),'\n\n']){const parsed=parseSseChunk(rest+part);text+=parsed.deltas.join('');done ||= parsed.done;rest=parsed.rest;}
+   expect(text).toBe('中文');expect(done).toBe(true);
+   let richRest='',richText='',richDone=false;
+   for(const part of [stream.slice(0,split),stream.slice(split),'\n\n']){const parsed=parseSseChunkRich(richRest+part);richText+=parsed.contentDeltas.join('');richDone ||= parsed.done;richRest=parsed.rest;}
+   expect(richText).toBe('中文');expect(richDone).toBe(true);
+  }
+ }
+});
+
 const cfg: ChatRequestConfig = {
   kind: 'openai',
   baseUrl: 'https://api.openai.com/v1',
@@ -17,6 +31,18 @@ const cfg: ChatRequestConfig = {
 };
 
 describe('chatCompletionsUrl', () => {
+  it('preserves custom prefixes and full endpoints with query parameters', () => {
+    expect(chatCompletionsUrl('https://gateway.example/openai')).toBe('https://gateway.example/openai/chat/completions');
+    expect(chatCompletionsUrl('https://gateway.example/openai/?region=cn')).toBe('https://gateway.example/openai/chat/completions?region=cn');
+    expect(chatCompletionsUrl('https://gateway.example/v1/chat/completions/?api-version=2026#draft')).toBe('https://gateway.example/v1/chat/completions?api-version=2026');
+    expect(chatCompletionsUrl('https://gateway.example?region=cn')).toBe('https://gateway.example/v1/chat/completions?region=cn');
+    expect(chatCompletionsUrl('https://api.deepseek.com/?region=cn')).toBe('https://api.deepseek.com/chat/completions?region=cn');
+  });
+  it('keeps the effective route of old custom connections until the user changes parsing mode',()=>{
+    expect(chatCompletionsUrl('https://gateway.example/openai','legacy')).toBe('https://gateway.example/openai/v1/chat/completions');
+    expect(chatCompletionsUrl('https://gateway.example/openai','base')).toBe('https://gateway.example/openai/chat/completions');
+    expect(chatCompletionsUrl('https://gateway.example/v1/chat/completions?region=cn','legacy')).toBe('https://gateway.example/v1/chat/completions?region=cn');
+  });
   it('给 /v1 补 chat/completions', () => {
     expect(chatCompletionsUrl('https://api.openai.com/v1')).toBe(
       'https://api.openai.com/v1/chat/completions',
@@ -27,7 +53,7 @@ describe('chatCompletionsUrl', () => {
   });
   it('无 /v1 时补全 /v1/chat/completions', () => {
     expect(chatCompletionsUrl('https://api.deepseek.com')).toBe(
-      'https://api.deepseek.com/v1/chat/completions',
+      'https://api.deepseek.com/chat/completions',
     );
   });
   it('已含完整路径则原样', () => {
@@ -35,9 +61,34 @@ describe('chatCompletionsUrl', () => {
       'https://h/v1/chat/completions',
     );
   });
+  it('preserves GLM and Qwen API roots', () => {
+    expect(chatCompletionsUrl('https://open.bigmodel.cn/api/paas/v4')).toBe('https://open.bigmodel.cn/api/paas/v4/chat/completions');
+    expect(chatCompletionsUrl('https://dashscope.aliyuncs.com/compatible-mode/v1')).toBe('https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions');
+  });
 });
 
 describe('buildChatRequest', () => {
+  it('bounds GLM sampling precision and output using its documented API limits', () => {
+    for (const model of ['glm-5.3', 'glm-5.3-flash']) {
+      const request = (temperature: number) => JSON.parse(buildChatRequest({ ...cfg, baseUrl:'https://open.bigmodel.cn/api/paas/v4', model, temperature, maxTokens: 1e9 }, []).body);
+      expect(request(2).temperature).toBe(1);
+      expect(request(0.876).temperature).toBe(1);
+      expect(request(-1).temperature).toBe(1);
+      expect(request(1).max_tokens).toBe(131072);
+    }
+  });
+  it('uses supported sampling and output parameters for current models', () => {
+    const mimo = JSON.parse(buildChatRequest({ ...cfg, baseUrl:'https://api.xiaomimimo.com/v1', model: 'mimo-v2.6-pro', temperature: 2, maxTokens: 1e9 }, []).body);
+    expect(mimo.temperature).toBeUndefined();
+    expect(mimo.max_completion_tokens).toBe(131072);
+    expect(mimo.thinking).toEqual({ type: 'enabled' });
+    const openai = JSON.parse(buildChatRequest({ ...cfg, model: 'gpt-6-luna' }, [], [{}]).body);
+    expect(openai.reasoning_effort).toBe('none');
+    expect(openai.max_completion_tokens).toBe(128000);
+    expect(openai.max_tokens).toBeUndefined();
+    expect(() => buildChatRequest({ ...cfg, model: 'gpt-6-astra' }, [], [{}])).toThrow('Responses');
+    expect(() => buildChatRequest({ ...cfg, model: 'deepseek-flash', contextBudget: 1e9 }, [])).toThrow('预算');
+  });
   it('构造 OpenAI 兼容流式请求', () => {
     const spec = buildChatRequest(cfg, [{ role: 'user', content: '你好' }]);
     expect(spec.url).toBe('https://api.openai.com/v1/chat/completions');

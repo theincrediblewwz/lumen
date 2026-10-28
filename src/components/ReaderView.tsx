@@ -9,7 +9,21 @@ import {
 } from 'react';
 import { renderMarkdown, type TocItem } from '../reader/engine';
 import { typesetMath, scrollToSlug } from '../reader/reader';
+import { exportMarkdown } from '../ai/boardOperations';
 import { openAiWindow } from '../ai/aiWindow';
+import { parseConversationLink } from '../ai/chatCapture';
+import { generatedDocument } from '../reader/documentPolicy';
+import { localDocumentPath } from '../reader/documentLink';
+import { openReaderWindow } from '../reader/windowManager';
+import { Download } from 'lucide-react';
+import { api,type BoardNode } from '../api';
+import type {DocumentMetadata} from '../documents/core';
+import {useDocumentImages} from '../documents/useDocumentImages';
+import {renderRichMarkdown} from '../documents/render';
+import {exportDocument} from '../documents/client';
+import { maskNodeRefs,unmaskNodeRefs } from '../ai/nodeRef';
+import { jumpToNode } from '../ai/nodeJump';
+import { openKnowledge } from '../knowledge/store';
 import {
   loadPrefs,
   savePrefs,
@@ -56,6 +70,8 @@ export function ReaderView({
   standalone = false,
   guessMath = false,
   platform = '',
+  attachment = null,
+  scope,
 }: {
   title: string;
   markdown: string;
@@ -65,12 +81,28 @@ export function ReaderView({
   guessMath?: boolean;
   /** 独立窗口时用于自绘标题栏（'macos' 留红绿灯位；其它画 Win 三键） */
   platform?: string;
+  attachment?: DocumentMetadata|null;
+  scope?:string;
 }) {
   const isMac = platform === 'macos';
   const [prefs, setPrefs] = useState<ReaderPrefs>(() => loadPrefs());
   const [activeSlug, setActiveSlug] = useState<string>('');
   const [pageInfo, setPageInfo] = useState<{ pages: number; current: number }>({ pages: 1, current: 1 });
   const [isFullscreen, setIsFullscreen] = useState(false);
+  const [sourceStatus, setSourceStatus] = useState('');
+  const [projectId, boardId] = docKey.split('/');
+  const images=useDocumentImages(projectId,boardId,docKey.split('/').slice(2).join('/'),attachment,scope);
+  const [referenceNodes,setReferenceNodes]=useState<BoardNode[]>([]);
+  useEffect(()=>{let alive=true;if(markdown.includes('[[node:'))void api.boardLoad(projectId,boardId).then(board=>alive&&setReferenceNodes(board.nodes)).catch(()=>{});return()=>{alive=false};},[projectId,boardId,markdown]);
+  const captureDocument = /\/docs\/chat_[a-f0-9]{64}\.md$/i.test(docKey);
+  const originalLink = markdown.match(/\[返回原对话\]\((lumen:\/\/conversation\/[^\s)]+)\)/)?.[1];
+  const originalSource = originalLink ? parseConversationLink(originalLink, {projectId,boardId}) : null;
+  const questionOnly = captureDocument && originalSource && /^## 提问\s*$/m.test(markdown) && !/^## 回答\s*$/m.test(markdown);
+  const openSource = (href: string) => {
+    const source = parseConversationLink(href, {projectId,boardId});
+    if (!source) { setSourceStatus('原对话链接无效，笔记内容已保留。'); return; }
+    void openAiWindow({...source,boardName:title}).catch(()=>setSourceStatus('未能打开原对话，笔记内容已保留，请重试。'));
+  };
   // 目录栏宽度：拖动时只更新本地 state 跟手，松手才写进 prefs（避免每帧写 localStorage）
   const [tocW, setTocW] = useState<number>(prefs.tocWidth ?? TOC_DEFAULT);
   const [resizing, setResizing] = useState(false);
@@ -87,8 +119,8 @@ export function ReaderView({
   const tocCollapsed = !!prefs.tocCollapsed;
 
   const { html, toc } = useMemo(
-    () => renderMarkdown(markdown, undefined, { guessMath }),
-    [markdown, guessMath],
+    () => {const masked=maskNodeRefs(markdown);const rendered=attachment?renderRichMarkdown(masked.text,attachment,images.urls):renderMarkdown(masked.text, undefined, { guessMath: guessMath && !generatedDocument(docKey) });return {...rendered,html:unmaskNodeRefs(rendered.html,masked.ids,id=>referenceNodes.find(n=>n.id===id)?.title??null)};},
+    [markdown, guessMath, docKey,referenceNodes,attachment,images.urls],
   );
 
   useEffect(() => savePrefs(prefs), [prefs]);
@@ -212,6 +244,7 @@ export function ReaderView({
     let cancelled = false;
 
     handle.done.then(async () => {
+      await Promise.all(Array.from(content.querySelectorAll('img')).map(img=>img.decode?.().catch(()=>{})));
       if (cancelled) return;
       if (double) paginate();
       if (restoredRef.current) return;
@@ -397,7 +430,7 @@ export function ReaderView({
     }
   }, []);
 
-  const showWinControls = standalone && !isMac;
+  const showWinControls = standalone && Boolean(platform) && !isMac;
   const showToc = toc.length > 0 && !isFullscreen && !tocCollapsed;
 
   return (
@@ -412,7 +445,7 @@ export function ReaderView({
       }}
     >
       <header
-        className={`reader-bar${standalone ? ' is-standalone-bar' : ''}${isMac && standalone ? ' is-mac' : ''}`}
+        className={`reader-bar${standalone ? ' is-standalone-bar' : ''}${isMac && standalone ? ' is-mac' : ''}${standalone && !platform ? ' is-platform-pending' : ''}`}
         {...(standalone ? { 'data-tauri-drag-region': true } : {})}
       >
         {toc.length > 0 && !isFullscreen && (
@@ -429,6 +462,8 @@ export function ReaderView({
         )}
         <h1 className="reader-title" title={title} {...(standalone ? { 'data-tauri-drag-region': true } : {})}>{title}</h1>
         <div className="reader-tools">
+          <button type="button" className="reader-btn" aria-label={attachment?'导出 Markdown 与图片包':'导出 Markdown'} title={attachment?'导出 Markdown 与图片包':'导出 Markdown'} onClick={()=>void (attachment?exportDocument(projectId,boardId,docKey.split('/').slice(2).join('/'),title):exportMarkdown(projectId,boardId,docKey.split('/').slice(2).join('/'),title)).then(path=>path&&setSourceStatus(`已导出：${path}`)).catch(e=>setSourceStatus(String(e)))}><Download size={17} strokeWidth={1.7}/></button>
+          <button type="button" className="reader-btn" title={attachment?'摘录正文；图片与原件仍在来源节点':'存入知识库'} onClick={() => void openKnowledge(undefined, undefined, { title: title.slice(0,200), body: markdown, source: `学习文档：${title} · ${docKey}${attachment?'（文字摘录，图片与原件保留在来源文档）':''}`, authorship: 'source' })}>{attachment?'摘录文字':'存入知识库'}</button>
           <div className="reader-seg">
             <button
               type="button"
@@ -536,7 +571,9 @@ export function ReaderView({
         </div>
       </header>
 
-      <div className="reader-main">
+        {questionOnly && <div className="reader-source-note">这份旧笔记只保存了提问。<button type="button" className="reader-btn" onClick={()=>openSource(originalLink!)}>返回补存完整问答</button></div>}
+        {sourceStatus && <p className="reader-source-note" role="status">{sourceStatus}</p>}
+        <div className="reader-main">
         {showToc && (
           <nav className="reader-toc" aria-label="目录" ref={tocRef} style={{ flexBasis: `${tocW}px` }}>
             <div className="reader-toc-head">目录</div>
@@ -578,10 +615,19 @@ export function ReaderView({
           />
         )}
         <div className="reader-stage">
+          {images.error&&<p className="document-notice" role="status">{images.error}</p>}
           <div ref={bodyRef} className="reader-body" onScroll={onScroll} onClick={event=>{
+            const node=(event.target as HTMLElement).closest<HTMLElement>('.node-ref')?.dataset.nodeId;if(node){event.preventDefault();void jumpToNode({projectId,boardId,nodeId:node});return;}
+            const href = (event.target as HTMLElement).closest('a')?.getAttribute('href');
+            if(href && !/^[a-z][a-z0-9+.-]*:/i.test(href) && /\.md(?:#|$)/i.test(href)){
+              event.preventDefault();const path=localDocumentPath(href);
+              if(!path){setSourceStatus('文档链接不在当前白板内，当前阅读已保留。');return;}
+              void api.boardLoad(projectId,boardId).then(board=>{const doc=board.nodes.flatMap(n=>n.docs).find(d=>d.path===path);if(!doc)throw new Error('文档未挂载');return openReaderWindow({projectId,boardId,path:doc.path,title:doc.title});}).catch(()=>setSourceStatus('无法打开原文，请在来源根节点的文档列表中查看。'));return;
+            }
+            const knowledge = href?.match(/^learnstuff-knowledge:\/\/([a-zA-Z0-9_-]+)\/([a-zA-Z0-9_-]+)$/u);
+            if (knowledge) { event.preventDefault(); void openKnowledge(knowledge[1], knowledge[2]); return; }
             const link=(event.target as HTMLElement).closest<HTMLAnchorElement>('a[href^="lumen://conversation/"]');if(!link)return;
-            event.preventDefault();const url=new URL(link.href);const [projectId,boardId]=docKey.split('/');
-            void openAiWindow({projectId:url.searchParams.get('project')??projectId,boardId:url.searchParams.get('board')??boardId,boardName:title,conversationId:decodeURIComponent(url.pathname.slice(1))});
+            event.preventDefault();openSource(link.getAttribute('href')??'');
           }}>
             {/* 单页正文 / 双页测量源（双页时隐藏用于量块高） */}
             <div ref={contentRef} className="reader-content markdown-body" />
@@ -622,4 +668,3 @@ function cssEscape(s: string): string {
   if (typeof CSS !== 'undefined' && typeof CSS.escape === 'function') return CSS.escape(s);
   return s.replace(/[^a-zA-Z0-9_\u00a0-\uffff-]/g, (c) => `\\${c}`);
 }
-

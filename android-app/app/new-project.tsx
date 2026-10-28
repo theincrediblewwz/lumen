@@ -61,18 +61,18 @@ export default function NewProjectScreen() {
         </View>
 
         <View style={{ gap: 9 }}>
-          <Text style={{ color: colors.ink, fontSize: 13, fontWeight: '700' }}>图谱模式</Text>
+          <Text style={{ color: colors.ink, fontSize: 13, fontWeight: '700' }}>AI 如何开始</Text>
           <View style={{ flexDirection: 'row', gap: 10 }}>
             <ChoiceCard
               selected={mode === 'learning'}
-              title="学习图"
-              description="追溯前置、讲明白并继续探索"
+              title="从问题学习"
+              description="让 AI 从问题找关键知识点"
               onPress={() => setMode('learning')}
             />
             <ChoiceCard
               selected={mode === 'summary'}
-              title="总结图"
-              description="忠实整理资料的结构与证据"
+              title="按资料整理"
+              description="让 AI 提炼资料的内容与依据"
               onPress={() => setMode('summary')}
             />
           </View>

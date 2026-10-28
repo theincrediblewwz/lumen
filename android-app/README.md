@@ -1,30 +1,56 @@
-# Lumen Android 预览版
+# LearnStuff Android
 
-这是与 Lumen 桌面端同仓库的 Android 客户端，基于 LearnStuffQuickly 既有的 Expo SDK 54 / React Native 0.81 / SQLite 实现。当前版本为 `2.1.0-preview.3`、Android versionCode 18。应用身份仍是 `com.learnstuffquickly.app`，启动器显示 LearnStuff；现有同签名安装可保留数据。
+The native Android MVP is an Expo Router application backed by on-device SQLite.
 
-下载安装、调试签名的升级边界和跨设备同步说明见 [Android 预览版说明](../docs/ANDROID-PREVIEW.md)。这份公开源码只包含客户端，未包含独立 Gateway 服务；用户可在应用内配置自己的兼容 AI 服务，未配置时不会悄悄发送真实请求。
-
-## 本地开发
-
-需要 Node 20.19+、Android SDK 与 Java 17。项目包含一个本地 Expo 原生模块，使用 Android 原生选择菜单；测试最终 APK 时需要原生构建，Expo Go 不包含该模块。
+## Run in Expo Go
 
 ```bash
-cd android-app
 npm ci
+npm start
+```
+
+Press `a` after Metro starts to open the connected Android emulator.
+
+## Checks
+
+```bash
 npm run typecheck
 npm run lint
 npm run test:contracts
-npx expo run:android
+npm run doctor
+npm run export:android
 ```
 
-`.env.example` 中的 Gateway URL 默认留空。仓库不包含旧版独立 Gateway 服务，因此依赖该服务的历史 HTTP 集成脚本不列入上述本地检查；合同测试不调用真实服务。个人 API Key 和 WebDAV 密码只能由用户在应用中配置，不进入源码或构建环境。
+## Current source and installable previews
 
-## 学习流程
+The source is version **2.1.0-preview.8 / versionCode 23**, package `com.learnstuffquickly.app`. It includes rich-document/PDF import, original-asset preservation, knowledge exchange and the existing local canvas/discussion/sync workflows. This source synchronization does not replace any frozen release asset or change the Android signing identity.
 
-- 近白色白板显示节点和关系；点击节点才出现阅读、讨论及更多操作。
-- 节点挂载 Markdown 文档，支持目录、公式和阅读位置。
-- 阅读时长按文字可解释、举例或追问；公式和跨段内容用“引用段落”。问题发送前可检查上下文。
-- 持续讨论可选单条、多条或全部完成消息，把原文保存成 Markdown 文档和新节点；引用可回到来源。
-- 本地导入、便携导出、备份和显式配置的 WebDAV 同步继续可用。
+The older public [2.1.0-preview.3 APK](https://github.com/theincrediblewwz/lumen/releases/tag/android-v2.1.0-preview.3) remains available, but is not a binary build of this newer source. See [installation and data preservation](../docs/ANDROID-PREVIEW.md) before changing installations. Preview builds use a test certificate and are not Play Store production builds; same-package updates require the same signing certificate.
 
-真实 WebDAV 服务、Mac 与物理手机的联调尚未完成；公开预览的自动化测试不能替代这些验收。详细边界见 [交付说明](../docs/ANDROID-PREVIEW.md)。
+## Optional remote services
+
+Local learning works without a Gateway. A personal OpenAI-compatible connection can be configured in the app at runtime; keys belong in device SecureStore and are not build inputs. Optional Gateway integration and its protocol tests remain in the client, but the separate Gateway service and its development launcher are not included in this public repository. To run `npm run test:gateway`, supply a separately operated compatible test service; the public source has no preconfigured service or provider credential.
+
+Before an AI request, the app displays the data scope and destination for the user to approve. Opening text or a draft does not send it automatically. Direct BYOK requests are not automatically replayed after ambiguous network failures or malformed model output. Cross-device WebDAV requires an explicitly configured service; do not treat synthetic protocol tests as proof of a particular real server or phone background behavior.
+
+## Current functional slice
+
+- List and create learning projects.
+- Persist projects, Markdown documents, graph nodes, and graph edges in SQLite.
+- Pan and pinch-zoom the native knowledge canvas.
+- Select a node or relationship and open its Markdown document.
+- Mark a relationship as unverified, helpful to the current learner, or disputed; the local review persists without claiming factual verification.
+- Edit learner-authored Markdown without overwriting source provenance.
+- Import a bounded local Markdown folder as a new graph, or restore a strict LearnStuff portable graph v1 without overwriting existing projects.
+- Export standalone node/edge Markdown, saved answers, and `learnstuff.graph.json` to a user-selected Android folder.
+- Save and edit question templates, fill them from the node composer, and explicitly bookmark node answer snapshots for export.
+- Expand a selected node through the same durable job pipeline using personal BYOK, the HTTP Gateway, or a clearly labeled local adapter.
+- Validate a versioned graph patch and commit it atomically with its job result.
+
+The Android BYOK adapter supports generic OpenAI-compatible Chat Completions without importing provider SDKs or credentials into the bundle. Arbitrary endpoint live behavior remains provider-specific and must be verified by the owner through the explicit connection test.
+
+## Offline knowledge-format exchange
+
+The repository includes the offline product bridge `../scripts/knowledge_exchange.py` and its pinned schema under `../contracts/historyandknowledge/`. Install the locked Python dependencies and set `LSQ_EXCHANGE_PYTHON` as described in the [repository guide](../README.md#离线知识格式交换), then run `npm run test:knowledge-exchange`. This is a self-contained product-format test, not an excluded external service.
+
+This source update also aligns the Android shared knowledge core with the desktop iterative dependency traversal and required-reference propagation. It preserves the existing knowledge contract and tests; no new APK is issued by this source synchronization.

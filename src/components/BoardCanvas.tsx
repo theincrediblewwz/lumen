@@ -13,10 +13,13 @@ import {
 } from '../canvas/history';
 import { edgeGeometry, straightPath, boxContains, type Box, type EdgeStyle } from '../canvas/geometry';
 import { computeTreeLayout } from '../canvas/autoLayout';
+import {routeBoardEdges,edgeLabelLines} from '../canvas/edgeRouting';
+import { descendantIds,translateFromBaseline } from '../canvas/subtree';
 import { matchShortcut, isEditableTarget, shortcut } from '../canvas/shortcuts';
 import { dropPointToClient, detectMacOS } from '../canvas/dropPoint';
-import { api, pickMarkdownFiles, type BoardFile, type BoardNode, type BoardEdge, type DocRef } from '../api';
+import { pickMarkdownFiles, type BoardFile, type BoardNode, type BoardEdge } from '../api';
 import { openReaderWindow } from '../reader/windowManager';
+import {attachDocument} from '../documents/client';
 import { NodeCard } from './NodeCard';
 import { NodePanel } from './NodePanel';
 import { NodeTooltip } from './NodeTooltip';
@@ -50,6 +53,7 @@ export function BoardCanvas({
   edgeStyle = 'curved',
   guessMath = false,
   focusNode = null,
+  onBlankClick,
 }: {
   board: BoardFile;
   onChange: (nodes: BoardNode[], edges: BoardEdge[], viewport: Viewport) => void;
@@ -57,8 +61,16 @@ export function BoardCanvas({
   guessMath?: boolean;
   /** AI 引用跳转目标（M5-6）：居中并闪烁高亮该节点。nonce 变化即重新触发。 */
   focusNode?: { id: string; nonce: number } | null;
+  onBlankClick?: () => void;
 }) {
   const wrapRef = useRef<HTMLDivElement>(null);
+  const syncMutationLock = useRef(!!document.querySelector('.sync-edit-lock'));
+  useEffect(() => {
+    const lock = (event: Event) => { syncMutationLock.current = !!(event as CustomEvent<boolean>).detail; };
+    window.addEventListener('lumen:sync-edit-lock', lock);
+    return () => window.removeEventListener('lumen:sync-edit-lock', lock);
+  }, []);
+  const mutationsBlocked = () => syncMutationLock.current || !!document.querySelector('[aria-modal="true"]');
   const engineRef = useRef<CanvasEngine>(
     new CanvasEngine(board.viewport, { minZoom: 0.2, maxZoom: 3 }),
   );
@@ -70,6 +82,8 @@ export function BoardCanvas({
   );
   const nodes = history.present.nodes;
   const edges = history.present.edges;
+  const historyRef = useRef(history);
+  historyRef.current = history;
 
   const [selected, setSelected] = useState<string | null>(null);
   const [selectedEdge, setSelectedEdge] = useState<string | null>(null);
@@ -81,6 +95,9 @@ export function BoardCanvas({
   const [editingEdge, setEditingEdge] = useState<string | null>(null);
   const [menu, setMenu] = useState<ContextMenuState | null>(null);
   const [panelId, setPanelId] = useState<string | null>(null);
+  const [moveRoot,setMoveRoot]=useState<string|null>(null);
+  const [moveIds,setMoveIds]=useState<Set<string>>(new Set());
+  const [draggingNodes,setDraggingNodes]=useState(false);
   /** 面板当前对应的节点（ref 版）：原生拖放监听只订阅一次，需要读最新值 */
   const panelIdRef = useRef<string | null>(null);
   panelIdRef.current = panelId;
@@ -89,6 +106,12 @@ export function BoardCanvas({
   const [dropTargetId, setDropTargetId] = useState<string | null>(null);
   /** 正在处理拖入导入（防重入 + 显示忙碌） */
   const [dropBusy, setDropBusy] = useState(false);
+  const[documentStatus,setDocumentStatus]=useState('');
+  const documentImport=useRef<AbortController|null>(null);
+  const mounted=useRef(true);
+  const documentBoard=useRef(`${board.projectId}/${board.id}`);documentBoard.current=`${board.projectId}/${board.id}`;
+  useEffect(()=>{mounted.current=true;return()=>{mounted.current=false;documentImport.current?.abort();};},[]);
+  useEffect(()=>()=>{documentImport.current?.abort();},[board.id]);
   /** AI 跳转高亮：短暂闪烁的节点 id（M5-6） */
   const [flashId, setFlashId] = useState<string | null>(null);
   /** 悬停简介 tooltip：悬停 400ms 后出现 */
@@ -119,6 +142,7 @@ export function BoardCanvas({
     setEditingId(null);
     setEditingEdge(null);
     setPanelId(null);
+    setMoveRoot(null);drag.current=null;setDraggingNodes(false);
     rerender();
   }, [board.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -254,6 +278,20 @@ export function BoardCanvas({
   /** 一次原子变更：记历史 + 落盘 */
   const apply = useCallback(
     (next: Graph) => {
+      // Native attachment completion releases the lock before this callback;
+      // React may still be painting the old overlay. Adopt committed data even
+      // when another modal is open; user input is isolated by the key handler.
+      if (syncMutationLock.current) return;
+      const active=drag.current;
+      if(active?.kind==='node'){
+        // An asynchronous document attachment is a separate change. Cancel only
+        // the drag coordinates, preserving new document/content fields.
+        const original=replacePresent(historyRef.current,{...historyRef.current.present,nodes:translateFromBaseline(historyRef.current.present.nodes,active.positions,0,0)});
+        historyRef.current=original;graphRef.current=original.present;setHistory(original);
+        next={...next,nodes:translateFromBaseline(next.nodes,active.positions,0,0)};
+        drag.current=null;setDraggingNodes(false);suppressClick.current=true;
+      }
+      setMoveRoot(null);
       setHistory((h) => pushState(h, next));
       onChange(next.nodes, next.edges, engine.viewport);
     },
@@ -262,11 +300,11 @@ export function BoardCanvas({
 
   /** 树状自动布局（M6-4）：只重排位置、不改结构，进历史可撤销；带 360ms 归位过渡。 */
   const autoArrange = useCallback(() => {
+    if(drag.current?.kind==='node')return;
     const g = graphRef.current;
     if (g.nodes.length === 0) return;
     // 用节点原坐标包围盒左上作为布局原点，避免整块图跳到别处
-    const minX = Math.min(...g.nodes.map((n) => n.x));
-    const minY = Math.min(...g.nodes.map((n) => n.y));
+    let minX=Infinity,minY=Infinity;for(const node of g.nodes){minX=Math.min(minX,node.x);minY=Math.min(minY,node.y);}
     const layoutNodes = g.nodes.map((n) => ({
       id: n.id,
       w: sizesRef.current[n.id]?.w ?? n.w ?? 240,
@@ -292,6 +330,7 @@ export function BoardCanvas({
   /** 以视口中心为锚缩放（键盘缩放不该跟着鼠标跑）。 */
   const zoomCenter = useCallback(
     (factor: number) => {
+      if(drag.current?.kind==='node')return;
       const r = rect();
       engine.zoomByFactor({ x: r.width / 2, y: r.height / 2 }, factor);
       rerender();
@@ -302,6 +341,7 @@ export function BoardCanvas({
 
   /** 缩放重置为 100%，保持视口中心对应的世界点不动。 */
   const zoomReset = useCallback(() => {
+    if(drag.current?.kind==='node')return;
     const r = rect();
     engine.zoomAtPoint({ x: r.width / 2, y: r.height / 2 }, 1);
     rerender();
@@ -310,6 +350,7 @@ export function BoardCanvas({
 
   /** 适配全部内容到屏幕（zoom-to-fit）。 */
   const fitAll = useCallback(() => {
+    if(drag.current?.kind==='node')return;
     const g = graphRef.current;
     const r = rect();
     if (g.nodes.length === 0) {
@@ -323,6 +364,8 @@ export function BoardCanvas({
         maxX = Math.max(maxX, n.x + s.w);
         maxY = Math.max(maxY, n.y + s.h);
       }
+      const worldBoxes=new Map(g.nodes.map(n=>{const size=sizesRef.current[n.id]??{w:n.w||240,h:96};return[n.id,{x:n.x,y:n.y,...size}];}));
+      const routes=routeBoardEdges(worldBoxes,g.edges,'curved');for(const edge of g.edges){const geo=routes.get(edge.id);if(!geo)continue;const lines=edgeLabelLines(edge.label??''),width=Math.max(24,...lines.map(s=>Array.from(s).length*12))+16,height=Math.max(24,lines.length*16+12);minX=Math.min(minX,geo.mid.x-width/2);maxX=Math.max(maxX,geo.mid.x+width/2);minY=Math.min(minY,geo.mid.y-height/2);maxY=Math.max(maxY,geo.mid.y+height/2);}
       engine.fit(
         { x: minX, y: minY, width: maxX - minX, height: maxY - minY },
         { width: r.width, height: r.height },
@@ -356,6 +399,8 @@ export function BoardCanvas({
   );
 
   const doUndo = useCallback(() => {
+    if (mutationsBlocked()) return;
+    if(drag.current?.kind==='node')return;
     setHistory((h) => {
       if (!canUndo(h)) return h;
       const nh = histUndo(h);
@@ -367,6 +412,8 @@ export function BoardCanvas({
   }, [engine, onChange]);
 
   const doRedo = useCallback(() => {
+    if (mutationsBlocked()) return;
+    if(drag.current?.kind==='node')return;
     setHistory((h) => {
       if (!canRedo(h)) return h;
       const nh = histRedo(h);
@@ -392,6 +439,11 @@ export function BoardCanvas({
   useEffect(() => {
     const hit = (id: string, e: KeyboardEvent) => matchShortcut(e, shortcut(id)!);
     const onKey = (e: KeyboardEvent) => {
+      if (mutationsBlocked()) return;
+      if(drag.current?.kind==='node'){
+        if(e.key==='Escape'){e.preventDefault();cancelNodeDrag();}
+        if(!isEditableTarget(e.target))return;
+      }
       // 撤销/重做即便焦点在输入框外也应响应；但打字时交给输入框自身
       const editable = isEditableTarget(e.target);
       if (!editable) {
@@ -436,6 +488,7 @@ export function BoardCanvas({
       if (editable) return;
 
       if (e.key === 'Escape') {
+        if(moveRoot){e.preventDefault();setMoveRoot(null);return;}
         if (panelId) {
           e.preventDefault();
           setPanelId(null);
@@ -487,15 +540,18 @@ export function BoardCanvas({
     editingEdge,
     removeEdge,
     panelId,
+    moveRoot,
   ]);
 
   /* ── 拖拽状态 ── */
   const drag = useRef<
     | null
-    | { kind: 'pan'; startX: number; startY: number; vx: number; vy: number }
-    | { kind: 'node'; id: string; lastX: number; lastY: number; moved: boolean; baseline: Graph }
+    | { kind: 'pan'; startX: number; startY: number; vx: number; vy: number; moved: boolean }
+    | { kind: 'node'; id: string; pointerId:number;startX:number;startY:number;zoom:number; moved: boolean; baseline: Graph; positions:Map<string,{x:number;y:number}>;group:boolean }
     | { kind: 'connect'; fromId: string }
   >(null);
+  const blankClickTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => () => { if (blankClickTimer.current) clearTimeout(blankClickTimer.current); }, []);
 
   /** 连线拖拽的实时状态（世界坐标）；单独 state 以驱动预览重绘 */
   const [connect, setConnect] = useState<{ fromId: string; to: { x: number; y: number }; hoverId: string | null } | null>(
@@ -518,6 +574,7 @@ export function BoardCanvas({
   /* ── 滚轮缩放 ── */
   const onWheel = (e: React.WheelEvent) => {
     e.preventDefault();
+    if(drag.current?.kind==='node')return;
     const r = rect();
     const anchor = { x: e.clientX - r.left, y: e.clientY - r.top };
     engine.zoomByFactor(anchor, Math.exp(-e.deltaY * 0.0015));
@@ -527,30 +584,41 @@ export function BoardCanvas({
 
   /* ── 空白按下：平移 ── */
   const onCanvasPointerDown = (e: React.PointerEvent) => {
+    if(drag.current)return;
     if (e.button !== 0) return;
+    if ((e.target as HTMLElement).closest('button,input,textarea,select,a,[contenteditable],.ctx-menu,.node-card,.edge-hit')) return;
+    if (blankClickTimer.current) clearTimeout(blankClickTimer.current);
     setSelected(null);
     setSelectedEdge(null);
     setPanelId(null);
+    setMoveRoot(null);
     clearTip();
     const vp = engine.viewport;
-    drag.current = { kind: 'pan', startX: e.clientX, startY: e.clientY, vx: vp.x, vy: vp.y };
+    drag.current = { kind: 'pan', startX: e.clientX, startY: e.clientY, vx: vp.x, vy: vp.y, moved: false };
     (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
   };
 
   /* ── 节点按下：选中 + 准备拖拽 ── */
   const onNodePointerDown = (e: React.PointerEvent, id: string) => {
-    if (e.button !== 0) return;
+    if(drag.current)return;
+    if (e.button !== 0||e.ctrlKey&&detectMacOS()) return;
     e.stopPropagation();
     setSelected(id);
     setSelectedEdge(null);
+    suppressClick.current=false;
+    const baseline=historyRef.current.present;
+    const group=moveRoot===id;
+    const ids=group?descendantIds(baseline.nodes,baseline.edges,id):new Set([id]);
+    if(group)setMoveIds(ids);
+    if(!group)setMoveRoot(null);
     drag.current = {
       kind: 'node',
       id,
-      lastX: e.clientX,
-      lastY: e.clientY,
+      pointerId:e.pointerId,startX:e.clientX,startY:e.clientY,zoom:engine.viewport.zoom,
       moved: false,
-      baseline: history.present,
+      baseline,positions:new Map(baseline.nodes.filter(n=>ids.has(n.id)).map(n=>[n.id,{x:n.x,y:n.y}])),group,
     };
+    setDraggingNodes(true);
     (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
   };
 
@@ -559,6 +627,7 @@ export function BoardCanvas({
      故不依赖锚点元素/指针捕获，直接挂 window 级监听全程自算，
      并用 graphRef 读取最新节点/连线（规避闭包旧值）。 */
   const onAnchorPointerDown = (e: React.PointerEvent, id: string) => {
+    if(drag.current)return;
     if (e.button !== 0) return;
     e.stopPropagation();
     e.preventDefault();
@@ -628,42 +697,56 @@ export function BoardCanvas({
   const onPointerMove = (e: React.PointerEvent) => {
     const d = drag.current;
     if (!d) return;
+    if(d.kind==='node'&&d.pointerId!==e.pointerId)return;
     if (d.kind === 'pan') {
+      if (Math.hypot(e.clientX - d.startX, e.clientY - d.startY) > 4) d.moved = true;
       const vp = engine.viewport;
       engine.setViewport({ ...vp, x: d.vx + (e.clientX - d.startX), y: d.vy + (e.clientY - d.startY) });
       rerender();
     } else if (d.kind === 'node') {
-      const zoom = engine.viewport.zoom;
-      const dx = (e.clientX - d.lastX) / zoom;
-      const dy = (e.clientY - d.lastY) / zoom;
-      if (dx !== 0 || dy !== 0) d.moved = true;
-      d.lastX = e.clientX;
-      d.lastY = e.clientY;
-      setHistory((h) =>
-        replacePresent(h, {
-          ...h.present,
-          nodes: h.present.nodes.map((n) => (n.id === d.id ? { ...n, x: n.x + dx, y: n.y + dy } : n)),
-        }),
-      );
+      previewNodeDrag(d,e);
     }
     // 'connect' 由 onAnchorPointerDown 里的 window 级监听处理，这里不涉及
   };
 
+  const previewNodeDrag=(d:Extract<NonNullable<typeof drag.current>,{kind:'node'}>,e:{clientX:number;clientY:number})=>{
+    if(!d.moved&&Math.hypot(e.clientX-d.startX,e.clientY-d.startY)<3)return;
+    d.moved=true;
+    const next=replacePresent(historyRef.current,{...historyRef.current.present,nodes:translateFromBaseline(historyRef.current.present.nodes,d.positions,(e.clientX-d.startX)/d.zoom,(e.clientY-d.startY)/d.zoom)});
+    historyRef.current=next;graphRef.current=next.present;setHistory(next);
+  };
+  const cancelNodeDrag=()=>{
+    const d=drag.current;if(d?.kind!=='node')return;
+    drag.current=null;setDraggingNodes(false);setMoveRoot(null);suppressClick.current=true;
+    const next=replacePresent(historyRef.current,d.baseline);historyRef.current=next;graphRef.current=d.baseline;setHistory(next);
+  };
+  useEffect(()=>{const cancel=()=>cancelNodeDrag();window.addEventListener('blur',cancel);return()=>window.removeEventListener('blur',cancel);},[]);
+
   const onPointerUp = (e: React.PointerEvent) => {
     const d = drag.current;
+    if(d?.kind==='node'&&d.pointerId!==e.pointerId)return;
+    if(d?.kind==='node'&&e.type==='pointerup'&&e.button!==0)return;
     drag.current = null;
     if (!d) return;
     (e.currentTarget as HTMLElement).releasePointerCapture?.(e.pointerId);
     if (d.kind === 'pan') {
       onChange(nodes, edges, engine.viewport);
-    } else if (d.kind === 'node') {
-      if (d.moved) {
-        suppressClick.current = true;
-        setHistory((h) => {
-          onChange(h.present.nodes, h.present.edges, engine.viewport);
-          return commitFromBaseline(h, d.baseline);
-        });
+      if (e.type === 'pointerup' && !d.moved && e.button === 0) {
+        // Give a double click time to create a node before the canvas changes width.
+        blankClickTimer.current = setTimeout(() => onBlankClick?.(), 220);
       }
+    } else if (d.kind === 'node') {
+      if(e.type==='pointercancel'){drag.current=d;cancelNodeDrag();return;}
+      previewNodeDrag(d,e);setDraggingNodes(false);
+      const changed=historyRef.current.present.nodes.some(n=>{const pos=d.positions.get(n.id);return pos&&(n.x!==pos.x||n.y!==pos.y);});
+      if (d.moved&&changed) {
+        suppressClick.current = true;
+        const next = commitFromBaseline(historyRef.current, d.baseline);
+        historyRef.current = next;
+        setHistory(next);
+        onChange(next.present.nodes, next.present.edges, engine.viewport);
+      }
+      if(d.group){suppressClick.current=true;if(d.moved)setMoveRoot(null);}
     }
     // 'connect' 全程由 onAnchorPointerDown 的 window 监听处理
   };
@@ -672,6 +755,7 @@ export function BoardCanvas({
   const onCanvasContextMenu = (e: React.MouseEvent) => {
     e.preventDefault();
     e.stopPropagation();
+    if(drag.current?.kind==='node')return;
     const r = rect();
     const world = engine.toWorld({ x: e.clientX - r.left, y: e.clientY - r.top });
     setMenu({
@@ -689,13 +773,16 @@ export function BoardCanvas({
   const onNodeContextMenu = (e: React.MouseEvent, id: string) => {
     e.preventDefault();
     e.stopPropagation();
+    if(drag.current?.kind==='node')return;
     setSelected(id);
     setSelectedEdge(null);
-    setPanelId(id); // 打开内容面板（编辑在面板里完成，右键不再单列「编辑」）
+    setPanelId(null);setMoveRoot(null);clearTip();
     setMenu({
       x: e.clientX,
       y: e.clientY,
       items: [
+        {type:'item',label:'移动本节点及全部下级',onClick:()=>{setMoveRoot(id);setMoveIds(descendantIds(graphRef.current.nodes,graphRef.current.edges,id));setPanelId(null);setEditingId(null);clearTip();}},
+        {type:'separator'},
         { type: 'item', label: '删除节点', danger: true, onClick: () => removeNode(id) },
       ],
     });
@@ -704,6 +791,7 @@ export function BoardCanvas({
   const onEdgeContextMenu = (e: React.MouseEvent, id: string) => {
     e.preventDefault();
     e.stopPropagation();
+    if(drag.current?.kind==='node')return;
     const edge = edges.find((x) => x.id === id);
     if (!edge) return;
     setSelectedEdge(id);
@@ -758,6 +846,7 @@ export function BoardCanvas({
       suppressClick.current = false;
       return;
     }
+    if(moveRoot===id)return;
     setSelected(id);
     setSelectedEdge(null);
     setPanelId(id);
@@ -804,42 +893,23 @@ export function BoardCanvas({
   };
 
   /* ── 文档：导入 / 打开阅读 / 移除（M4-3 / M4-4） ── */
-  const attachDocs = (nodeId: string, refs: DocRef[]) => {
-    if (refs.length === 0) return;
-    const g = graphRef.current;
-    apply({
-      nodes: g.nodes.map((n) =>
-        n.id === nodeId
-          ? {
-              ...n,
-              // 去重（按 path），追加新导入的文档
-              docs: [...n.docs.filter((d) => !refs.some((r) => r.path === d.path)), ...refs],
-              updated_at: new Date().toISOString(),
-            }
-          : n,
-      ),
-      edges: g.edges,
-    });
-  };
-
   /** 把一组绝对路径的文档复制进白板 docs/ 并挂到节点（去重、逐个导入，返回成功导入数） */
   const importPathsToNode = async (nodeId: string, paths: string[]): Promise<number> => {
-    if (paths.length === 0) return 0;
-    const refs: DocRef[] = [];
+    if (paths.length === 0||documentImport.current) return 0;
+    const controller=new AbortController();documentImport.current=controller;setDropBusy(true);
+    let count=0;
     const failed: string[] = [];
-    for (const p of paths) {
+    try{for (const p of paths) {
+      if(controller.signal.aborted)break;
       try {
-        refs.push(await api.docImport(board.projectId, board.id, p));
+        const next=await attachDocument(board,nodeId,p,text=>mounted.current&&setDocumentStatus(text),controller.signal);
+        if(mounted.current&&documentBoard.current===`${board.projectId}/${board.id}`){apply({nodes:next.nodes,edges:next.edges});count++;}
       } catch (err) {
         console.error('导入文档失败：', p, err);
-        failed.push(p);
+        failed.push(`${p.split(/[\\/]/).pop()}：${String(err)}`);
       }
-    }
-    attachDocs(nodeId, refs);
-    if (failed.length > 0) {
-      alert(`有 ${failed.length} 个文件导入失败（仅支持 .md / .markdown）：\n${failed.join('\n')}`);
-    }
-    return refs.length;
+    }if(mounted.current)setDocumentStatus(failed.length?failed.join('\n'):controller.signal.aborted?'已停止，已完成的文档保留':`已挂载 ${count} 篇文档`);return count;
+    }finally{documentImport.current=null;if(mounted.current)setDropBusy(false);}
   };
 
   const importDocs = async (nodeId: string) => {
@@ -854,9 +924,10 @@ export function BoardCanvas({
 
   /** OS 文件拖放到节点：过滤 .md/.markdown，导入并挂到该节点，并短暂高亮 */
   const importDroppedToNode = async (nodeId: string, paths: string[]) => {
-    const mdPaths = paths.filter((p) => /\.(md|markdown)$/i.test(p));
+    if(documentImport.current)return;
+    const mdPaths = paths.filter((p) => /\.(md|markdown|pdf|zip)$/i.test(p));
     if (mdPaths.length === 0) {
-      alert('只能拖入 Markdown 文件（.md / .markdown）。');
+      alert('可以拖入 Markdown、PDF 或 Markdown 图片 ZIP。');
       return;
     }
     setDropBusy(true);
@@ -878,11 +949,7 @@ export function BoardCanvas({
   };
 
   const removeDoc = async (nodeId: string, path: string) => {
-    try {
-      await api.docDelete(board.projectId, board.id, path);
-    } catch (err) {
-      console.error('删除文档文件失败（仍从节点解除关联）：', err);
-    }
+    // Unmount only: shared documents and undo/history retain their original bytes.
     const g = graphRef.current;
     apply({
       nodes: g.nodes.map((n) =>
@@ -952,6 +1019,7 @@ export function BoardCanvas({
   };
 
   const onCanvasDoubleClick = (e: React.MouseEvent) => {
+    if (blankClickTimer.current) clearTimeout(blankClickTimer.current);
     const t = e.target as HTMLElement;
     if (t.closest('.node-card')) return;
     if (t.closest('.edge-hit')) return;
@@ -997,12 +1065,13 @@ export function BoardCanvas({
   const laidEdges = useMemo(() => {
     void sizesVer;
     void vpSig;
+    const routed=routeBoardEdges(new Map(nodes.map(n=>[n.id,screenBoxOf(n)])),edges,edgeStyle,engine.viewport.zoom);
     return edges
       .map((e) => {
         const a = nodeById[e.from];
         const b = nodeById[e.to];
         if (!a || !b) return null;
-        const g = edgeGeometry(screenBoxOf(a), screenBoxOf(b), edgeStyle);
+        const g = routed.get(e.id)!;
         return { edge: e, geo: g };
       })
       .filter((x): x is { edge: BoardEdge; geo: ReturnType<typeof edgeGeometry> } => x !== null);
@@ -1030,10 +1099,13 @@ export function BoardCanvas({
       onPointerMove={onPointerMove}
       onPointerUp={onPointerUp}
       onPointerCancel={onPointerUp}
+      onLostPointerCapture={e=>{if(drag.current?.kind==='node'&&drag.current.pointerId===e.pointerId)cancelNodeDrag();}}
+      aria-busy={draggingNodes}
       onContextMenu={onCanvasContextMenu}
       onDoubleClick={onCanvasDoubleClick}
     >
       {/* 悬浮工具栏：撤销 / 重做 / 整理 / 缩放 / 适配 */}
+      {documentStatus&&<div className="document-import-status" role="status" onPointerDown={e=>e.stopPropagation()}><span>{documentStatus}</span>{dropBusy&&<button type="button" className="btn" disabled={documentStatus==='正在保存文档与原件'} onClick={()=>documentImport.current?.abort()}>停止</button>}<button type="button" className="btn" onClick={()=>setDocumentStatus('')} disabled={dropBusy}>关闭</button></div>}
       <div className="canvas-toolbar" role="toolbar" aria-label="画布工具" onPointerDown={(e) => e.stopPropagation()}>
         <button type="button" className="tb-btn" title="撤销 (Ctrl+Z)" aria-label="撤销" disabled={!canUndo(history)} onClick={doUndo}>
           <svg width="15" height="15" viewBox="0 0 16 16" aria-hidden="true">
@@ -1116,8 +1188,8 @@ export function BoardCanvas({
               />
               {edge.label && !editingEdge && (
                 <g transform={`translate(${geo.mid.x} ${geo.mid.y})`}>
-                  <text className="edge-label" textAnchor="middle" dominantBaseline="central" onDoubleClick={(e) => { e.stopPropagation(); startEdgeLabel(edge.id); }} onPointerDown={(e) => e.stopPropagation()}>
-                    {edge.label}
+                  <text className="edge-label" style={{fontSize:12*engine.viewport.zoom,strokeWidth:4*engine.viewport.zoom}} textAnchor="middle" dominantBaseline="central" onDoubleClick={(e) => { e.stopPropagation(); startEdgeLabel(edge.id); }} onPointerDown={(e) => e.stopPropagation()}>
+                    <title>{edge.label}</title>{edgeLabelLines(edge.label).map((line,index,lines)=><tspan key={index} x={0} dy={index===0?-(lines.length-1)*8*engine.viewport.zoom:16*engine.viewport.zoom}>{line}</tspan>)}
                   </text>
                 </g>
               )}
@@ -1137,7 +1209,7 @@ export function BoardCanvas({
           <NodeCard
             key={n.id}
             node={n}
-            selected={selected === n.id}
+            selected={selected === n.id||!!moveRoot&&moveIds.has(n.id)}
             flash={flashId === n.id}
             editing={editingId === n.id}
             showAnchors={(selected === n.id || hoverNode === n.id) && editingId !== n.id}
@@ -1192,6 +1264,7 @@ export function BoardCanvas({
         <div className="drop-hint" role="status">松开鼠标，把文档嵌入该节点</div>
       )}
       {dropBusy && <div className="drop-hint drop-hint-busy" role="status">正在导入文档…</div>}
+      {moveRoot&&<div className="drop-hint tree-move-hint" role="status">拖动此节点，移动全部 {moveIds.size} 个节点<button className="btn" onClick={()=>{cancelNodeDrag();setMoveRoot(null);}}>取消</button></div>}
 
       {/* 悬停简介 tooltip（不拦截指针） */}
       {tip && !panelId && (() => {
@@ -1223,13 +1296,3 @@ export function BoardCanvas({
     </div>
   );
 }
-
-
-
-
-
-
-
-
-
-

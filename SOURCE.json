@@ -1,0 +1,41 @@
+{
+  "source_commit": "63c9b86da7dce36cb6ef9d542ef87255d81ad6ac",
+  "export_date": "2026-10-29",
+  "versions": {
+    "desktop": "0.1.14",
+    "android": "2.1.0-preview.8",
+    "android_version_code": 23
+  },
+  "tracked_source_mapping": [
+    {
+      "from": "desktop/",
+      "to": "./"
+    },
+    {
+      "from": "android-app/",
+      "to": "android-app/"
+    }
+  ],
+  "scope": "Tracked product source, build inputs, tests and public documentation only. Public Git history is retained independently.",
+  "excluded": [
+    "Other services and applications",
+    "Development governance and private history",
+    "Credentials, local configuration and user documents",
+    "Caches, generated builds and untracked source files"
+  ],
+  "public_adaptations": [
+    "Repository-root desktop layout in CI, packaging and Android cross-client tests",
+    "Shared sync-core provenance uses the public android-app/sync/core path",
+    "Optional Gateway sample is blank and its separate-service launcher is omitted",
+    "Synthetic credential fixtures use visibly short placeholders",
+    "README, status, installation and recovery documentation",
+    "Pinned knowledge schema provenance omits inaccessible repository paths; schema bytes remain unchanged"
+  ],
+  "additional_tracked_files": [
+    "scripts/knowledge_exchange.py",
+    "scripts/knowledge-exchange-requirements.txt",
+    "contracts/historyandknowledge/knowledge-document-v1.schema.json",
+    "contracts/historyandknowledge/SOURCE.json"
+  ],
+  "desktop_build_source_commit": "68eeb939571cc31115d92ba445ae6f0ec1b5d635"
+}

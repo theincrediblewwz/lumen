@@ -10,6 +10,7 @@
  * 浮层阅读器接管，保证开发预览也能看到效果。
  */
 
+import { windowIdentity } from '../windowIdentity';
 export interface OpenReaderArgs {
   projectId: string;
   boardId: string;
@@ -35,12 +36,7 @@ async function windowEnvironment(): Promise<{isMac:boolean;dataDirectory?:string
 
 /** 供浏览器回退用的事件名。 */
 export const OPEN_READER_EVENT = 'lumen:open-reader';
-
-function readerLabel(a: OpenReaderArgs): string {
-  // 窗口 label 只能包含字母数字/-/_/:，这里做一次安全化
-  const raw = `reader-${a.boardId}-${a.path}`;
-  return raw.replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 120);
-}
+export const REFRESH_READER_EVENT='lumen:refresh-reader';
 
 export async function openReaderWindow(a: OpenReaderArgs): Promise<void> {
   if (!inTauri()) {
@@ -50,7 +46,7 @@ export async function openReaderWindow(a: OpenReaderArgs): Promise<void> {
   }
 
   const { WebviewWindow } = await import('@tauri-apps/api/webviewWindow');
-  const label = readerLabel(a);
+  const label = await windowIdentity('reader',[a.projectId,a.boardId,a.path]);
 
   // macOS 用原生装饰（系统红绿灯 + 圆角 + 阴影）；Windows/Linux 无边框自绘按钮。
   const {isMac,dataDirectory} = await windowEnvironment();
@@ -59,6 +55,7 @@ export async function openReaderWindow(a: OpenReaderArgs): Promise<void> {
   // 否则窗口在后台/最小化时只 setFocus 常常不会浮到最前，用户以为「点了没反应」。
   const existing = await WebviewWindow.getByLabel(label);
   if (existing) {
+    const {emitTo}=await import('@tauri-apps/api/event');await emitTo(label,REFRESH_READER_EVENT,a);
     try {
       if (await existing.isMinimized()) await existing.unminimize();
       await existing.show();
@@ -108,7 +105,3 @@ export async function openReaderWindow(a: OpenReaderArgs): Promise<void> {
     window.dispatchEvent(new CustomEvent<OpenReaderArgs>(OPEN_READER_EVENT, { detail: a }));
   });
 }
-
-
-
-

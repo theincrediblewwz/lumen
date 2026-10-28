@@ -38,8 +38,8 @@ export function AiApp() {
       projectId={projectId}
       boardId={boardId}
       boardName={boardName}
+      nodeId={params.get('node') ?? undefined} conversationId={params.get('conversation') ?? undefined}
+      messageIds={(params.get('messages') ?? '').split(',').filter(Boolean)}
     />
   );
 }
-
-

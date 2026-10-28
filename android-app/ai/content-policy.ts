@@ -9,8 +9,8 @@ import type {
 export const CONTENT_POLICY_VERSION = 'content-policy-v1';
 
 export const PROJECT_MODE_LABELS: Record<ProjectMode, string> = {
-  learning: '学习模式',
-  summary: '总结模式',
+  learning: '从问题学习',
+  summary: '按资料整理',
 };
 
 export const EXPLANATION_STYLE_LABELS: Record<ExplanationStyle, string> = {

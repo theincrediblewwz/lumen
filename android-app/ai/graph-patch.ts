@@ -1,4 +1,5 @@
 import type { KnowledgeStatus, ProjectContentPolicy, RelationType } from '@/types/domain';
+import type { KnowledgeReference } from '@/data/knowledge-library-core';
 
 export const GRAPH_PATCH_VERSION = 1 as const;
 export const EXPANSION_CONTEXT_VERSION = 2 as const;
@@ -55,6 +56,7 @@ export type ExpansionContext = {
     title: string;
     sourceText: string;
     sourceTextTruncated: boolean;
+    knowledgeReferences?: KnowledgeReference[];
     contentPolicy?: ProjectContentPolicy;
     sourceReferences?: Array<{
       sourceItemId: string;

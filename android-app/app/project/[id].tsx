@@ -1,3 +1,5 @@
+import {exportRichBoard} from '@/data/rich-board-files';
+import {WorkspaceButton} from '@/components/workspace-controls';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { router, useFocusEffect, useLocalSearchParams } from 'expo-router';
 import { useSQLiteContext } from 'expo-sqlite';
@@ -18,39 +20,37 @@ import {
 import { getAiGatewayUrl, getExpansionAdapterMode } from '@/ai/gateway-client';
 import { claimInitialExpansion, clearInitialExpansionIntent } from '@/ai/initial-expansion-intent';
 import { AppIcon } from '@/components/app-icon';
+import { AutoGrowingInput } from '@/components/auto-growing-input';
 import { CanvasIconButton, CanvasSelectionCard, canvasControlStyles } from '@/components/canvas-controls';
 import { FloatingButton } from '@/components/floating-button';
 import { KnowledgeCanvas, type FocusPreset } from '@/components/knowledge-canvas';
-import { moveNode } from '@/data/node-workspace';
+import { NodeDocumentCards } from '@/components/node-document-cards';
+import { visibleCanvasIds } from '@/components/canvas-visibility';
+import { getCanvasState, rememberBoard, saveCanvasViewport, saveCollapsedNodes, type CanvasViewport } from '@/data/canvas-state';
+import { addCanvasGroupMember, createCanvasGroup, deleteCanvasGroup, listCanvasGroups, moveCanvasGroup, removeCanvasGroupMember, renameCanvasGroup, undoCanvasGroupChange, type CanvasGroup, type CanvasGroupMember, type CanvasGroupUndo } from '@/data/canvas-groups';
+import { connectNodes, disconnectNodes, listNodeDocuments, moveNode, restoreDisconnectedNodes } from '@/data/node-workspace';
+import { createConversation, listConversations } from '@/data/conversations';
 import { onSyncUpdate } from '@/sync/runtime';
-import { MarkdownContent } from '@/components/markdown-content';
 import { pickAndExportProject, type ExportProgress } from '@/data/android-folder-transfer';
 import type { ExpansionAdapter } from '@/data/expansion-jobs';
 import { getLatestExpansionJobForProject } from '@/data/expansion-jobs';
 import {
   deleteKnowledgeNode,
   deleteProject,
-  getDocument,
   getGraph,
   getLatestAppliedGraphMutationBatch,
   getNodeDeleteImpact,
   reflowProjectGraph,
   type NodeDeleteImpact,
   undoGraphMutationBatch,
-  updateEdgeReviewStatus,
-  updateNodeStatus,
 } from '@/data/knowledge-repository';
-import { buildMasteryPrompt, type MasteryPrompt } from '@/data/mastery-check';
-import { recordMasteryAttempt } from '@/data/mastery-attempts';
 import { listNodeAnswers } from '@/data/node-answers';
 import {
   FavoriteDependencyError,
-  isNodeFavorite,
-  setNodeFavorite,
 } from '@/data/personal-context';
 import { listPromptTemplates, savePromptTemplate } from '@/data/prompt-templates';
 import { colors, floatingShadow, radii } from '@/theme/tokens';
-import type { EdgeReviewStatus, KnowledgeEdge, KnowledgeGraph, KnowledgeNode, MarkdownDocument, PromptTemplate } from '@/types/domain';
+import type { KnowledgeEdge, KnowledgeGraph, KnowledgeNode, MarkdownDocument, PromptTemplate } from '@/types/domain';
 
 function initialLayerPrompt(mode: KnowledgeGraph['project']['contentPolicy']['mode']) {
   if (mode === 'summary') {
@@ -71,15 +71,28 @@ export default function ProjectScreen() {
   const keyboard = useAnimatedKeyboard();
   const initialAttemptFor = useRef<string | null>(null);
   const initialFocusFor = useRef<string | null>(null);
+  const loadedCanvasState = useRef(false);
+  const lastGraph = useRef<KnowledgeGraph | null>(null);
+  const collapsedIdsRef = useRef<string[]>([]);
+  const viewportWrites = useRef<Promise<void>>(Promise.resolve());
+  const [canvasStateReady, setCanvasStateReady] = useState(false);
+  const [initialViewport, setInitialViewport] = useState<CanvasViewport | null>(null);
+  const [collapsedNodeIds, setCollapsedNodeIds] = useState<string[]>([]);
+  const [localFocusId, setLocalFocusId] = useState<string | null>(null);
+  const [restoreViewport, setRestoreViewport] = useState<CanvasViewport | null>(null);
+  const [restoreRequest, setRestoreRequest] = useState(0);
+  const [jumpFocusNodeId, setJumpFocusNodeId] = useState<string | null>(null);
+  const beforeFocusViewport = useRef<CanvasViewport | null>(null);
+  const currentViewport = useRef<CanvasViewport | null>(null);
+  const [boardUnavailable, setBoardUnavailable] = useState(false);
   const [graph, setGraph] = useState<KnowledgeGraph | null>(null);
   const [selected, setSelected] = useState<KnowledgeNode | KnowledgeEdge | null>(null);
-  const [document, setDocument] = useState<MarkdownDocument | null>(null);
+  const [nodeDocuments, setNodeDocuments] = useState<MarkdownDocument[]>([]);
   const [prompt, setPrompt] = useState('');
   const [expanding, setExpanding] = useState(false);
   const [expansionQuality, setExpansionQuality] = useState<ExpansionQualityPath>('quick');
   const [deepProgress, setDeepProgress] = useState<DeepBuildProgress | null>(null);
   const [preparingPreview, setPreparingPreview] = useState(false);
-  const [reviewingEdge, setReviewingEdge] = useState(false);
   const [expansionAdapter, setExpansionAdapter] = useState<ExpansionAdapter>('local');
   const [byokProfile, setByokProfile] = useState<ByokProfile | null>(null);
   const [jobWarning, setJobWarning] = useState<string | null>(null);
@@ -89,21 +102,34 @@ export default function ProjectScreen() {
   const [exportProgress, setExportProgress] = useState<ExportProgress | null>(null);
   const [localDataVisible, setLocalDataVisible] = useState(false);
   const [projectMenuVisible, setProjectMenuVisible] = useState(false);
+  const [canvasViewVisible, setCanvasViewVisible] = useState(false);
+  const [boardMoreVisible, setBoardMoreVisible] = useState(false);
   const [movingNodeId, setMovingNodeId] = useState<string | null>(null);
+  const [connectingNodeId, setConnectingNodeId] = useState<string | null>(null);
+  const [canvasGroups, setCanvasGroups] = useState<CanvasGroup[]>([]);
+  const [canvasGroupMembers, setCanvasGroupMembers] = useState<CanvasGroupMember[]>([]);
+  const [selectedGroupId, setSelectedGroupId] = useState<string | null>(null);
+  const [groupPickMode, setGroupPickMode] = useState<{ kind: 'create' } | { kind: 'add'; groupId: string } | null>(null);
+  const [groupPickIds, setGroupPickIds] = useState<string[]>([]);
+  const [groupNameDialog, setGroupNameDialog] = useState<'create' | 'rename' | null>(null);
+  const [groupNameDraft, setGroupNameDraft] = useState('');
+  const [groupUndo, setGroupUndo] = useState<CanvasGroupUndo | null>(null);
+  const [movingGroupId, setMovingGroupId] = useState<string | null>(null);
+  const groupMoveBase = useRef<Record<string, { x: number; y: number }>>({});
   const [expansionVisible, setExpansionVisible] = useState(false);
+  const [expansionOptionsVisible, setExpansionOptionsVisible] = useState(false);
   const [edgeReviewVisible, setEdgeReviewVisible] = useState(false);
-  const [learningMarksVisible, setLearningMarksVisible] = useState(false);
   const expansionDrafts = useRef<Record<string, string>>({});
   const [fitRequest, setFitRequest] = useState(0);
   const [focusRequest, setFocusRequest] = useState(0);
   const [actionNode, setActionNode] = useState<KnowledgeNode | null>(null);
   const [deleteImpact, setDeleteImpact] = useState<NodeDeleteImpact | null>(null);
-  const [actionNodeFavorite, setActionNodeFavorite] = useState(false);
   const [nodeFocusPresets, setNodeFocusPresets] = useState<Record<string, FocusPreset>>({});
-  const [masteryNode, setMasteryNode] = useState<KnowledgeNode | null>(null);
-  const [masteryPrompt, setMasteryPrompt] = useState<MasteryPrompt | null>(null);
-  const [masteryAnswer, setMasteryAnswer] = useState('');
-  const [masteryRevealed, setMasteryRevealed] = useState(false);
+
+  useEffect(() => {
+    setGroupUndo(null); setSelectedGroupId(null); setGroupPickMode(null); setGroupPickIds([]);
+    setMovingGroupId(null);
+  }, [id]);
 
   useFocusEffect(useCallback(() => {
     let active = true;
@@ -130,8 +156,34 @@ export default function ProjectScreen() {
 
   const loadGraph = useCallback(async () => {
     if (!id) return;
-    const [nextGraph, latestJob] = await Promise.all([getGraph(db, id), getLatestExpansionJobForProject(db, id)]);
+    const [nextGraph, latestJob, groupState] = await Promise.all([getGraph(db, id), getLatestExpansionJobForProject(db, id), listCanvasGroups(db, id)]);
+    if (!nextGraph) { setBoardUnavailable(true); return; }
+    if (!loadedCanvasState.current) {
+      loadedCanvasState.current = true;
+      const saved = await getCanvasState(db, id).catch(() => ({ viewport: null, collapsedNodeIds: [] }));
+      setInitialViewport(saved.viewport);
+      currentViewport.current = saved.viewport;
+      collapsedIdsRef.current = saved.collapsedNodeIds.filter(nodeId => nextGraph.nodes.some(node => node.id === nodeId));
+      setCollapsedNodeIds(collapsedIdsRef.current);
+      setCanvasStateReady(true);
+    }
+    const added = lastGraph.current?.project.id === id
+      ? nextGraph.nodes.find(node => !lastGraph.current?.nodes.some(previous => previous.id === node.id)) : null;
+    if (added && !visibleCanvasIds(nextGraph.nodes, nextGraph.edges, collapsedIdsRef.current).has(added.id)) {
+      collapsedIdsRef.current = [];
+      setCollapsedNodeIds([]);
+      void saveCollapsedNodes(db, id, []).catch(() => undefined);
+      setLocalFocusId(null);
+      setJumpFocusNodeId(added.id);
+      setSelected(added);
+      setFocusRequest(value => value + 1);
+    }
+    lastGraph.current = nextGraph;
+    void rememberBoard(db, id).catch(() => undefined);
     setGraph(nextGraph);
+    setCanvasGroups(groupState.groups);
+    setCanvasGroupMembers(groupState.members);
+    setSelectedGroupId(current => groupState.groups.some(group => group.id === current) ? current : null);
     setJobWarning(latestJob?.status === 'failed' ? latestJob.errorMessage ?? '最近一次 AI 回答失败；不会自动重试。' : null);
     setSelected((current) => {
       if (!nextGraph) return null;
@@ -141,6 +193,8 @@ export default function ProjectScreen() {
       return refreshed ?? null;
     });
   }, [db, id]);
+
+  useEffect(() => { if (boardUnavailable) router.replace('/'); }, [boardUnavailable]);
 
   useFocusEffect(useCallback(() => { void loadGraph().catch(() => setJobWarning('无法读取图谱，请重新打开。')); }, [loadGraph]));
   useEffect(()=>onSyncUpdate(()=>{if(!movingNodeId)void loadGraph().catch(()=>undefined);}),[loadGraph,movingNodeId]);
@@ -152,9 +206,46 @@ export default function ProjectScreen() {
     const target = graph.nodes.find((node) => node.id === initialNodeId);
     if (!target) return;
     initialFocusFor.current=focusKey;
+    if (!visibleCanvasIds(graph.nodes, graph.edges, collapsedNodeIds).has(target.id)) {
+      collapsedIdsRef.current = [];
+      setCollapsedNodeIds([]);
+      void saveCollapsedNodes(db, id!, []).catch(() => undefined);
+    }
+    setLocalFocusId(null);
+    setJumpFocusNodeId(target.id);
     setSelected(target);
     setFocusRequest((current) => current + 1);
-  }, [graph, id, initialNodeId]);
+  }, [graph, id, initialNodeId, collapsedNodeIds, db]);
+
+  const visibleIds = useMemo(() => graph
+    ? visibleCanvasIds(graph.nodes, graph.edges, collapsedNodeIds, localFocusId)
+    : new Set<string>(), [graph, collapsedNodeIds, localFocusId]);
+  const visibleNodes = useMemo(() => graph?.nodes.filter(node => visibleIds.has(node.id)) ?? [], [graph, visibleIds]);
+  const visibleEdges = useMemo(() => graph?.edges.filter(edge => visibleIds.has(edge.sourceId) && visibleIds.has(edge.targetId)) ?? [], [graph, visibleIds]);
+
+  const onViewportChange = useCallback((viewport: CanvasViewport) => {
+    if (!id) return;
+    currentViewport.current = viewport;
+    viewportWrites.current = viewportWrites.current.catch(() => undefined).then(() => saveCanvasViewport(db, id, viewport));
+  }, [db, id]);
+
+  const toggleLocalFocus = useCallback((nodeId: string) => {
+    setActionNode(null);
+    if (localFocusId) {
+      setLocalFocusId(null);
+      if (beforeFocusViewport.current) {
+        setRestoreViewport(beforeFocusViewport.current);
+        setRestoreRequest(value => value + 1);
+      }
+      beforeFocusViewport.current = null;
+      return;
+    }
+    beforeFocusViewport.current = currentViewport.current;
+    setJumpFocusNodeId(null);
+    setLocalFocusId(nodeId);
+    setSelected(null);
+    setFocusRequest(value => value + 1);
+  }, [localFocusId]);
 
   const selectedNode = useMemo(() => (selected && 'status' in selected ? selected : null), [selected]);
   const selectedNodeId = selectedNode?.id;
@@ -164,7 +255,7 @@ export default function ProjectScreen() {
 
   useEffect(() => {
     setExpansionVisible(false);
-    setEdgeReviewVisible(false);
+    setEdgeReviewVisible(!selectedNodeId && Boolean(selectedId));
     setPrompt(selectedNodeId ? expansionDrafts.current[selectedNodeId] ?? '' : '');
   }, [selectedId, selectedNodeId]);
 
@@ -173,15 +264,17 @@ export default function ProjectScreen() {
     setPrompt(value);
   };
 
-  useEffect(() => {
-    if (!selected) {
-      setDocument(null);
+  useFocusEffect(useCallback(() => {
+    if (!selectedNodeId) {
+      setNodeDocuments([]);
       return;
     }
     let active = true;
-    getDocument(db, selected.documentId).then((value) => { if (active) setDocument(value); });
+    listNodeDocuments(db, selectedNodeId)
+      .then((value) => { if (active) setNodeDocuments(value); })
+      .catch(() => { if (active) setNodeDocuments([]); });
     return () => { active = false; };
-  }, [db, selected]);
+  }, [db, selectedNodeId]));
 
   useEffect(() => {
     let active = true;
@@ -200,22 +293,28 @@ export default function ProjectScreen() {
 
   const clearSelection = useCallback(() => {
     Keyboard.dismiss();
+    setConnectingNodeId(null);
     setExpansionVisible(false);
     setEdgeReviewVisible(false);
     setSelected(null);
+    setSelectedGroupId(null);
   }, []);
 
   useFocusEffect(useCallback(() => {
     const subscription = BackHandler.addEventListener('hardwareBackPress', () => {
+      if (groupNameDialog) { setGroupNameDialog(null); return true; }
+      if (connectingNodeId) { setConnectingNodeId(null); return true; }
+      if (groupPickMode) { setGroupPickMode(null); setGroupPickIds([]); return true; }
+      if (movingGroupId) { setMovingGroupId(null); setMovingNodeId(null); void loadGraph(); return true; }
       if (movingNodeId) { setMovingNodeId(null); return true; }
       if (expansionVisible || edgeReviewVisible) {
         Keyboard.dismiss(); setExpansionVisible(false); setEdgeReviewVisible(false); return true;
       }
-      if (selected) { clearSelection(); return true; }
+      if (selected || selectedGroupId) { clearSelection(); return true; }
       return false;
     });
     return () => subscription.remove();
-  }, [clearSelection, edgeReviewVisible, expansionVisible, movingNodeId, selected]));
+  }, [clearSelection, connectingNodeId, edgeReviewVisible, expansionVisible, groupNameDialog, groupPickMode, loadGraph, movingGroupId, movingNodeId, selected, selectedGroupId]));
 
   const openContextPreview = useCallback(async (
     target: KnowledgeNode | null = selectedNode,
@@ -257,7 +356,13 @@ export default function ProjectScreen() {
       });
       setPrompt('');
       delete expansionDrafts.current[target.id];
-      await loadGraph();
+      try {
+        await loadGraph();
+      } catch (refreshError) {
+        const detail = refreshError instanceof Error ? refreshError.message : '请重新打开白板';
+        Alert.alert('回答和新节点已保存', `白板暂时未能刷新：${detail}。重新打开白板即可查看。`);
+        return;
+      }
       setAnswerCount((count) => count + 1);
       Alert.alert(
         `完整回答已保存，并展开 ${result.nodeCount} 个要点`,
@@ -281,7 +386,7 @@ export default function ProjectScreen() {
         ],
       );
     } catch (error) {
-      await loadGraph();
+      void loadGraph().catch(() => undefined);
       const message = error instanceof Error ? error.message : '未知错误。任务状态已保留，可稍后手动重试。';
       setJobWarning(message);
       Alert.alert('回答没有写入图谱', message);
@@ -416,21 +521,6 @@ export default function ProjectScreen() {
 
   const expand = () => { if (selectedNode) void requestExpansion(selectedNode, prompt, expansionQuality); };
 
-  const reviewEdge = async (reviewStatus: EdgeReviewStatus) => {
-    if (!selectedEdge || reviewingEdge || selectedEdge.reviewStatus === reviewStatus) return;
-    setReviewingEdge(true);
-    try {
-      const review = await updateEdgeReviewStatus(db, selectedEdge.id, reviewStatus);
-      const updatedEdge = { ...selectedEdge, ...review };
-      setSelected(updatedEdge);
-      setGraph((current) => current ? { ...current, edges: current.edges.map((edge) => edge.id === updatedEdge.id ? updatedEdge : edge) } : current);
-    } catch (error) {
-      Alert.alert('无法保存关系判断', error instanceof Error ? error.message : '请稍后重试');
-    } finally {
-      setReviewingEdge(false);
-    }
-  };
-
   const saveCurrentPrompt = async () => {
     const body = prompt.trim();
     if (!body) return Alert.alert('先写下问题', '输入一段常用追问后再保存为模板。');
@@ -444,17 +534,18 @@ export default function ProjectScreen() {
     }
   };
 
+  const exportRich=async(desktop=false)=>{if(exporting||!graph)return;setExporting(true);try{const result=await exportRichBoard(db,graph.project.id,desktop,label=>setExportProgress({current:4,total:8,label}));if(result)Alert.alert('导出完成',`${result.name}\n已保留${result.originals}份原件。${result.missing?`旧来源另有${result.missing}份原件在本机缺失。`:''}`);}catch(e){Alert.alert('导出失败',e instanceof Error?e.message:'尚未完成');}finally{setExporting(false);}};
   const exportProject = async () => {
     if (!graph || exporting) return;
     setExporting(true);
-    setExportProgress({ current: 1, total: 7, label: '准备导出' });
+    setExportProgress({ current: 1, total: 8, label: '准备导出' });
     try {
       const result = await pickAndExportProject(db, graph.project.id, setExportProgress);
       if (!result) {
         setExportProgress(null);
         return;
       }
-      Alert.alert('导出完成', `${result.directoryName}\n\n包含 ${result.documentCount} 份 Markdown、${result.sourceCount} 份资料的提取文本与定位、${result.masteryAttemptCount} 次掌握记录、完整图结构和 ${result.answerCount} 条已收藏回答。原始 PDF/图片不会复制。`);
+      Alert.alert('导出完成', `${result.directoryName}\n\n包含 ${result.documentCount} 份 Markdown、${result.sourceCount} 份资料、${result.assetCount} 份已校验原件、${result.masteryAttemptCount} 次掌握记录和 ${result.answerCount} 条已收藏回答。${result.missingAssetCount ? `本机另有 ${result.missingAssetCount} 份旧来源原件缺失，只保留提取文本。` : ''}请保留整个文件夹。`);
     } catch (error) {
       Alert.alert('导出失败', error instanceof Error ? error.message : '请检查目标文件夹后重试');
     } finally {
@@ -495,77 +586,19 @@ export default function ProjectScreen() {
     setSelected(node);
     setActionNode(node);
     setDeleteImpact(null);
-    Promise.all([getNodeDeleteImpact(db, node.id), isNodeFavorite(db, node.id)])
-      .then(([impact, favorite]) => {
-        setDeleteImpact(impact);
-        setActionNodeFavorite(favorite);
-      })
+    getNodeDeleteImpact(db, node.id)
+      .then(setDeleteImpact)
       .catch((error) => Alert.alert('无法读取节点信息', error instanceof Error ? error.message : '请稍后重试'));
   }, [db]);
 
-  const setNodeState = async (status: KnowledgeNode['status']) => {
-    if (!actionNode) return;
+  const openNodeDiscussion = async (node: KnowledgeNode) => {
+    setActionNode(null);
     try {
-      await updateNodeStatus(db, actionNode.id, status);
-      setActionNode(null);
-      await loadGraph();
+      const existing = await listConversations(db, node.projectId, node.id);
+      const conversationId = existing[0]?.id ?? await createConversation(db, node.projectId, node.id, `关于 ${node.title}`);
+      router.push({ pathname: '/discussion', params: { conversationId } });
     } catch (error) {
-      Alert.alert('无法更新节点', error instanceof Error ? error.message : '请稍后重试');
-    }
-  };
-
-  const startMasteryCheck = async () => {
-    if (!actionNode) return;
-    try {
-      const nodeDocument = await getDocument(db, actionNode.documentId);
-      if (!nodeDocument) throw new Error('节点文档不存在');
-      setMasteryNode(actionNode);
-      setMasteryPrompt(buildMasteryPrompt(actionNode.title, nodeDocument.body));
-      setMasteryAnswer('');
-      setMasteryRevealed(false);
-      setActionNode(null);
-    } catch (error) {
-      Alert.alert('无法开始自检', error instanceof Error ? error.message : '请稍后重试');
-    }
-  };
-
-  const markMasteryPassed = async () => {
-    if (!masteryNode || !masteryPrompt || !masteryAnswer.trim() || !masteryRevealed) return;
-    const completedNode = masteryNode;
-    try {
-      await recordMasteryAttempt(db, {
-        nodeId: completedNode.id,
-        question: masteryPrompt.question,
-        learnerAnswer: masteryAnswer,
-        referencePoints: masteryPrompt.reference,
-        decision: 'passed',
-      });
-      setMasteryNode(null);
-      await loadGraph();
-      const parentEdge = graph?.edges
-        .filter((edge) => edge.targetId === completedNode.id)
-        .sort((left, right) => right.importance - left.importance)[0];
-      const parent = parentEdge ? graph?.nodes.find((node) => node.id === parentEdge.sourceId) : null;
-      const returnToParent = (continueDiagnostic: boolean) => {
-        if (!parent) return;
-        setSelected(parent);
-        setFocusRequest((current) => current + 1);
-        if (continueDiagnostic && parent.status !== 'mastered') {
-          setPrompt(`我已经完成「${completedNode.title}」的自检。请用一个具体问题重新诊断我是否真正理解「${parent.title}」；如果仍有缺口，只指出最小的下一步。`);
-        }
-      };
-      Alert.alert('已记录这次自检', '你的回答、参考要点和自评结果已经保留。掌握状态仍表示自评，不等于外部事实核验。', [
-        { text: '留在这里', style: 'cancel' },
-        ...(parent ? [{
-          text: '回到上一级',
-          onPress: () => returnToParent(false),
-        }, {
-          text: '回上级并继续验证',
-          onPress: () => returnToParent(true),
-        }] : []),
-      ]);
-    } catch (error) {
-      Alert.alert('无法保存自评结果', error instanceof Error ? error.message : '请稍后重试');
+      Alert.alert('无法打开对话', error instanceof Error ? error.message : '请稍后重试');
     }
   };
 
@@ -602,23 +635,6 @@ export default function ProjectScreen() {
     }
   };
 
-  const markMasteryNeedsWork = async () => {
-    if (!masteryNode || !masteryPrompt || !masteryAnswer.trim() || !masteryRevealed) return;
-    try {
-      await recordMasteryAttempt(db, {
-        nodeId: masteryNode.id,
-        question: masteryPrompt.question,
-        learnerAnswer: masteryAnswer,
-        referencePoints: masteryPrompt.reference,
-        decision: 'continue_learning',
-      });
-      setMasteryNode(null);
-      await loadGraph();
-    } catch (error) {
-      Alert.alert('无法保存自检记录', error instanceof Error ? error.message : '请稍后重试');
-    }
-  };
-
   const confirmDeleteNode = () => {
     const target = actionNode;
     const impact = deleteImpact;
@@ -639,7 +655,7 @@ export default function ProjectScreen() {
     }
     Alert.alert(
       `删除“${impact.title}”？`,
-      `会删除这个节点、${impact.edgeCount} 条相关连线和 ${impact.answerCount} 条回答记录。其他节点和仍被使用的文档会保留。此操作无法撤销。`,
+      `会删除这个节点、${impact.edgeCount} 条相关连线、${impact.answerCount} 条回答及 ${impact.reviewEventCount} 条复习记录。其他节点和仍被使用的文档会保留。此操作无法撤销。`,
       [
         { text: '取消', style: 'cancel' },
         {
@@ -663,19 +679,108 @@ export default function ProjectScreen() {
     );
   };
 
-  const toggleActionNodeFavorite = async () => {
-    if (!actionNode) return;
+  const confirmDisconnectConnection = () => {
+    if (!selectedEdge || !graph) return;
+    const edge = selectedEdge;
+    Alert.alert('解除这条连接？', '只移除节点之间的线，节点、文档和对话都会保留。', [
+      { text: '取消', style: 'cancel' },
+      { text: '解除连接', style: 'destructive', onPress: () => {
+        void disconnectNodes(db, graph.project.id, edge.id)
+          .then(async removed => {
+            setSelected(null);
+            await loadGraph();
+            Alert.alert('连接已解除', '节点和文档仍在原处。', [
+              { text: '完成' },
+              { text: '撤销', onPress: () => void restoreDisconnectedNodes(db, removed).then(loadGraph).catch(error => Alert.alert('无法恢复连接', error instanceof Error ? error.message : '请稍后重试')) },
+            ]);
+          })
+          .catch(error => Alert.alert('连接没有解除', error instanceof Error ? error.message : '请稍后重试'));
+      } },
+    ]);
+  };
+
+  const applyGroupOperation = async (operation: Promise<CanvasGroupUndo>, done?: () => void) => {
     try {
-      const next = !actionNodeFavorite;
-      await setNodeFavorite(db, actionNode.id, next);
-      setActionNodeFavorite(next);
-      setDeleteImpact(await getNodeDeleteImpact(db, actionNode.id));
+      const undo = await operation;
+      setGroupUndo(undo);
+      done?.();
+      await loadGraph();
     } catch (error) {
-      Alert.alert('收藏没有更新', error instanceof Error ? error.message : '请稍后重试');
+      Alert.alert('分组没有更新', error instanceof Error ? error.message : '请稍后重试');
+      await loadGraph().catch(() => undefined);
     }
   };
 
-  if (!graph) return <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.canvas }}><ActivityIndicator color={colors.ink} /></View>;
+  const selectCanvasNode = (node: KnowledgeNode) => {
+    if (connectingNodeId) {
+      if (node.id === connectingNodeId) return;
+      void connectNodes(db, id!, connectingNodeId, node.id)
+        .then(async () => {
+          setConnectingNodeId(null);
+          try { await loadGraph(); setSelected(node); }
+          catch { Alert.alert('连线已保存', '白板暂时未能刷新，重新打开即可查看。'); }
+        })
+        .catch(error => Alert.alert('连线未建立', error instanceof Error ? error.message : '请重试'));
+      return;
+    }
+    if (groupPickMode?.kind === 'create') {
+      if (canvasGroupMembers.some(member => member.node_id === node.id)) return Alert.alert('节点已有分组', '先在原分组中移出这个节点。');
+      setGroupPickIds(current => current.includes(node.id) ? current.filter(value => value !== node.id) : [...current, node.id]);
+      return;
+    }
+    if (groupPickMode?.kind === 'add') {
+      if (canvasGroupMembers.some(member => member.node_id === node.id)) return Alert.alert('节点已有分组', '先在原分组中移出这个节点。');
+      void applyGroupOperation(addCanvasGroupMember(db, id!, groupPickMode.groupId, node.id), () => setGroupPickMode(null));
+      return;
+    }
+    setSelectedGroupId(null);
+    setSelected(node);
+  };
+
+  const saveGroupName = async () => {
+    if (!id) return;
+    if (groupNameDialog === 'create') {
+      try {
+        const created = await createCanvasGroup(db, id, groupNameDraft, groupPickIds);
+        setGroupUndo(created.undo); setSelectedGroupId(created.groupId);
+        setGroupNameDialog(null); setGroupPickMode(null); setGroupPickIds([]); setGroupNameDraft('');
+        await loadGraph();
+      } catch (error) { Alert.alert('无法创建分组', error instanceof Error ? error.message : '请稍后重试'); }
+    } else if (groupNameDialog === 'rename' && selectedGroupId) {
+      await applyGroupOperation(renameCanvasGroup(db, id, selectedGroupId, groupNameDraft), () => setGroupNameDialog(null));
+    }
+  };
+
+  const startMoveGroup = (groupId: string) => {
+    if (!graph) return;
+    const ids = canvasGroupMembers.filter(member => member.group_id === groupId).map(member => member.node_id);
+    const anchor = graph.nodes.find(node => ids.includes(node.id));
+    if (!anchor) return Alert.alert('分组已为空', '请重新打开白板。');
+    groupMoveBase.current = Object.fromEntries(graph.nodes.filter(node => ids.includes(node.id)).map(node => [node.id, { x: node.x, y: node.y }]));
+    setMovingGroupId(groupId); setMovingNodeId(anchor.id); setSelectedGroupId(null);
+  };
+
+  const previewMove = (nodeId: string, x: number, y: number) => {
+    if (movingGroupId) {
+      const anchor = groupMoveBase.current[nodeId];
+      if (!anchor) return;
+      const dx = x - anchor.x; const dy = y - anchor.y;
+      setGraph(current => current ? { ...current, nodes: current.nodes.map(node => {
+        const base = groupMoveBase.current[node.id]; return base ? { ...node, x: base.x + dx, y: base.y + dy } : node;
+      }) } : current);
+    } else setGraph(current => current ? { ...current, nodes: current.nodes.map(node => node.id === nodeId ? { ...node, x, y } : node) } : current);
+  };
+
+  const finishMove = (nodeId: string, x: number, y: number) => {
+    if (movingGroupId) {
+      const anchor = groupMoveBase.current[nodeId];
+      const groupId = movingGroupId;
+      setMovingGroupId(null); setMovingNodeId(null);
+      if (anchor) void applyGroupOperation(moveCanvasGroup(db, id!, groupId, x - anchor.x, y - anchor.y));
+    } else void moveNode(db, nodeId, x, y).catch(error => { Alert.alert('位置未保存', error.message); void loadGraph(); });
+  };
+
+  if (!graph || !canvasStateReady) return <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.canvas }}><ActivityIndicator color={colors.ink} /></View>;
 
   const onlyRoot = graph.nodes.length === 1;
 
@@ -703,21 +808,28 @@ export default function ProjectScreen() {
   return (
     <View style={{ flex: 1, backgroundColor: colors.canvas }}>
       <KnowledgeCanvas
-        nodes={graph.nodes}
-        edges={graph.edges}
-        selectedId={selectedId}
+        nodes={visibleNodes}
+        edges={visibleEdges}
+        groups={canvasGroups}
+        groupMembers={canvasGroupMembers}
+        selectedGroupId={selectedGroupId}
+        pickingNodeIds={groupPickIds}
+        onSelectGroup={groupId => { if (!groupPickMode) { setSelected(null); setSelectedGroupId(groupId); } }}
+        selectedId={groupPickMode ? null : selectedId}
         focusPreset={selectedFocusPreset}
-        showLearningMarks={learningMarksVisible}
-        onSelectNode={setSelected}
-        onSelectEdge={setSelected}
+        onSelectNode={selectCanvasNode}
+        onSelectEdge={edge => { if (!groupPickMode) { setSelectedGroupId(null); setSelected(edge); } }}
         onClearSelection={clearSelection}
-        onLongPressNode={openNodeActions}
         movingNodeId={movingNodeId}
-        onPreviewMove={(nodeId,x,y)=>setGraph(current=>current?{...current,nodes:current.nodes.map(n=>n.id===nodeId?{...n,x,y}:n)}:current)}
-        onMoveNode={(nodeId,x,y)=>{void moveNode(db,nodeId,x,y).catch(e=>{Alert.alert('位置未保存',e.message);void loadGraph();});}}
+        onPreviewMove={previewMove}
+        onMoveNode={finishMove}
         fitRequest={fitRequest}
-        focusNodeId={initialNodeId ?? null}
+        focusNodeId={localFocusId ?? jumpFocusNodeId}
         focusRequest={focusRequest}
+        initialViewport={initialViewport}
+        restoredViewport={restoreViewport}
+        restoreRequest={restoreRequest}
+        onViewportChange={onViewportChange}
       />
 
       <View pointerEvents="box-none" style={{ position: 'absolute', left: 16, right: 16, top: insets.top + 10, flexDirection: 'row', alignItems: 'center', gap: 10 }}>
@@ -730,7 +842,17 @@ export default function ProjectScreen() {
         </View>
       </View>
 
-      {!selected && !movingNodeId ? <View style={[canvasControlStyles.floating, { position: 'absolute', right: 16, bottom: insets.bottom + 20 }]}>
+      {(localFocusId || collapsedNodeIds.length > 0) && !movingNodeId ? <View style={[canvasControlStyles.floating, { position: 'absolute', left: 16, bottom: insets.bottom + 20, paddingHorizontal: 12, paddingVertical: 8, flexDirection: 'row', alignItems: 'center', gap: 8 }]}>
+        <Text style={{ color: colors.inkMuted, fontSize: 12 }}>{localFocusId ? '局部查看' : `已折叠 ${collapsedNodeIds.length} 支`}</Text>
+        <Pressable accessibilityRole="button" accessibilityLabel="显示全部节点" onPress={() => {
+          if (localFocusId) toggleLocalFocus(localFocusId);
+          collapsedIdsRef.current = [];
+          setCollapsedNodeIds([]);
+          void saveCollapsedNodes(db, id!, []).catch(() => undefined);
+        }}><Text style={{ color: colors.blue, fontSize: 12, fontWeight: '800' }}>全部显示</Text></Pressable>
+      </View> : null}
+
+      {!selected && !selectedGroupId && !groupPickMode && !movingNodeId ? <View style={[canvasControlStyles.floating, { position: 'absolute', right: 16, bottom: insets.bottom + 20 }]}>
         <CanvasIconButton icon="add" label="新建节点" onPress={() => router.push({ pathname: '/new-node', params: { projectId: id! } })} />
       </View> : null}
 
@@ -738,22 +860,61 @@ export default function ProjectScreen() {
         <ActivityIndicator size="small" color={colors.blue} /><Text style={{ color: colors.inkMuted, fontSize: 12 }}>正在扩展图谱…</Text>
       </View> : null}
 
-      {selected && !movingNodeId && !expansionVisible ? <Animated.View entering={SlideInDown.duration(180)} exiting={SlideOutDown.duration(140)} style={{ position: 'absolute', left: 14, right: 14, bottom: insets.bottom + 12, maxHeight: safeFrame.height * 0.55 }}>
-        <ScrollView showsVerticalScrollIndicator={false}>
-          <CanvasSelectionCard title={selectedNode?.title || selectedEdge?.label || '关系'} subtitle={document && document.id === selected.documentId ? plainPreview(document.body) : undefined} onClose={clearSelection}>
-            <View style={{ flexDirection: 'row', gap: 4 }}>
-              <SmallAction icon="description" label="阅读" onPress={() => router.push({ pathname: '/document/[id]', params: { id: selected.documentId } })} />
-              {selectedNode ? <>
-                <SmallAction icon="chat-bubble-outline" label="讨论" onPress={() => router.push({ pathname: '/discussion', params: { projectId: id!, nodeId: selectedNode.id } })} />
-                <SmallAction icon="more-horiz" label="更多" onPress={() => openNodeActions(selectedNode)} />
-              </> : <SmallAction icon="tune" label={edgeReviewVisible ? '收起判断' : '关系判断'} onPress={() => setEdgeReviewVisible(current => !current)} />}
-            </View>
-            {selectedEdge && edgeReviewVisible ? <EdgeReviewPanel edge={selectedEdge} disabled={reviewingEdge} onChange={reviewEdge} /> : null}
-          </CanvasSelectionCard>
-        </ScrollView>
-      </Animated.View> : null}
+      {groupUndo && !groupPickMode && !movingNodeId ? <View style={[canvasControlStyles.floating, { position: 'absolute', top: insets.top + 70, right: 16, paddingHorizontal: 12, paddingVertical: 8, flexDirection: 'row', alignItems: 'center', gap: 10 }]}>
+        <Text style={{ color: colors.inkMuted, fontSize: 12 }}>分组已保存</Text>
+        <Pressable accessibilityRole="button" accessibilityLabel="撤销最近一次分组操作" onPress={() => { void undoCanvasGroupChange(db, groupUndo).then(async () => { setGroupUndo(null); await loadGraph(); }).catch(error => { setGroupUndo(null); Alert.alert('无法撤销', error instanceof Error ? error.message : '请稍后重试'); void loadGraph(); }); }}><Text style={{ color: colors.blue, fontWeight: '800' }}>撤销</Text></Pressable>
+      </View> : null}
 
-      {movingNodeId ? <View style={{position:'absolute',left:16,right:16,bottom:24+insets.bottom,padding:16,backgroundColor:colors.surfaceStrong,borderRadius:20,gap:10}}><Text style={{color:colors.ink}}>拖动屏幕放置节点，位置会自动保存。</Text><Pressable accessibilityRole="button" onPress={()=>setMovingNodeId(null)} style={{padding:14,backgroundColor:colors.blueSoft,borderRadius:18}}><Text style={{color:colors.blue,textAlign:'center'}}>完成移动</Text></Pressable></View> : null}
+      {groupPickMode && !movingNodeId ? <View style={[canvasControlStyles.floating, { position: 'absolute', left: 14, right: 14, bottom: insets.bottom + 12, padding: 16, gap: 10 }]}>
+        <Text style={{ color: colors.ink, fontSize: 15, fontWeight: '700' }}>{groupPickMode.kind === 'create' ? `点选要放在一起的节点 · 已选 ${groupPickIds.length}` : '点选一个未分组节点，加入当前分组'}</Text>
+        <View style={{ flexDirection: 'row', gap: 8 }}>
+          <SheetButton label="取消" onPress={() => { setGroupPickMode(null); setGroupPickIds([]); }} />
+          {groupPickMode.kind === 'create' ? <SheetButton label="命名分组" tone="blue" onPress={() => { if (groupPickIds.length < 2) return Alert.alert('至少选择两个节点'); setGroupNameDraft(''); setGroupNameDialog('create'); }} /> : null}
+        </View>
+      </View> : null}
+
+      {selectedGroupId && !groupPickMode && !movingNodeId ? <View style={{ position: 'absolute', left: 14, right: 14, bottom: insets.bottom + 12, maxHeight: safeFrame.height * 0.53 }}>
+        <ScrollView style={[canvasControlStyles.floating, { padding: 16 }]} contentContainerStyle={{ gap: 10, paddingBottom: 18 }}>
+          <Text style={{ color: colors.ink, fontSize: 17, fontWeight: '800' }}>{canvasGroups.find(group => group.id === selectedGroupId)?.title ?? '分组'}</Text>
+          <Text style={{ color: colors.inkMuted, fontSize: 12 }}>整理白板的分组；不会改变学习关系</Text>
+          <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
+            <SheetButton label="改名" onPress={() => { setGroupNameDraft(canvasGroups.find(group => group.id === selectedGroupId)?.title ?? ''); setGroupNameDialog('rename'); }} />
+            <SheetButton label="移动整组" tone="blue" onPress={() => startMoveGroup(selectedGroupId)} />
+            <SheetButton label="加入节点" onPress={() => { setGroupPickMode({ kind: 'add', groupId: selectedGroupId }); setSelectedGroupId(null); }} />
+          </View>
+          {canvasGroupMembers.filter(member => member.group_id === selectedGroupId).map(member => <View key={member.id} style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+            <Text numberOfLines={1} style={{ flex: 1, color: colors.ink, fontSize: 13 }}>{graph.nodes.find(node => node.id === member.node_id)?.title ?? '节点已移除'}</Text>
+            <Pressable accessibilityRole="button" accessibilityLabel={`从分组移出${graph.nodes.find(node => node.id === member.node_id)?.title ?? '节点'}`} onPress={() => void applyGroupOperation(removeCanvasGroupMember(db, id!, selectedGroupId, member.node_id))} style={{ padding: 8 }}><Text style={{ color: colors.blue, fontSize: 12 }}>移出</Text></Pressable>
+          </View>)}
+          <SheetButton label="取消分组（保留所有节点）" onPress={() => Alert.alert('取消这个分组？', '仅解除分组，节点、文档、关系和对话都会保留。', [{ text: '保留', style: 'cancel' }, { text: '取消分组', onPress: () => void applyGroupOperation(deleteCanvasGroup(db, id!, selectedGroupId)) }])} />
+          <SheetButton label="关闭" onPress={() => setSelectedGroupId(null)} />
+        </ScrollView>
+      </View> : null}
+
+      {connectingNodeId ? <View style={[canvasControlStyles.floating, { position: 'absolute', left: 14, right: 14, bottom: insets.bottom + 12, padding: 14, flexDirection: 'row', alignItems: 'center', gap: 10 }]}>
+        <Text style={{ flex: 1, color: colors.ink }}>点选另一个节点，建立一条关联线</Text>
+        <SmallAction icon="close" label="取消" onPress={() => setConnectingNodeId(null)} />
+      </View> : null}
+      {selected && !connectingNodeId && !groupPickMode && !movingNodeId && !expansionVisible ? <View style={{ position: 'absolute', left: 14, right: 14, bottom: insets.bottom + 12, maxHeight: safeFrame.height * 0.7 }}>
+          <CanvasSelectionCard title={selectedNode?.title || selectedEdge?.label || '关系'} onClose={clearSelection}>
+            <View style={{ flexDirection: 'row', gap: 4 }}>
+              {selectedNode ? <>
+                <SmallAction icon="smart-toy" label="问 AI" onPress={() => setExpansionVisible(true)} />
+                <SmallAction icon="device-hub" label="连线" onPress={() => setConnectingNodeId(selectedNode.id)} />
+                <SmallAction icon="more-horiz" label="更多" onPress={() => openNodeActions(selectedNode)} />
+              </> : <SmallAction icon="link" label="查看连接" onPress={() => setEdgeReviewVisible(current => !current)} />}
+            </View>
+            {selectedNode && nodeDocuments.length ? <ScrollView style={{ maxHeight: safeFrame.height * 0.36 }} showsVerticalScrollIndicator={false}>
+              <NodeDocumentCards compact documents={nodeDocuments} onOpen={documentId => router.push({ pathname: '/document/[id]', params: { id: documentId } })} />
+            </ScrollView> : null}
+            {selectedEdge && edgeReviewVisible ? <View style={{ padding: 12, gap: 9 }}>
+              <Text style={{ color: colors.ink, fontSize: 13 }}>{graph.nodes.find(node => node.id === selectedEdge.sourceId)?.title ?? '起点'} → {graph.nodes.find(node => node.id === selectedEdge.targetId)?.title ?? '终点'}</Text>
+              <SheetButton label="解除连接" onPress={confirmDisconnectConnection} />
+            </View> : null}
+          </CanvasSelectionCard>
+      </View> : null}
+
+      {movingNodeId ? <View style={{position:'absolute',left:16,right:16,bottom:24+insets.bottom,padding:16,backgroundColor:colors.surfaceStrong,borderRadius:20,gap:10}}><Text style={{color:colors.ink}}>拖动屏幕{movingGroupId ? '移动整组' : '放置节点'}，位置会自动保存。</Text><Pressable accessibilityRole="button" onPress={()=>{setMovingNodeId(null);setMovingGroupId(null);void loadGraph();}} style={{padding:14,backgroundColor:colors.blueSoft,borderRadius:18}}><Text style={{color:colors.blue,textAlign:'center'}}>完成移动</Text></Pressable></View> : null}
       {selectedNode && expansionVisible && !movingNodeId ? (
         <Animated.View
           entering={SlideInDown.duration(220)}
@@ -821,25 +982,15 @@ export default function ProjectScreen() {
         </ScrollView>
 
         {selectedNode ? (
-        <View style={{ minHeight: 96, flexShrink: 0, borderRadius: radii.large, borderCurve: 'continuous', backgroundColor: colors.surfaceStrong, padding: 7, gap: 5, boxShadow: floatingShadow }}>
-          <View style={{ minHeight: 50, flexDirection: 'row', alignItems: 'center', gap: 7, paddingLeft: 11 }}>
-            <TextInput
-              value={prompt}
-              onChangeText={updatePrompt}
-              editable={Boolean(selectedNode) && !expanding}
-              accessibilityLabel="扩展图谱的问题"
-              placeholder="想从这个节点展开什么？"
-              placeholderTextColor={colors.gray}
-              onSubmitEditing={expand}
-              returnKeyType="send"
-              style={{ flex: 1, color: colors.ink, fontSize: 14.5, paddingVertical: 10 }}
-            />
-            <Pressable accessibilityRole="button" accessibilityLabel="保存当前文字为询问模板" disabled={!prompt.trim() || expanding} onPress={saveCurrentPrompt} style={({ pressed }) => ({ width: 42, height: 42, borderRadius: 21, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.canvas, opacity: !prompt.trim() || expanding ? 0.35 : pressed ? 0.7 : 1 })}>
-              <AppIcon name="bookmark-add" color={colors.ink} size={20} />
-            </Pressable>
-            <FloatingButton accessibilityLabel={expanding ? '模型正在回答' : '扩展图谱'} icon="arrow-upward" onPress={expand} tone="dark" disabled={!selectedNode || expanding} loading={expanding} />
+        <View style={{ flexShrink: 0, borderRadius: radii.large, borderCurve: 'continuous', backgroundColor: colors.surfaceStrong, padding: 10, gap: 8, boxShadow: floatingShadow }}>
+          <View>
+            <AutoGrowingInput value={prompt} onChangeText={updatePrompt} editable={Boolean(selectedNode) && !expanding} accessibilityLabel="向这个节点提问" placeholder="向这个节点提问…" minHeight={96} maxHeight={210} />
           </View>
-          {selectedNode ? (
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+            <Pressable accessibilityRole="button" accessibilityState={{ expanded: expansionOptionsVisible }} onPress={() => setExpansionOptionsVisible(value => !value)} style={{ flex: 1, minHeight: 48, justifyContent: 'center', paddingHorizontal: 12 }}><Text style={{ color: colors.inkMuted, fontSize: 13 }}>{expansionOptionsVisible ? '收起选项' : '生成选项'}</Text></Pressable>
+            <FloatingButton accessibilityLabel={expanding ? '模型正在回答' : '发送问题并保存文档'} icon="arrow-upward" onPress={expand} tone="dark" disabled={!selectedNode || expanding || !prompt.trim()} loading={expanding} />
+          </View>
+          {expansionOptionsVisible ? (
             <ScrollView horizontal showsHorizontalScrollIndicator={false} keyboardShouldPersistTaps="handled" contentContainerStyle={{ paddingHorizontal: 7, paddingBottom: 4, gap: 7 }}>
 
               <QualityChip
@@ -855,6 +1006,7 @@ export default function ProjectScreen() {
                 onPress={() => setExpansionQuality('deep')}
               />
               <SmallAction icon="visibility" label={preparingPreview ? "准备预览" : "发送预览"} onPress={() => { void openContextPreview(); }} />
+              <SmallAction icon="bookmark-add" label="存为模板" onPress={saveCurrentPrompt} />
               {templates.map((template) => (
                 <Pressable key={template.id} accessibilityRole="button" onPress={() => updatePrompt(template.body)} style={({ pressed }) => ({ minHeight: 34, paddingHorizontal: 12, borderRadius: 17, borderCurve: 'continuous', backgroundColor: colors.blueSoft, alignItems: 'center', justifyContent: 'center', opacity: pressed ? 0.7 : 1 })}>
                   <Text numberOfLines={1} style={{ maxWidth: 180, color: colors.blue, fontSize: 11.5, fontWeight: '800' }}>{template.title}</Text>
@@ -875,35 +1027,30 @@ export default function ProjectScreen() {
           <Pressable onPress={() => undefined} style={{ marginHorizontal: 12, marginBottom: 12 + insets.bottom, borderRadius: 30, borderCurve: 'continuous', backgroundColor: colors.surfaceStrong, padding: 10, gap: 3, maxHeight: '90%', boxShadow: floatingShadow }}><ScrollView>
             <View style={{ paddingHorizontal: 12, paddingTop: 10, paddingBottom: 8, gap: 3 }}>
               <Text numberOfLines={1} style={{ color: colors.ink, fontSize: 19, fontWeight: '800' }}>{graph.project.title}</Text>
-              <Text style={{ color: colors.inkMuted, fontSize: 12 }}>
-                {graph.project.graphKind === 'free' ? '自由白板' : graph.project.contentPolicy.mode === 'summary' ? '总结图' : '学习图'}
-              </Text>
             </View>
-            <ProjectMenuItem icon="filter-center-focus" title="显示全部节点" description="只调整视野，保留节点位置" onPress={() => { setProjectMenuVisible(false); setFitRequest(current => current + 1); }} />
-            <ProjectMenuItem icon="palette" title={learningMarksVisible ? '收起学习标记' : '显示学习标记'} description="按需显示重要程度、学习状态和颜色说明" onPress={() => { setLearningMarksVisible(current => !current); setProjectMenuVisible(false); }} />
-            <ProjectMenuItem icon="settings" title="应用与同步设置" description="跨设备同步、备份与应用选项" onPress={() => { setProjectMenuVisible(false); router.push('/settings'); }} />
-            <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 12, padding: 12 }}><Legend color={colors.coral} label="关键" /><Legend color={colors.blue} label="学习中" /><Legend color={colors.green} label="自评掌握" /><Legend color={colors.amber} label="待验证" /></View>
             <ProjectMenuItem icon="add" title="新建节点" description="写一篇文档，连接自己的想法" onPress={()=>{setProjectMenuVisible(false);router.push({pathname:'/new-node',params:{projectId:id!,...(selectedNode?{parentId:selectedNode.id}:{})}});}}/>
             <ProjectMenuItem icon="forum" title="图谱讨论" description="查看连续对话，把有用的内容保存为节点" onPress={()=>{setProjectMenuVisible(false);router.push({pathname:'/discussion',params:{projectId:id!}});}}/>
             <ProjectMenuItem icon="search" title="搜索图谱内容" description="查找文档、资料和对话原文" onPress={()=>{setProjectMenuVisible(false);router.push({pathname:'/search',params:{projectId:id!}});}}/>
+            <ProjectMenuItem icon="filter-center-focus" title="画布视图" description="回到全图、整理位置或改变展开方向" onPress={() => setCanvasViewVisible(value => !value)} />
+            {canvasViewVisible ? <>
+              <ProjectMenuItem icon="filter-center-focus" title="回到全图" description="展开所有节点并适配白板" onPress={() => { setProjectMenuVisible(false); setLocalFocusId(null); setJumpFocusNodeId(null); collapsedIdsRef.current = []; setCollapsedNodeIds([]); void saveCollapsedNodes(db, id!, []).catch(() => undefined); setFitRequest(current => current + 1); }} />
+              <ProjectMenuItem icon="account-tree" title="整理并居中" description="重新排列节点并显示完整白板" onPress={() => { setProjectMenuVisible(false); void arrangeGraph(); }} />
+              <ProjectMenuItem icon="swap-horiz" title={graph.project.layoutDirection === 'vertical' ? '横向展开' : '纵向展开'} description="调整节点层级方向" onPress={() => { setProjectMenuVisible(false); void switchLayoutDirection(); }} />
+            </> : null}
             <ProjectMenuItem
               icon="tune"
-              title="内容与资料"
-              description="图谱模式、说人话、内容长度与资料来源"
+              title="白板资料与 AI 讲解"
+              description="资料来源、知识库引用与 AI 讲解方式"
               onPress={() => {
                 setProjectMenuVisible(false);
                 router.push({ pathname: '/project-settings', params: { projectId: graph.project.id } });
               }}
             />
-            <ProjectMenuItem
-              icon="smart-toy"
-              title="AI 连接与发送"
-              description="模型、接口地址、发送确认与询问模板"
-              onPress={() => {
-                setProjectMenuVisible(false);
-                router.push('/ai-settings');
-              }}
-            />
+            <ProjectMenuItem icon="settings" title="应用与同步设置" description="AI 连接、跨设备同步、备份与其他设置" onPress={() => { setProjectMenuVisible(false); router.push('/settings'); }} />
+            <ProjectMenuItem icon="folder" title="引用我的知识库" description="选择理解、经验与材料；每块白板单独授权" onPress={() => { setProjectMenuVisible(false); router.push({ pathname: '/knowledge-library', params: { projectId: graph.project.id, ...(selectedNode ? { nodeId: selectedNode.id } : {}) } }); }} />
+            <ProjectMenuItem icon="more-horiz" title="更多白板操作" description="分组、移动、导出及撤销" onPress={() => setBoardMoreVisible(value => !value)} />
+            {boardMoreVisible ? <>
+            <ProjectMenuItem icon="create-new-folder" title="创建分组" description="点选至少两个节点后命名" onPress={() => { setProjectMenuVisible(false); setSelected(null); setSelectedGroupId(null); setGroupPickIds([]); setGroupPickMode({ kind: 'create' }); }} />
             <ProjectMenuItem
               icon="psychology"
               title="AI 对你的了解"
@@ -922,15 +1069,6 @@ export default function ProjectScreen() {
               }}
             />
             <ProjectMenuItem
-              icon="bookmarks"
-              title="相关收藏"
-              description="查看节点和回答收藏、原始位置及 AI 引用"
-              onPress={() => {
-                setProjectMenuVisible(false);
-                router.push({ pathname: '/favorites', params: { projectId: graph.project.id } });
-              }}
-            />
-            <ProjectMenuItem
               icon="folder"
               title="移动到专题"
               description="调整首页层级，不改动图谱内容和上下文"
@@ -942,28 +1080,10 @@ export default function ProjectScreen() {
             <ProjectMenuItem
               icon="folder"
               title="导出当前项目"
-              description="选择文件夹，导出 Markdown、图结构与收藏回答"
+              description="选择文件夹，导出文档、图结构、收藏回答与本机原件"
               onPress={() => {
                 setProjectMenuVisible(false);
                 setLocalDataVisible(true);
-              }}
-            />
-            <ProjectMenuItem
-              icon="account-tree"
-              title="整理并居中"
-              description={`按${graph.project.layoutDirection === 'horizontal' ? '横向' : '纵向'}层级重新排列节点并完整显示`}
-              onPress={() => {
-                setProjectMenuVisible(false);
-                void arrangeGraph();
-              }}
-            />
-            <ProjectMenuItem
-              icon="swap-horiz"
-              title={graph.project.layoutDirection === 'vertical' ? '切换为横向展开' : '切换为纵向展开'}
-              description={graph.project.layoutDirection === 'vertical' ? '层级从左向右展开并重新居中' : '层级从上向下展开并重新居中'}
-              onPress={() => {
-                setProjectMenuVisible(false);
-                void switchLayoutDirection();
               }}
             />
             <ProjectMenuItem
@@ -986,7 +1106,18 @@ export default function ProjectScreen() {
                 confirmDeleteProject();
               }}
             />
+            </> : null}
           </ScrollView></Pressable>
+        </Pressable>
+      </Modal>
+
+      <Modal visible={Boolean(groupNameDialog)} transparent animationType="fade" onRequestClose={() => setGroupNameDialog(null)}>
+        <Pressable onPress={() => setGroupNameDialog(null)} style={{ flex: 1, justifyContent: 'center', backgroundColor: 'rgba(32,32,31,0.28)', padding: 20 }}>
+          <Pressable onPress={() => undefined} style={{ backgroundColor: colors.surfaceStrong, borderRadius: 24, padding: 20, gap: 14 }}>
+            <Text style={{ color: colors.ink, fontSize: 18, fontWeight: '800' }}>{groupNameDialog === 'create' ? '命名分组' : '修改分组名称'}</Text>
+            <TextInput accessibilityLabel="分组名称" value={groupNameDraft} onChangeText={setGroupNameDraft} maxLength={80} autoFocus placeholder="例如：核心概念" style={{ borderWidth: 1, borderColor: colors.line, borderRadius: 13, padding: 12, color: colors.ink }} />
+            <View style={{ flexDirection: 'row', gap: 8 }}><SheetButton label="取消" onPress={() => setGroupNameDialog(null)} /><SheetButton label="保存" tone="blue" onPress={() => void saveGroupName()} /></View>
+          </Pressable>
         </Pressable>
       </Modal>
 
@@ -998,15 +1129,12 @@ export default function ProjectScreen() {
               <Text style={{ color: colors.ink, fontSize: 19, fontWeight: '800' }}>{actionNode?.title}</Text>
               <Text style={{ color: colors.inkMuted, fontSize: 12.5 }}>文档、图谱与学习操作</Text>
             </View>
-            <View style={{ flexDirection: 'row', gap: 8 }}>
-              <SheetButton label="管理文档" onPress={() => { const nodeId = actionNode!.id; setActionNode(null); router.push({ pathname: '/node-documents', params: { nodeId } }); }} />
-              <SheetButton label="扩展图谱" tone="blue" onPress={() => { setActionNode(null); setExpansionVisible(true); }} />
-            </View>
+            <SheetButton label="管理文档与排序" onPress={() => { const nodeId = actionNode!.id; setActionNode(null); router.push({ pathname: '/node-documents', params: { nodeId } }); }} />
+            <SheetButton label="继续对话" onPress={() => void openNodeDiscussion(actionNode!)} />
             <SheetButton label={`回答记录 · ${answerCount}`} onPress={() => { const node = actionNode!; setActionNode(null); router.push({ pathname: '/node-answers', params: { nodeId: node.id, title: node.title } }); }} />
-            <View style={{flexDirection:'row',gap:8}}>
-              <SheetButton label="移动节点" onPress={()=>{setMovingNodeId(actionNode!.id);setActionNode(null);}}/>
-              <SheetButton label="添加子节点" onPress={()=>{const parentId=actionNode!.id;setActionNode(null);router.push({pathname:'/new-node',params:{projectId:id!,parentId}});}}/>
-            </View>
+            <SheetButton label="添加子节点" onPress={()=>{const parentId=actionNode!.id;setActionNode(null);router.push({pathname:'/new-node',params:{projectId:id!,parentId}});}}/>
+            <SheetButton label="移动节点（备用）" onPress={()=>{setMovingNodeId(actionNode!.id);setActionNode(null);}}/>
+            <SheetButton label={localFocusId ? '回到全图' : '聚焦这一支'} onPress={() => toggleLocalFocus(actionNode!.id)} />
             <View style={{ gap: 9 }}>
               <Text style={{ color: colors.ink, fontSize: 12.5, fontWeight: '800' }}>醒目边框预设（仅当前使用会话）</Text>
               <View style={{ flexDirection: 'row', gap: 10 }}>
@@ -1016,29 +1144,6 @@ export default function ProjectScreen() {
                 })}
               </View>
             </View>
-            <View style={{ flexDirection: 'row', gap: 8 }}>
-              <SheetButton label="学习中" onPress={() => void setNodeState('learning')} />
-              <SheetButton label="待验证" onPress={() => void setNodeState('uncertain')} />
-              <SheetButton label="开始自检" onPress={() => void startMasteryCheck()} tone="blue" />
-            </View>
-            <Pressable
-              accessibilityRole="button"
-              accessibilityState={{ selected: actionNodeFavorite }}
-              onPress={() => void toggleActionNodeFavorite()}
-              style={({ pressed }) => ({
-                minHeight: 46,
-                borderRadius: 23,
-                backgroundColor: actionNodeFavorite ? colors.amberSoft : colors.canvas,
-                flexDirection: 'row',
-                alignItems: 'center',
-                justifyContent: 'center',
-                gap: 8,
-                opacity: pressed ? 0.72 : 1,
-              })}
-            >
-              <AppIcon name={actionNodeFavorite ? 'bookmark' : 'bookmark-outline'} color={actionNodeFavorite ? colors.amber : colors.ink} size={20} />
-              <Text style={{ color: colors.ink, fontSize: 12.5, fontWeight: '800' }}>{actionNodeFavorite ? '已收藏这个节点' : '收藏这个节点'}</Text>
-            </Pressable>
             <View style={{ height: 1, backgroundColor: colors.line }} />
             <Pressable accessibilityRole="button" disabled={!deleteImpact || deleteImpact.isRoot || deleteImpact.activeJobCount > 0} onPress={confirmDeleteNode} style={({ pressed }) => ({ minHeight: 48, borderRadius: 24, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.coralSoft, opacity: !deleteImpact || deleteImpact.isRoot || deleteImpact.activeJobCount > 0 ? 0.45 : pressed ? 0.72 : 1 })}>
               <Text style={{ color: colors.coral, fontWeight: '800' }}>{deleteImpact?.isRoot ? '根目标请在项目设置中删除' : deleteImpact?.activeJobCount ? 'AI 回答结束后才能删除' : '删除这个节点'}</Text>
@@ -1046,34 +1151,6 @@ export default function ProjectScreen() {
           </ScrollView>
           </Pressable>
         </Pressable>
-      </Modal>
-
-      <Modal visible={Boolean(masteryNode && masteryPrompt)} transparent animationType="slide" onRequestClose={() => setMasteryNode(null)}>
-        <View style={{ flex: 1, backgroundColor: colors.surfaceStrong, paddingTop: insets.top }}>
-          <View style={{ padding: 18, flexDirection: 'row', alignItems: 'center', gap: 12, borderBottomWidth: 1, borderBottomColor: colors.line }}>
-            <View style={{ flex: 1, gap: 3 }}><Text style={{ color: colors.ink, fontSize: 19, fontWeight: '800' }}>自检 · {masteryNode?.title}</Text><Text style={{ color: colors.inkMuted, fontSize: 12 }}>这里不做 AI 自动评分，由你对照参考后自评。</Text></View>
-            <Pressable onPress={() => setMasteryNode(null)} hitSlop={10}><AppIcon name="close" color={colors.ink} size={24} /></Pressable>
-          </View>
-          <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={{ padding: 18, paddingBottom: 36 + insets.bottom, gap: 14 }}>
-            <View style={{ padding: 16, borderRadius: radii.large, backgroundColor: colors.blueSoft, gap: 7 }}>
-              <Text style={{ color: colors.blue, fontSize: 12, fontWeight: '800' }}>请先回答</Text>
-              <MarkdownContent value={masteryPrompt?.question ?? ''} contentPadding={0} backgroundColor={colors.blueSoft} scrollEnabled={false} />
-            </View>
-            <TextInput value={masteryAnswer} onChangeText={setMasteryAnswer} multiline textAlignVertical="top" placeholder="用自己的话回答，尽量给出例子……" placeholderTextColor={colors.gray} style={{ minHeight: 180, borderRadius: radii.large, backgroundColor: colors.canvas, padding: 16, color: colors.ink, fontSize: 15, lineHeight: 24 }} />
-            {!masteryRevealed ? (
-              <Pressable disabled={!masteryAnswer.trim()} onPress={() => setMasteryRevealed(true)} style={({ pressed }) => ({ minHeight: 50, borderRadius: 25, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.ink, opacity: !masteryAnswer.trim() ? 0.4 : pressed ? 0.8 : 1 })}><Text style={{ color: colors.white, fontWeight: '800' }}>写完了，显示参考</Text></Pressable>
-            ) : (
-              <>
-                <View style={{ padding: 16, borderRadius: radii.large, backgroundColor: colors.amberSoft, gap: 7 }}>
-                  <Text style={{ color: colors.amber, fontSize: 12, fontWeight: '800' }}>节点文档参考（未经外部事实核验）</Text>
-                  <MarkdownContent value={masteryPrompt?.reference ?? ''} contentPadding={0} backgroundColor={colors.amberSoft} scrollEnabled={false} />
-                </View>
-                <Text style={{ color: colors.inkMuted, fontSize: 12.5, lineHeight: 19 }}>比较你的回答是否覆盖核心概念、因果关系和一个具体例子。拿不准时选“继续学习”。</Text>
-                <View style={{ flexDirection: 'row', gap: 9 }}><SheetButton label="继续学习" onPress={() => void markMasteryNeedsWork()} /><SheetButton label="我自评通过" onPress={() => void markMasteryPassed()} tone="green" /></View>
-              </>
-            )}
-          </ScrollView>
-        </View>
       </Modal>
 
       <Modal visible={localDataVisible} transparent animationType="slide" onRequestClose={() => setLocalDataVisible(false)}>
@@ -1090,14 +1167,15 @@ export default function ProjectScreen() {
               <View style={{ padding: 15, borderRadius: radii.large, borderCurve: 'continuous', backgroundColor: colors.canvas, gap: 10 }}>
                 <View style={{ gap: 3 }}>
                   <Text style={{ color: colors.ink, fontSize: 14, fontWeight: '800' }}>主动导出当前项目</Text>
-                  <Text style={{ color: colors.inkMuted, fontSize: 12.5, lineHeight: 19 }}>创建 Markdown、完整图结构和已收藏回答；不会把目标文件夹当成实时工作区。</Text>
+                  <Text style={{ color: colors.inkMuted, fontSize: 12.5, lineHeight: 19 }}>创建 Markdown、完整图结构、已收藏回答和本机可读原件；不会把目标文件夹当成实时工作区。</Text>
                 </View>
                 {exportProgress ? <ProgressRow current={exportProgress.current} total={exportProgress.total} label={exportProgress.label} detail={exportProgress.detail} /> : null}
                 <Pressable disabled={exporting} onPress={() => void exportProject()} style={({ pressed }) => ({ minHeight: 50, borderRadius: 25, backgroundColor: colors.ink, alignItems: 'center', justifyContent: 'center', opacity: exporting ? 0.5 : pressed ? 0.8 : 1 })}>
-                  <Text style={{ color: colors.white, fontWeight: '800' }}>{exporting ? `正在导出 ${exportProgress?.current ?? 1}/7` : '选择文件夹并导出当前项目'}</Text>
+                  <Text style={{ color: colors.white, fontWeight: '800' }}>{exporting ? `正在导出 ${exportProgress?.current ?? 1}/8` : '选择文件夹并导出当前项目'}</Text>
                 </Pressable>
               </View>
 
+              <View style={{gap:10}}><WorkspaceButton label="完整 ZIP · 含原件与全部记录" disabled={exporting} onPress={()=>void exportRich()}/><WorkspaceButton label="导出到桌面 · 通用白板 ZIP" secondary disabled={exporting} onPress={()=>Alert.alert('导出桌面通用白板','包含结构、文档、原件、对话和知识引用。Android专属复习及掌握记录请用完整ZIP归档。',[{text:'取消',style:'cancel'},{text:'导出通用白板',onPress:()=>void exportRich(true)}])}/></View>
               <DataBoundary title="自动备份在哪里设置？" body="自动备份属于整个应用，只需在首页右上角的“应用设置”选择一次文件夹；每个项目会在该备份根目录下拥有自己的可读子文件夹。这里的主动导出只处理当前项目，并让你每次自行选择目标位置。" />
             </ScrollView>
           </View>
@@ -1237,49 +1315,9 @@ function deepBuildDisclosure(profile: ByokProfile | null) {
   return `将向 ${profile?.label ?? '个人 AI'}（${profile?.model ?? '当前模型'}）依次发送 3 次请求：先形成完整知识底稿，再按你的已知状态重写教学内容，最后编排图谱。相比快速生成会更慢。每阶段输入都有 120,000 UTF-8 字节的本地费用保护上限，输出上限依次为 6,000、6,000、5,000 tokens。${price} 每阶段会立即保存，网络结果不明时绝不自动重试。`;
 }
 
-function plainPreview(markdown: string) {
-  return markdown.replace(/```[\s\S]*?```/gu, ' [代码] ').replace(/\[([^\]]+)\]\([^)]*\)/gu, '$1').replace(/^[#>*+-]+\s*/gmu, '').replace(/[*_`~]/gu, '').replace(/\s+/gu, ' ').trim();
-}
-
 const focusPresets: { id: FocusPreset; label: string; color: string }[] = [
   { id: 'coral', label: '珊瑚', color: colors.coral },
   { id: 'blue', label: '蓝色', color: colors.blue },
   { id: 'green', label: '绿色', color: colors.green },
   { id: 'amber', label: '琥珀', color: colors.amber },
 ];
-
-const edgeReviewOptions: { status: EdgeReviewStatus; label: string; color: string }[] = [
-  { status: 'unverified', label: '未核验', color: colors.gray },
-  { status: 'learner_supported', label: '对我有帮助', color: colors.green },
-  { status: 'disputed', label: '有争议', color: colors.amber },
-];
-
-const edgeReviewDescription: Record<EdgeReviewStatus, string> = {
-  unverified: '这条关系还没有经过你的判断。',
-  learner_supported: '你认为它有助于当前理解；这不等于事实已验证。',
-  disputed: '你对这条关系存疑，画布会用琥珀色提醒后续复查。',
-};
-
-const relationLabel: Record<KnowledgeEdge['relation'], string> = {
-  prerequisite: '前置', evidence: '证据', analogy: '类比', support: '支撑', counterexample: '反例', contains: '包含',
-};
-
-function EdgeReviewPanel({ edge, disabled, onChange }: { edge: KnowledgeEdge; disabled: boolean; onChange: (status: EdgeReviewStatus) => void }) {
-  const selectedOption = edgeReviewOptions.find((option) => option.status === edge.reviewStatus)!;
-  return (
-    <View accessibilityLabel={`关系判断：${selectedOption.label}；${(edge.label || (edge.relationKind === 'followup' ? '追问' : edge.relationKind === 'related' ? '相关' : relationLabel[edge.relation]))}关系；重要程度 ${edge.importance}`} style={{ borderRadius: radii.large, borderCurve: 'continuous', backgroundColor: 'rgba(255, 252, 247, 0.97)', padding: 14, boxShadow: floatingShadow, gap: 10 }}>
-      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}><View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: selectedOption.color }} /><Text style={{ color: colors.ink, fontSize: 13, fontWeight: '800' }}>这条关系对吗？</Text><Text style={{ flex: 1, color: colors.inkMuted, fontSize: 11.5, textAlign: 'right' }}>{(edge.label || (edge.relationKind === 'followup' ? '追问' : edge.relationKind === 'related' ? '相关' : relationLabel[edge.relation]))} · 重要 {edge.importance}</Text></View>
-      <Text style={{ color: colors.inkMuted, fontSize: 11.5, lineHeight: 17 }}>{edgeReviewDescription[edge.reviewStatus]}</Text>
-      <View style={{ flexDirection: 'row', gap: 7 }}>
-        {edgeReviewOptions.map((option) => {
-          const active = edge.reviewStatus === option.status;
-          return <Pressable key={option.status} accessibilityRole="button" accessibilityState={{ selected: active, disabled }} accessibilityLabel={`标记为${option.label}`} disabled={disabled} onPress={() => onChange(option.status)} style={({ pressed }) => ({ flex: 1, minHeight: 38, borderRadius: radii.small, borderCurve: 'continuous', borderWidth: 1, borderColor: active ? option.color : colors.line, backgroundColor: active ? `${option.color}18` : colors.surfaceStrong, alignItems: 'center', justifyContent: 'center', opacity: disabled ? 0.55 : pressed ? 0.75 : 1 })}><Text style={{ color: active ? colors.ink : colors.inkMuted, fontSize: 11.5, fontWeight: active ? '800' : '600' }}>{option.label}</Text></Pressable>;
-        })}
-      </View>
-    </View>
-  );
-}
-
-function Legend({ color, label }: { color: string; label: string }) {
-  return <View style={{ flexDirection: 'row', alignItems: 'center', gap: 7 }}><View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: color }} /><Text style={{ color: colors.inkMuted, fontSize: 10.5 }}>{label}</Text></View>;
-}

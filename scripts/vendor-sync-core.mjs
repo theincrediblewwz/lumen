@@ -12,4 +12,4 @@ for (const name of fs.readdirSync(source).filter(n => n.endsWith('.ts') && !n.en
   fs.writeFileSync(path.join(target,name),bytes);
   hashes[name] = crypto.createHash('sha256').update(bytes).digest('hex');
 }
-fs.writeFileSync('src/sync/core-provenance.json', JSON.stringify({ source:'LearnStuffQuickly/android-app/sync/core', files:hashes },null,2)+'\n');
+fs.writeFileSync('src/sync/core-provenance.json', JSON.stringify({ source:'android-app/sync/core', files:hashes },null,2)+'\n');

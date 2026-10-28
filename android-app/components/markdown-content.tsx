@@ -1,5 +1,5 @@
 import { Component, useEffect, useMemo, useRef, type ComponentProps, type ReactNode, type Ref } from 'react';
-import { Text, View, type TextStyle, FlatList, type FlatListProps, findNodeHandle } from 'react-native';
+import { Text, View, type TextStyle, type ImageStyle, FlatList, type FlatListProps, findNodeHandle } from 'react-native';
 import { router } from 'expo-router';
 import {
   Renderer,
@@ -17,6 +17,7 @@ import {
 import { colors, radii } from '@/theme/tokens';
 import type { ReadingCellFrame } from '@/data/reading-position';
 import { parseReadingReference, READING_REFERENCE_PREFIX } from '@/data/reading-reference';
+import { parseKnowledgeReference } from '@/data/knowledge-reference';
 import { selectionActions, type ReadingSelectionEvent } from './reading-selection';
 
 type Props = {
@@ -28,6 +29,9 @@ type Props = {
   onBlockLayout?: (index: number, frame: ReadingCellFrame | null) => void;
   onSelectionAction?: (index: number, selection: ReadingSelectionEvent) => void;
   highlightedBlocks?: { start: number; end: number } | null;
+  compact?: boolean;
+  appearance?: 'default' | 'knowledge';
+  localTextOnly?:boolean;
 };
 type MarkdownCellProps = ComponentProps<NonNullable<FlatListProps<ReactNode>['CellRendererComponent']>>;
 
@@ -63,7 +67,12 @@ class FormulaBoundary extends Component<
 }
 
 class MathRenderer extends Renderer implements RendererInterface {
+  constructor(private localOnly=false){super();}
+  override image(uri:string,alt?:string,style?:ImageStyle,title?:string):ReactNode {return this.localOnly?<Text key={this.getKey()} style={{color:colors.inkMuted}}>[{alt||title||'图片'} · 在原版中查看]</Text>:super.image(uri,alt,style,title);}
   override link(children: string | ReactNode[], href: string, styles?: TextStyle, title?: string): ReactNode {
+    if(href.startsWith('lumen://conversation/')){const url=new URL(href);const id=url.pathname.slice(1);const messageIds=(url.searchParams.get('messages')??'').split(',').filter(Boolean);return <Text key={this.getKey()} accessibilityRole="link" style={styles} onPress={()=>router.push({pathname:'/discussion',params:{conversationId:id,sourceMessageIds:JSON.stringify(messageIds)}})}>{children}</Text>;}
+    const knowledge = parseKnowledgeReference(href);
+    if (knowledge) return <Text key={this.getKey()} accessibilityRole="link" style={styles} onPress={() => router.push({ pathname: '/knowledge-library', params: knowledge })}>{children}</Text>;
     if (!href.startsWith(READING_REFERENCE_PREFIX)) return super.link(children, href, styles, title);
     const reference = parseReadingReference(href);
     return <Text key={this.getKey()} accessibilityRole="link" style={styles}
@@ -96,6 +105,7 @@ class MathRenderer extends Renderer implements RendererInterface {
 }
 
 const mathRenderer = new MathRenderer();
+const localTextRenderer = new MathRenderer(true);
 
 const markdownStyles: NonNullable<MarkdownProps['styles']> = {
         text: { color: colors.ink, fontSize: 16, lineHeight: 26 },
@@ -125,6 +135,26 @@ const markdownStyles: NonNullable<MarkdownProps['styles']> = {
         tableCell: { borderColor: colors.line, padding: 8 },
 };
 
+const compactMarkdownStyles: NonNullable<MarkdownProps['styles']> = {
+  ...markdownStyles,
+  text: { color: colors.inkMuted, fontSize: 13, lineHeight: 19 },
+  paragraph: { marginTop: 0, marginBottom: 5 },
+  h1: { color: colors.ink, fontSize: 15, lineHeight: 21, fontWeight: '700', marginTop: 2, marginBottom: 4 },
+  h2: { color: colors.ink, fontSize: 14, lineHeight: 20, fontWeight: '700', marginTop: 3, marginBottom: 4 },
+  h3: { color: colors.ink, fontSize: 13, lineHeight: 19, fontWeight: '700', marginTop: 3, marginBottom: 4 },
+  li: { color: colors.inkMuted, fontSize: 13, lineHeight: 19 },
+};
+
+const knowledgeMarkdownStyles: NonNullable<MarkdownProps['styles']> = {
+  ...markdownStyles,
+  text: { color: colors.ink, fontSize: 16, lineHeight: 28 },
+  paragraph: { marginTop: 4, marginBottom: 16 },
+  h1: { color: colors.ink, fontSize: 22, lineHeight: 31, fontWeight: '600', marginTop: 20, marginBottom: 12, borderBottomWidth: 0 },
+  h2: { color: colors.ink, fontSize: 19, lineHeight: 28, fontWeight: '600', marginTop: 22, marginBottom: 10, borderBottomWidth: 0 },
+  h3: { color: colors.ink, fontSize: 17, lineHeight: 26, fontWeight: '600', marginTop: 18, marginBottom: 8 },
+  blockquote: { borderLeftWidth: 2, borderLeftColor: colors.lineStrong, backgroundColor: colors.graySoft, paddingHorizontal: 14, paddingVertical: 10, marginVertical: 14, borderRadius: radii.small },
+};
+
 export function MarkdownContent({
   value,
   contentPadding = 18,
@@ -134,6 +164,9 @@ export function MarkdownContent({
   onBlockLayout,
   onSelectionAction,
   highlightedBlocks,
+  compact = false,
+  appearance = 'default',
+  localTextOnly = false,
 }: Props) {
   const measured = useRef(onBlockLayout); measured.current = onBlockLayout;
   const selection = useRef(onSelectionAction); selection.current = onSelectionAction;
@@ -160,7 +193,7 @@ export function MarkdownContent({
   }, [instance]);
   const theme = useMemo(() => ({ colors: { background: backgroundColor, border: colors.line, code: colors.ink, link: colors.blue, text: colors.ink } }), [backgroundColor]);
   const elements = useMarkdown(prepareMarkdownMathForRenderer(value || '_这份文档还没有正文。_'), {
-    renderer: mathRenderer, theme, styles: markdownStyles, colorScheme: 'light',
+    renderer: localTextOnly?localTextRenderer:mathRenderer, theme, styles: compact ? compactMarkdownStyles : appearance === 'knowledge' ? knowledgeMarkdownStyles : markdownStyles, colorScheme: 'light',
   });
   if (!scrollEnabled) return <View style={{ backgroundColor, padding: contentPadding }}>{elements}</View>;
   return <FlatList<ReactNode>

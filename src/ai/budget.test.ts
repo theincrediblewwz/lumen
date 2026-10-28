@@ -40,6 +40,13 @@ describe('summarizeDropped', () => {
 });
 
 describe('fitWithinBudget', () => {
+  it('preserves long questions and materials that fit a high context allowance', () => {
+    const question = '长材料'.repeat(20000);
+    const messages = [sys('学习资料'), u(question)];
+    const result = fitWithinBudget(messages, 600000);
+    expect(result.messages[1].content).toBe(question);
+    expect(result.compressed).toBe(false);
+  });
   it('预算充足时全部保留，不压缩', () => {
     const msgs = [sys('系统提示'), u('你好'), a('你好呀'), u('再问一句')];
     const r = fitWithinBudget(msgs, 8000);
@@ -63,9 +70,9 @@ describe('fitWithinBudget', () => {
     expect(r.droppedCount).toBeGreaterThan(0);
     // 最新问题一定在
     expect(r.messages[r.messages.length - 1].content).toBe('最新问题');
-    // 队首是 system(原提示)，其后紧跟压缩摘要
+    // 原system保留；历史摘录不能升级为系统指令。
     expect(r.messages[0].content).toBe('SYS');
-    expect(r.messages.some((m) => m.role === 'system' && m.content.includes('早前对话摘要'))).toBe(true);
+    expect(r.messages.some((m) => m.role === 'user' && m.content.includes('早前对话摘要'))).toBe(true);
   });
 
   it('至少保留最后一条（哪怕单条超预算）', () => {
@@ -82,5 +89,15 @@ describe('fitWithinBudget', () => {
 
   it('messageTokens 计入固定开销', () => {
     expect(messageTokens(u('a'))).toBeGreaterThan(1);
+  });
+  it('hundreds of old turns cannot make the recap exceed the budget or mutate the stored history',()=>{
+    const messages=[sys('SYS'),...Array.from({length:600},(_,i)=>i%2? a('旧回答'.repeat(200)+i):u('旧问题'.repeat(200)+i)),u('当前完整问题：最后的约束也必须保留')];const copy=structuredClone(messages);const result=fitWithinBudget(messages,2400);
+    expect(result.tokens).toBeLessThanOrEqual(2400);expect(result.messages.at(-1)?.content).toBe(copy.at(-1)?.content);expect(messages).toEqual(copy);expect(result.droppedCount).toBeGreaterThan(500);
+  });
+  it('keeps an oversized current question complete so the caller can refuse before inference',()=>{
+    const question='全文'.repeat(5000)+'末尾不能丢';const result=fitWithinBudget([sys('SYS'),u(question)],1000);expect(result.messages.at(-1)?.content).toBe(question);expect(result.tokens).toBeGreaterThan(1000);
+  });
+  it('honours a small residual allowance after fixed schema and reference costs',()=>{
+    const result=fitWithinBudget([sys('规则'.repeat(20)),u('旧内容'.repeat(400)),a('旧答'.repeat(200)),u('本次问题'.repeat(12))],300,0);expect(result.tokens).toBeLessThanOrEqual(300);expect(result.messages.at(-1)?.content).toBe('本次问题'.repeat(12));
   });
 });

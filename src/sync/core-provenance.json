@@ -1,5 +1,5 @@
 {
-  "source": "LearnStuffQuickly/android-app/sync/core",
+  "source": "android-app/sync/core",
   "files": {
     "codec.ts": "637aeadc649e14f47c9991a7ef65c21afb5b0fdd540e15c5f4824a5843cf2949",
     "engine.ts": "4d77e1fd49be17465ebf2c461265ba6a3ca52007e28a9cd39b46db36bea0621d",

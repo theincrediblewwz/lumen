@@ -1,7 +1,7 @@
 {
   "name": "lumen",
   "private": true,
-  "version": "0.1.8",
+  "version": "0.1.14",
   "type": "module",
   "description": "脉络 Lumen — 本地优先的极简白板，把 AI 辅助学习的过程结构化为问题树",
   "scripts": {
@@ -19,8 +19,11 @@
   "dependencies": {
     "@tauri-apps/api": "^2",
     "@tauri-apps/plugin-dialog": "^2",
+    "dompurify": "3.4.17",
     "katex": "^0.18.7",
+    "lucide-react": "1.61.0",
     "markdown-it": "^15.0.1",
+    "pdfjs-dist": "6.4.299",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "zustand": "^5.0.0"
@@ -37,6 +40,3 @@
     "vitest": "^2.1.9"
   }
 }
-
-
-

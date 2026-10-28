@@ -1,0 +1,239 @@
+<!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="icon" href="data:,"><title>知识库合成页面验收</title><body><div id="root"></div><script type="module">
+import React from 'react';
+import { createRoot } from 'react-dom/client';
+import App from '/src/App.tsx';
+import { AiApp } from '/src/AiApp.tsx';
+import { AiFab } from '/src/components/AiFab.tsx';
+import { ReaderApp } from '/src/ReaderApp.tsx';
+import { emptyKnowledgeLibrary, saveKnowledgeInLibrary, knowledgeReferenceLinks } from '/src/knowledge/core.ts';
+import '/src/styles.css';import '/src/ui.css';import '/src/components/ai.css';import '/src/reader/reader.css';import 'katex/dist/katex.min.css';
+const material=saveKnowledgeInLibrary(emptyKnowledgeLibrary(),{kind:'material',title:'注意力的材料',body:'# 原始材料\n\n注意力根据相关性组合信息。',source:'合成样本，第 2 页'});
+const own=saveKnowledgeInLibrary(material.library,{kind:'understanding',title:'我怎样理解注意力',body:'# 我的理解\n\n我把注意力看作选择记忆的过程。\n\n$$\\frac{QK^{T}}{\\sqrt{d_k}}$$',basisIds:[material.entry.id]});
+let library=saveKnowledgeInLibrary(own.library,{id:own.entry.id,expectedRevision:own.entry.revision_id,kind:own.entry.kind,title:own.entry.title,body:'这是更新后的理解，旧引用应保留原来的正文。',basisIds:[material.entry.id]}).library,revision=1;
+let storageRoot='E:/synthetic/learning-library';
+const fixtureParams=new URLSearchParams(location.search);window.__fixtureBadChats=fixtureParams.has('badChats');
+if(fixtureParams.has('knowledgeDesignQA')){
+ const material=saveKnowledgeInLibrary(emptyKnowledgeLibrary(),{kind:'material',title:'注意力的材料',body:'# 原始材料\n\n注意力根据相关性组合信息。',source:'合成样本，第 2 页'});
+ const first=saveKnowledgeInLibrary(material.library,{kind:'understanding',title:'我怎样理解注意力',body:'这是早期解释，仍待补充。',basisIds:[material.entry.id]});
+ const own=saveKnowledgeInLibrary(first.library,{id:first.entry.id,expectedRevision:first.entry.revision_id,kind:'understanding',title:first.entry.title,body:'在我看来，注意力是一种从记忆中选择相关信息的机制。面对一个输入，模型并不会平均地使用所有已知的知识，而是根据当前的上下文，计算哪些记忆更相关，并优先读取这些部分。可以把注意力理解为一种“检索”，只不过它不是在离散的数据库中查找，而是在连续的向量空间里，对所有记忆同时进行软性匹配。\n\n这种机制的意义在于，它让模型能够根据不同的情境，动态地组合已有的知识。同一段记忆在不同的上下文中，可能被赋予不同的重要性，从而产生不同的理解和输出。这也是为什么注意力能够支持复杂的推理、泛化和迁移能力。\n\n---\n\n## 一个例子\n\n在 Transformer 中，注意力的计算可以表示为：\n\n$$\\operatorname{Attention}(Q,K,V)=\\operatorname{softmax}\\left(\\frac{QK^T}{\\sqrt{d_k}}\\right)V$$\n\n其中，$Q$ 表示当前输入的查询，$K$ 表示需要被检索的记忆，$V$ 表示对应的内容。通过计算查询与记忆之间的相似度，模型得到一组权重，再用这些权重对 $V$ 进行加权求和，从而得到与当前上下文最相关的表示。',basisIds:[material.entry.id]});
+ let next=own.library;
+ for(const [kind,title,body] of [['experience','训练中的注意力现象','经验来自可观察的现象。'],['understanding','注意力与记忆的关系','自己的解释。'],['material','Transformer 原始论文','资料线索。'],['experience','在项目中的实践观察','先记录，再总结。']])next=saveKnowledgeInLibrary(next,{kind,title,body}).library;
+ next.entries=[next.entries.find(e=>e.id===own.entry.id),...next.entries.filter(e=>e.id!==own.entry.id)];
+ library=JSON.parse(localStorage.getItem('lumen.fixture-knowledge-design')??'null')??next;
+ revision=Number(localStorage.getItem('lumen.fixture-knowledge-design-revision')??1);
+}
+// The bridge's synthetic legacy credential has matching nonsecret metadata.
+// Production code must never fetch a key merely to make an unconfigured preview usable.
+if(fixtureParams.get('mode')==='ai'&&!localStorage.getItem('lumen.ai.v1')&&!Object.keys(localStorage).some(key=>key.startsWith('lumen.ai.profile.v1.')))localStorage.setItem('lumen.ai.v1',JSON.stringify({kind:'openai',baseUrl:'https://api.openai.com/v1',model:'gpt-4o-mini',temperature:0.7,contextBudget:8000,shareBoard:true,keyStorage:'system'}));
+const fixturePlatform=fixtureParams.get('platform')==='macos'?'macos':'windows';
+const now=new Date().toISOString();
+const board={version:1,id:'board',projectId:'project',name:'合成学习白板',nodes:[],edges:[],viewport:{x:0,y:0,zoom:1},created_at:now,updated_at:now};
+if(fixtureParams.has('nodes'))board.nodes.push({id:'synthetic-node',title:'我的问题',summary:'用于验证点击与拖动的合成节点',x:100,y:160,w:240,docs:[],created_at:now,updated_at:now});
+if(fixtureParams.has('restrictedKnowledge'))board._sync_content_policy={mode:'summary',allowOutsideKnowledge:false};
+const fixtureBoards=[board,{...board,id:'board-two',name:'第二块合成白板'},{...board,id:'board-other',projectId:'project-other',name:'另一项目的白板'}];
+if(fixtureParams.has('knowledgeDesignQA'))fixtureBoards[0].name='注意力学习';
+let fixtureProjects=[{id:'project',name:'桌面夹',created_at:now},{id:'project-other',name:'另一项目',created_at:now}];
+const reference={entryId:own.entry.id,revisionId:own.entry.revision_id,title:own.entry.title,kind:own.entry.kind,excerpt:own.entry.body,source:'',authorship:own.entry.authorship,truncated:false};
+const answer='这是一条已保存的合成回答，未调用 AI。'+knowledgeReferenceLinks([reference]);
+let chats={version:1,conversations:[{id:'synthetic-conversation',title:'引用验收（合成）',createdAt:now,updatedAt:now,messages:[{id:'synthetic-question',role:'user',content:'怎样理解注意力？',at:now},{id:'synthetic-answer',role:'assistant',content:answer,at:now}]}]};
+const captureState=fixtureParams.has('captureQA')?JSON.parse(localStorage.getItem('lumen.fixture-capture')??'{"documents":{},"boards":{},"chats":null}'):null;
+if(captureState&&!captureState.chats){chats.conversations[0].id='c_capture_123';chats.conversations[0].messages.forEach((message,index)=>{message.id='c_message_'+index;});chats.conversations[0].messages[1].content+='\n\n| 项目 | 内容 |\n|---|---|\n| 示例 | 保留表格 |\n\n公式 $x_i^2$。\n\n$$\n\\frac{1}{2}\n$$\n\n```js\nconst x_i = 2;\n```';}
+if(captureState){if(captureState.chats)chats=captureState.chats;for(let i=0;i<fixtureBoards.length;i++)if(captureState.boards[fixtureBoards[i].id])fixtureBoards[i]=captureState.boards[fixtureBoards[i].id];}
+if(captureState)for(const saved of Object.values(captureState.boards))if(!fixtureBoards.some(b=>b.id===saved.id))fixtureBoards.push(saved);
+if(fixtureParams.has('navigationQA')){const saved=JSON.parse(localStorage.getItem('lumen.fixture-navigation')??'null');if(saved){fixtureProjects=saved.projects;fixtureBoards.splice(0,fixtureBoards.length,...saved.boards);}}
+const saveNavigation=()=>{if(fixtureParams.has('navigationQA'))localStorage.setItem('lumen.fixture-navigation',JSON.stringify({projects:fixtureProjects,boards:fixtureBoards}));};
+window.__fixtureNavigationCalls=[];
+window.__fixtureCaptureCalls=[];
+window.__fixtureOperationCalls=[];window.__fixtureExports=[];
+let writePolicy=JSON.parse(localStorage.getItem('lumen.fixture-board-policy')??'{"enabled":false,"revision":0,"keep":20}');
+const operationReceipts=new Map(),importReceipts=new Map();
+const fixtureBatch=(args)=>{
+ const target=fixtureBoards.find(row=>row.id===args.boardId),refs={},newDocuments=[];
+ const old=operationReceipts.get(args.requestId);if(old)return old;
+ const backups=JSON.parse(localStorage.getItem('lumen.fixture-board-backups')??'[]');backups.unshift({file:'version_'+Date.now()+'.json',created_at:now,reason:'修改前',bytes:500,board:structuredClone(target),documents:structuredClone(captureState.documents)});localStorage.setItem('lumen.fixture-board-backups',JSON.stringify(backups.slice(0,writePolicy.keep)));
+ for(const op of args.batch.operations){let node;if(op.type==='create_node'){const id='n_created_'+crypto.randomUUID().replace(/-/g,'');refs[op.reference]=id;node={id,title:op.title,summary:op.summary??'',x:400,y:180,w:240,docs:[],created_at:now,updated_at:now};target.nodes.push(node);if(op.parentId)target.edges.push({id:'e_'+id,from:refs[op.parentId]??op.parentId,to:id,directed:true,created_at:now});}else if(op.type==='append_document')node=target.nodes.find(n=>n.id===(refs[op.nodeId]??op.nodeId));else if(op.type==='connect_nodes'){target.edges.push({id:'e_'+Date.now(),from:refs[op.from]??op.from,to:refs[op.to]??op.to,directed:true,created_at:now});}
+ if(op.markdown){const path='docs/note_ai_'+Date.now()+'_'+(node?.docs.length??0)+'.md';newDocuments.push(path);node.docs.push({path,title:op.title,bytes:op.markdown.length});captureState.documents[path]=op.markdown;}}
+ captureState.boards[args.boardId]=target;localStorage.setItem('lumen.fixture-capture',JSON.stringify(captureState));const result={board:structuredClone(target),documents:newDocuments,summary:'已创建 '+Object.keys(refs).length+' 个节点，文档已保存。',nodes:refs,backup:backups[0].file,reused:false};operationReceipts.set(args.requestId,result);return result;
+};
+const syntheticSecrets=JSON.parse(sessionStorage.getItem('lumen-fixture-secrets')??'{"apikey.openai":"synthetic-preview-only"}');
+window.__fixtureSecretAccounts=[];window.__fixtureSecretAccess=[];
+window.__fixtureWindowOptions=[];window.__fixtureEvents=[];
+window.__fixtureCatalogRequests=[];window.__fixtureTestRequests=[];window.__fixtureAiRequests=[];window.__fixtureAiCancelled=[];window.__fixtureRetryEvents=[];
+const catalogueQuote='Model synthetic-next has a context window of 2097152 tokens and a maximum output of 262144 tokens.';
+const catalogueProposal={schema:'lumen.catalog-proposal/v1',summary:'合成官方样例：新增供应商和两百万上下文模型，等待用户应用。',providers:[{id:'synthetic-next',name:'合成目录供应商',baseUrl:'https://api.example.com/v1',docs:'https://example.com/model-docs',models:[{id:'synthetic-next',window:2097152,output:262144,temperature:1,omitTemperature:true,reasoning:{kind:'effort',levels:['low','high','max'],default:'high'}}],sources:[{url:'https://example.com/model-docs',quote:catalogueQuote}]}]};
+let callbackId=0;const callbacks=new Map(),listeners=new Map();
+const fixtureRevision=id=>JSON.stringify(fixtureBoards.find(row=>row.id===id), (key,value)=>key==='_disk_revision'?undefined:value);
+const emitFixture=(event,payload)=>{for(const [id,listener]of [...listeners])if(listener.event===event)callbacks.get(id)?.({event,id,payload});};
+window.__fixtureEmit=emitFixture;window.__fixtureWindowCommands=[];
+window.__fixtureImportCalls=[];window.__fixtureShareReads=[];
+const importPlan={schema:'lumen.conversation-tree/v1',title:'从对话形成的问题',nodes:[{reference:'root',title:'理解主题',summary:'先看全貌',markdown:'# AI 整理\n\n公式 $x_i^2$。',parent:null},{reference:'child',title:'继续追问',summary:'继续寻找证据',markdown:'## 下一步\n\n$$\\frac{1}{2}$$',parent:'root'}]};
+window.__TAURI_INTERNALS__={metadata:{currentWindow:{label:'main'},currentWebview:{label:'main'}},transformCallback:callback=>{callbacks.set(++callbackId,callback);return callbackId},unregisterCallback:id=>callbacks.delete(id),invoke:async(command,args)=>{
+  if(command==='get_app_info'){await new Promise(resolve=>setTimeout(resolve,Math.min(10000,Number(fixtureParams.get('platformDelay'))||0)));return{name:'Lumen',version:'0.1.8',platform:fixturePlatform};}
+  if(command==='conversation_import_context')return{scope:window.__fixtureScope??'synthetic-scope',projectRevision:'synthetic-project'};
+  if(command==='conversation_share_html')throw Error('合成DOM读取回退');
+  if(command==='conversation_share_cancel'){window.__fixtureShareCancelled=args.requestId;return;}
+  if(command==='conversation_share_read'){window.__fixtureShareReads.push(args);if(window.__fixtureShareDelay)await new Promise(r=>setTimeout(r,window.__fixtureShareDelay));if(window.__fixtureShareFailure)throw Error('未能读取公开问答，请改用Markdown');return {url:args.url,title:'合成分享对话',complete:true,messages:fixtureParams.has('shareRoundsQA')?Array.from({length:12},(_,i)=>({role:i%2?'assistant':'user',content:i%2?`第 ${Math.floor(i/2)+1} 轮完整回答，公式 $x_${i}^2$。`:`第 ${Math.floor(i/2)+1} 轮提问`})): [{role:'user',content:'如何理解 $x_i$？'},{role:'assistant',content:'## 合成回答\n\n公式 $$x_i^2$$\n\n| 概念 | 含义 |\n|---|---|\n| 示例 | 解释 |'}]};}
+  if(command==='library_package_export'){window.__fixtureLibraryPackages??=[];window.__fixtureLibraryPackages.push(structuredClone(args));if(window.__fixtureLibraryFailure)throw Error('合成打包故障，旧包和资料保留');return {projects:args.projectId?1:2,boards:2,files:18};}
+  if(command==='library_package_restore'){window.__fixtureLibraryRestores??=[];window.__fixtureLibraryRestores.push(structuredClone(args));return {root:'E:/synthetic/new-restored-library',files:18,preferences:{ui:{theme:'paper'},progress:{'project/board/docs/example.md':0.5}}};}
+  if(command==='conversation_import_apply'){
+   window.__fixtureImportCalls.push(structuredClone(args));if(window.__fixtureImportFailure)throw Error('合成磁盘故障，原内容保留');
+   const receipt=importReceipts.get(args.requestId);if(receipt)return structuredClone({...receipt,reused:true});
+   const input=args.import,id=args.boardId??'b_'+args.requestId,original=fixtureBoards.find(b=>b.id===id),target=original??{version:1,id,projectId:args.projectId,name:input.plan.title,nodes:[],edges:[],viewport:{x:0,y:0,zoom:1},created_at:now,updated_at:now};
+   if(original&&args.expectedRevision!==fixtureRevision(id))throw Error('白板已变化，本次未导入');
+   const backups=JSON.parse(localStorage.getItem('lumen.fixture-board-backups')??'[]');backups.unshift({file:'version_'+Date.now()+'.json',created_at:now,reason:'导入前',bytes:500,board:structuredClone(target),documents:structuredClone(captureState.documents)});localStorage.setItem('lumen.fixture-board-backups',JSON.stringify(backups));
+   const refs={},sourcePath='docs/source_'+args.requestId+'.md';captureState.documents[sourcePath]=input.source;
+   input.plan.nodes.forEach((n,i)=>{const nodeId='n_import_'+args.requestId+'_'+i,path='docs/import_'+args.requestId+'_'+i+'.md';refs[n.reference]=nodeId;captureState.documents[path]=input.plan.mode==='faithful'?'> 忠实逐轮导入：AI 仅补充导读与层级说明，原回答按导入资料完整保留，内容未经独立核实。[阅读完整原文]('+sourcePath.replace('docs/','')+')\n\n## AI导读（含层级说明）\n\n'+n.markdown+(n.original?'\n\n---\n\n## 原始AI回答（未改写）\n\n'+n.original.content:''):'> AI整理。[阅读完整原文]('+sourcePath.replace('docs/','')+')\n\n'+n.markdown;const docs=[{path,title:n.title}];if(!n.parent)docs.push({path:sourcePath,title:'原始对话'});target.nodes.push({id:nodeId,title:n.title,summary:n.summary,x:400+i*340,y:160,w:240,docs,created_at:now,updated_at:now});const parent=n.parent?refs[n.parent]:input.attachNodeId;if(parent)target.edges.push({id:'e_'+nodeId,from:parent,to:nodeId,directed:true,created_at:now});});
+   if(!original)fixtureBoards.push(target);captureState.boards[id]=target;localStorage.setItem('lumen.fixture-capture',JSON.stringify(captureState));const result={board:{...structuredClone(target),_disk_revision:fixtureRevision(id)},rootNodeId:refs[input.plan.nodes[0].reference],summary:'已导入，完整原文已保留。'};importReceipts.set(args.requestId,result);if(window.__fixtureImportLostResponse){window.__fixtureImportLostResponse=false;throw Error('合成响应丢失，请重试');}return result;
+  }
+  if(command==='config_get')return{storage_root:storageRoot};
+  if(command==='chat_history_delete'||command==='chat_history_restore'){
+    if(args.expectedScope!==(window.__fixtureScope??'synthetic-scope'))throw Error('资料目录已变化');
+    if(window.__fixtureDeleteFailure)throw Error('合成删除未完成，原文保留');
+    if(window.__fixtureDeleteDelay)await new Promise(r=>setTimeout(r,window.__fixtureDeleteDelay));
+    const trash=JSON.parse(localStorage.getItem('lumen.fixture-trash')??'{}');let id=args.conversationId;
+    if(command==='chat_history_delete'){
+      if(!trash[args.receipt]){const index=chats.conversations.findIndex(c=>c.id===id);if(index<0)throw Error('会话已变化');trash[args.receipt]={conversation:structuredClone(chats.conversations[index])};chats.conversations.splice(index,1);}
+    }else{const archived=trash[args.receipt];if(!archived)throw Error('归档不存在');id=archived.conversation.id;if(!chats.conversations.some(c=>c.id===id))chats.conversations.push(archived.conversation);archived.restored=true;}
+    localStorage.setItem('lumen.fixture-trash',JSON.stringify(trash));if(captureState){captureState.chats=chats;localStorage.setItem('lumen.fixture-capture',JSON.stringify(captureState));}
+    emitFixture('lumen://chat-history-changed',{projectId:args.projectId,boardId:args.boardId,conversationId:id,scope:args.expectedScope,deleted:command==='chat_history_delete'});
+    return{conversationId:id,receipt:args.receipt,scope:args.expectedScope};
+  }
+  if(command==='board_write_policy_get')return{policy:structuredClone(writePolicy),scope:window.__fixtureScope??'synthetic-scope'};
+  if(command==='board_write_policy_set'){if(args.expectedRevision!==writePolicy.revision)throw Error('合成授权版本变化');writePolicy={enabled:args.enabled,keep:args.keep,revision:writePolicy.revision+1};localStorage.setItem('lumen.fixture-board-policy',JSON.stringify(writePolicy));return structuredClone(writePolicy);}
+  if(command==='board_operations_apply'||command==='chat_document_attach'){
+   window.__fixtureOperationStarted=true;
+   if(window.__fixtureOperationDelay)await new Promise(r=>setTimeout(r,window.__fixtureOperationDelay));
+   if(args.expectedRevision!==fixtureRevision(args.boardId))throw Error('白板已被修改，原生 CAS 拒绝');
+   if(!captureState)throw Error('操作只在合成验收中启用');
+   if(command==='board_operations_apply'&&(!writePolicy.enabled||writePolicy.revision!==args.grantRevision))throw Error('授权已撤销，本批未写入');
+   if(args.expectedScope!=='synthetic-scope')throw Error('资料库变化');
+   if(command==='chat_document_attach'){if(!chats.conversations.some(c=>c.id===args.conversation.id))chats.conversations.push(args.conversation);captureState.chats=chats;}
+   if(command==='chat_document_attach')args={...args,batch:{schema:'lumen.board-operations/v1',operations:[{type:'append_document',nodeId:args.nodeId,title:args.title,markdown:args.markdown}]}};
+   window.__fixtureOperationCalls.push(structuredClone(args));return fixtureBatch(args);
+  }
+  if(command==='snapshot_list')return [];
+  if(command==='board_backups_list')return JSON.parse(localStorage.getItem('lumen.fixture-board-backups')??'[]');
+  if(command==='board_backup_restore'){const item=JSON.parse(localStorage.getItem('lumen.fixture-board-backups')??'[]').find(b=>b.file===args.file);const i=fixtureBoards.findIndex(b=>b.id===args.boardId);fixtureBoards[i]=structuredClone(item.board);captureState.boards[args.boardId]=fixtureBoards[i];captureState.documents=structuredClone(item.documents);localStorage.setItem('lumen.fixture-capture',JSON.stringify(captureState));return structuredClone(item.board);}
+  if(command==='plugin:dialog|save')return window.__fixtureCancelExport?null:args?.options?.defaultPath?.endsWith('.zip')?'E:/synthetic/exported-library.zip':'E:/synthetic/exported-note.md';
+  if(command==='doc_export_markdown'){window.__fixtureExports.push({...args,content:captureState?.documents[args.path]});return;}
+  if(command==='model_catalog_load'){const state=JSON.parse(localStorage.getItem('lumen.fixture-catalog')??'{"revision":0,"providers":[],"canRollback":false}');return state;}
+  if(command==='model_catalog_apply'||command==='model_catalog_rollback'){
+    const state=JSON.parse(localStorage.getItem('lumen.fixture-catalog')??'{"revision":0,"providers":[],"canRollback":false}');
+    if(args.expectedRevision!==state.revision)throw Error('目录版本冲突');
+    const next={revision:state.revision+1,providers:command==='model_catalog_apply'?args.providers:state.previous,previous:state.providers,canRollback:true};localStorage.setItem('lumen.fixture-catalog',JSON.stringify(next));return next;
+  }
+  if(command==='model_catalog_web_read'){if(!fixtureParams.has('catalogQA'))throw Error('公共网络在普通界面验收中禁用');if(args.url!=='https://example.com/model-docs')throw Error('只能读取合成资料');return'<html><body>'+catalogueQuote+'</body></html>';}
+  if(command==='ai_connection_test'){if(!fixtureParams.has('catalogQA')&&!fixtureParams.has('keychainQA'))throw Error('真实连通测试禁止');window.__fixtureTestRequests.push(JSON.parse(args.body));await new Promise(r=>setTimeout(r,100));return fixtureParams.has('testFailure')?{ok:false,stage:'auth',status:401,elapsedMs:100,message:'接口可达，鉴权未通过'}:{ok:true,stage:'model',status:200,elapsedMs:100,message:'所选合成模型已响应'};}
+  if(command==='config_set_storage_root'){window.__fixtureRootChanges??=[];window.__fixtureRootChanges.push(args.root);storageRoot=args.root;return{storage_root:storageRoot};}
+  if(command==='plugin:dialog|open')return window.__fixtureDocumentFiles??'E:/synthetic/other-library';
+  if(command==='plugin:dialog|save'&&(fixtureParams.has('navigationQA')||fixtureParams.has('knowledgeDesignQA')))return 'E:/synthetic/export.lumen.zip';
+  if(command==='knowledge_export'&&fixtureParams.has('knowledgeDesignQA')){window.__fixtureExports.push(structuredClone(args));return;}
+  if(command==='knowledge_import_read'&&fixtureParams.has('knowledgeDesignQA'))return structuredClone(library);
+  if(command==='board_package_export'&&fixtureParams.has('navigationQA')){window.__fixtureExports.push(structuredClone(args));return;}
+  if(['project_create','project_rename','project_delete','board_create','board_rename','board_delete'].includes(command)){
+    window.__fixtureNavigationCalls.push({command,args:structuredClone(args)});
+    if(window.__fixtureNavigationDelay)await new Promise(r=>setTimeout(r,window.__fixtureNavigationDelay));
+    if(window.__fixtureNavigationFailure)throw Error('合成磁盘写入失败');
+    if(command==='project_create'){const row={id:'p_'+crypto.randomUUID(),name:args.name,created_at:now};fixtureProjects.push(row);saveNavigation();return structuredClone(row);}
+    if(command==='project_rename'){const row=fixtureProjects.find(p=>p.id===args.id);row.name=args.name;saveNavigation();return structuredClone(row);}
+    if(command==='project_delete'){fixtureProjects=fixtureProjects.filter(p=>p.id!==args.id);for(let i=fixtureBoards.length-1;i>=0;i--)if(fixtureBoards[i].projectId===args.id)fixtureBoards.splice(i,1);saveNavigation();return;}
+    if(command==='board_create'){const row={...structuredClone(board),id:'b_'+crypto.randomUUID(),projectId:args.projectId,name:args.name,nodes:[],edges:[]};fixtureBoards.push(row);saveNavigation();return structuredClone(row);}
+    if(command==='board_rename'){const row=fixtureBoards.find(b=>b.id===args.boardId&&b.projectId===args.projectId);row.name=args.name;saveNavigation();return {...structuredClone(row),_disk_revision:fixtureRevision(args.boardId)};}
+    if(command==='board_delete'){const i=fixtureBoards.findIndex(b=>b.id===args.boardId&&b.projectId===args.projectId);if(i<0)throw Error('白板不存在');fixtureBoards.splice(i,1);saveNavigation();return;}
+  }
+  if(command==='projects_list')return structuredClone(fixtureProjects);
+  if(command==='boards_list')return fixtureBoards.filter(row=>row.projectId===args.projectId).map(row=>({id:row.id,name:row.name,created_at:now,updated_at:now}));
+  if(command==='sync_settings_get')return{enabled:false,endpoint:'',username:'',libraryId:storageRoot.endsWith('other-library')?'other-fixture':'original-fixture',deviceId:'synthetic'};
+  if(command==='plugin:window|is_maximized')return false;
+  if(command==='plugin:window|get_all_windows'){const {windowIdentity}=await import('/src/windowIdentity.ts');return window.__fixtureExistingAiWindow?['main',await windowIdentity('ai',['project','board',''])]:['main'];}
+  if(command==='plugin:window|current_monitor')return{name:'合成显示器',size:{width:1440,height:900},position:{x:0,y:0},workArea:{position:{x:0,y:0},size:{width:1440,height:900}},scaleFactor:1};
+  if(command==='plugin:webview|create_webview_window'){window.__fixtureWindowOptions.push(args.options);return;}
+  if(command==='knowledge_load'){if(window.__fixtureKnowledgeLoadFailure)throw Error('合成知识读取失败');const result={library:structuredClone(library),revision:String(revision)};if(window.__fixtureKnowledgeLoadDelay)await new Promise(r=>setTimeout(r,window.__fixtureKnowledgeLoadDelay));return result;}
+  if(command==='knowledge_save'){if(window.__fixtureKnowledgeSaveDelay)await new Promise(r=>setTimeout(r,window.__fixtureKnowledgeSaveDelay));if(window.__fixtureKnowledgeSaveFailure)throw Error('合成知识保存失败');if(args.expectedRevision!==String(revision))throw Error('合成冲突');library=structuredClone(args.library);++revision;if(fixtureParams.has('knowledgeDesignQA')){localStorage.setItem('lumen.fixture-knowledge-design',JSON.stringify(library));localStorage.setItem('lumen.fixture-knowledge-design-revision',String(revision));}return String(revision);}
+  if(command==='board_load'){if(window.__fixtureBoardDelay)await new Promise(resolve=>setTimeout(resolve,window.__fixtureBoardDelay));const row=fixtureBoards.find(row=>row.id===args.boardId&&row.projectId===args.projectId);if(!row)throw Error('白板不存在');return{...structuredClone(row),_disk_revision:fixtureRevision(args.boardId)};}
+  if(command==='board_save'){const index=fixtureBoards.findIndex(row=>row.id===args.board.id);if(index<0)throw Error('白板已删除');const {_disk_revision,...stored}=args.board;fixtureBoards[index]=structuredClone(stored);if(captureState){captureState.boards[args.board.id]=fixtureBoards[index];localStorage.setItem('lumen.fixture-capture',JSON.stringify(captureState));}saveNavigation();return fixtureRevision(args.board.id);}
+  if(command==='secret_get'){window.__fixtureSecretAccounts.push(args.account);window.__fixtureSecretAccess.push({account:args.account,storage:args.storage??'system'});if(window.__fixtureDenySecret)throw Error('合成授权取消');if(window.__fixtureDelaySecret)await new Promise(r=>setTimeout(r,window.__fixtureDelaySecret));return syntheticSecrets[`${args.storage??'system'}:${args.account}`]??syntheticSecrets[args.account]??null;}
+  if(command==='secret_set'){if(fixtureParams.get('secretFailure')||window.__fixtureFailSecretWrite)throw Error('合成凭据库拒绝写入');const key=`${args.storage??'system'}:${args.account}`;if(args.secret)syntheticSecrets[key]=args.secret;else delete syntheticSecrets[key];sessionStorage.setItem('lumen-fixture-secrets',JSON.stringify(syntheticSecrets));return;}
+  if(command==='chat_conversation_upsert'){window.__fixtureLastGenerationToken=args.generationToken;if(args.expectedScope!==(window.__fixtureScope??'synthetic-scope'))throw Error('资料目录已变化');window.__fixtureSavingChat=true;if(window.__fixtureChatSaveDelay)await new Promise(r=>setTimeout(r,window.__fixtureChatSaveDelay));if(window.__fixtureFailChatSave||(window.__fixtureFailFinalSave&&args.conversation.messages.at(-1)?.role==='assistant'))throw Error('合成磁盘保存失败');if(captureState){const i=chats.conversations.findIndex(c=>c.id===args.conversation.id);if(i<0)chats.conversations.push(structuredClone(args.conversation));else chats.conversations[i]=structuredClone(args.conversation);captureState.chats=chats;localStorage.setItem('lumen.fixture-capture',JSON.stringify(captureState));}window.__fixtureSavingChat=false;return;}
+  if(command==='chat_transcript_export'){window.__fixtureTranscriptExport=args;return;}if(command==='chat_generation_claim'){window.__fixtureClaimStarted=true;if(window.__fixtureClaimDelay)await new Promise(r=>setTimeout(r,window.__fixtureClaimDelay));if(args.expectedScope!==(window.__fixtureScope??'synthetic-scope'))throw Error('资料目录已变化');if(window.__fixtureLeaseBusy)throw Error('这段对话已在另一个窗口运行');return;}if(command==='chat_generation_release'){if(window.__fixtureReleaseFailure)throw Error('合成解锁失败');return;}if(command==='chat_generation_validate')return;
+  if(command==='chats_read'){if(args.expectedScope&&args.expectedScope!==(window.__fixtureScope??'synthetic-scope'))throw Error('资料目录已变化');if(window.__fixtureBadChats)throw Error('合成历史损坏，原文件保留');const result={content:JSON.stringify(chats),revision:'synthetic-chat',scope:window.__fixtureScope??'synthetic-scope'};if(window.__fixtureChatsReadDelay){window.__fixtureOldReadStarted=true;await new Promise(r=>setTimeout(r,window.__fixtureChatsReadDelay));window.__fixtureOldReadReturned=true;}return result;}
+  if(command==='chats_write'){if(captureState){chats=JSON.parse(args.content);captureState.chats=chats;localStorage.setItem('lumen.fixture-capture',JSON.stringify(captureState));}return 'synthetic-chat';}
+  if(command==='chat_capture'){
+    if(!captureState)throw Error('捕获仅在专用合成验收启用');
+    window.__fixtureCaptureCalls.push(structuredClone(args));
+    if(window.__fixtureCaptureDelay)await new Promise(resolve=>setTimeout(resolve,window.__fixtureCaptureDelay));
+    if(window.__fixtureCaptureFailure)throw Error('合成保存失败，原资料保留');
+    const target=fixtureBoards.find(row=>row.id===args.boardId),nodeId='chat_'+args.key,path='docs/chat_'+args.key+'.md';
+    if(!target.nodes.some(node=>node.id===nodeId)){if(args.parentId)target.edges.push({id:'e_'+nodeId,from:args.parentId,to:nodeId,directed:true,created_at:now});target.nodes.push({id:nodeId,title:args.title,x:80,y:80,w:240,docs:[{path,title:args.title}],created_at:now,updated_at:now});}
+    captureState.documents[path]=args.markdown;captureState.boards[args.boardId]=target;
+    const index=chats.conversations.findIndex(row=>row.id===args.conversationId);if(index<0)chats.conversations.push(args.conversation);else chats.conversations[index]=args.conversation;
+    captureState.chats=chats;localStorage.setItem('lumen.fixture-capture',JSON.stringify(captureState));return structuredClone(target);
+  }
+  if(command==='document_payload'){if(window.__fixtureDocumentPayload)return structuredClone(window.__fixtureDocumentPayload);const markdown=await window.__TAURI_INTERNALS__.invoke('doc_read',args);return{markdown,attachment:null,scope:'synthetic-scope'};}
+  if(command==='document_asset_read'){if(args.expectedScope&&args.expectedScope!=='synthetic-scope')throw Error('合成资料目录变化');if(window.__fixtureMissingAsset===args.assetPath)throw Error('合成附件缺失');const bytes=window.__fixtureDocumentAssets?.[args.assetPath];if(!bytes)throw Error('合成附件不存在');return bytes;}
+  if(command==='document_export'){window.__fixtureDocumentExport=structuredClone(args);return;}
+  if(command==='attachment_source')return window.__fixturePdfSource??[];
+  if(command==='attachment_attach'){window.__fixtureAttachmentArgs=structuredClone(args);window.__fixtureAttachmentStarted=true;if(window.__fixtureAttachmentDelay)await new Promise(r=>setTimeout(r,window.__fixtureAttachmentDelay));const target=fixtureBoards.find(b=>b.id===args.boardId);if(args.expectedRevision!==fixtureRevision(args.boardId)||args.expectedScope!=='synthetic-scope')throw Error('合成白板版本或资料目录变化');const importedPath='docs/synthetic-import'+(target.nodes.find(n=>n.id===args.nodeId).docs.length||'')+'.md';target.nodes.find(n=>n.id===args.nodeId).docs.push({path:importedPath,title:'合成图文包',bytes:100});if(captureState){captureState.boards[args.boardId]=target;captureState.documents[importedPath]='# 合成导入';localStorage.setItem('lumen.fixture-capture',JSON.stringify(captureState));}return{...structuredClone(target),_disk_revision:fixtureRevision(args.boardId)};}
+  if(command==='doc_read'){(window.__fixtureDocReads??=[]).push(args.path);if(captureState){const content=captureState.documents[args.path];if(content===undefined)throw Error('合成文档不存在');return content;}return '# 合成阅读材料\n\n'+answer+Array.from({length:50},(_,i)=>`\n\n第 ${i+1} 段合成阅读内容，用于验证打开知识后阅读位置仍然保留。`).join('');}
+  if(command==='plugin:event|listen'){listeners.set(args.handler,args);return args.handler;}
+  if(command==='plugin:event|unlisten'){listeners.delete(args.eventId);return;}
+  if(command==='plugin:event|emit_to'||command==='plugin:event|emit'){window.__fixtureEvents.push({event:args.event,payload:args.payload});for(const [id,listener]of listeners)if(listener.event===args.event)callbacks.get(id)?.({event:args.event,id,payload:args.payload});return;}
+  if(command.startsWith('plugin:event|'))return 1;
+  if(command==='ai_cancel'){window.__fixtureAiCancelled.push(args.requestId);return;}
+  if(command==='ai_chat_stream'){
+    if(!fixtureParams.has('catalogQA')&&!fixtureParams.has('keychainQA')&&!fixtureParams.has('operationsQA')&&!fixtureParams.has('importQA'))throw Error('页面验收禁止 Provider 调用');
+    const request=JSON.parse(args.body);window.__fixtureCatalogRequests.push(request);window.__fixtureAiRequests.push({requestId:args.requestId,request});if(window.__fixtureImportNeverReply)return;
+    // Exercise the actual frontend native-event listener without calling a Provider.
+    // A retry hook is consumed once so later analysis batches can finish normally.
+    if(window.__fixtureRetry){const retry={requestId:args.requestId,attempt:1,maxRetries:3,delayMs:1200,reason:'模型服务暂时满载（HTTP 429）',...window.__fixtureRetry};window.__fixtureRetry=null;window.__fixtureRetryEvents.push(retry);emitFixture('ai://retry',retry);await new Promise(r=>setTimeout(r,retry.delayMs));if(window.__fixtureAiCancelled.includes(args.requestId))return;}
+    if(window.__fixtureStructuredFailure){const partial=window.__fixtureStructuredFailure==='partial';emitFixture('ai://chunk',{requestId:args.requestId,data:'data: '+JSON.stringify({choices:[{delta:partial?{content:'{"schema":'}:{reasoning_content:'synthetic hidden thought'},finish_reason:'length'}]})+'\n\ndata: [DONE]\n\n'});emitFixture('ai://done',{requestId:args.requestId});return;}
+    if(window.__fixtureStreamDelay)await new Promise(r=>setTimeout(r,window.__fixtureStreamDelay));
+    if(window.__fixtureAiCancelled.includes(args.requestId))return;
+    if(window.__fixtureReasoning){emitFixture('ai://chunk',{requestId:args.requestId,data:'data: '+JSON.stringify({choices:[{delta:{reasoning_content:'synthetic private reasoning must stay hidden'}}]})+'\n\n'});await new Promise(r=>setTimeout(r,window.__fixtureReasoning));}
+    if(window.__fixtureRevokeBeforeApply){writePolicy={...writePolicy,enabled:false,revision:writePolicy.revision+1};localStorage.setItem('lumen.fixture-board-policy',JSON.stringify(writePolicy));}
+    const retrievalStep=request.messages.filter(m=>m.role==='tool').length;
+    const retrievalDelta=retrievalStep===0?{tool_calls:[{index:0,id:'search-synthetic',type:'function',function:{name:'search_board',arguments:JSON.stringify({keywords:['蒸馏','证据'],mode:'all'})}}]}:retrievalStep===1?{tool_calls:[{index:0,id:'read-synthetic',type:'function',function:{name:'read_node_doc',arguments:JSON.stringify({nodeId:'synthetic-node',docIndex:1,offset:0})}}]}:{content:'根据刚查阅的材料，仍需区分解释与证据。\n\n行内 $x_i^2$。\n\n$$\\frac{1}{2}$$'};
+    let faithfulDelta;
+    if(request.messages[0]?.content.includes('lumen.faithful-metadata/v1')){
+      const input=JSON.parse(request.messages.at(-1).content);(window.__fixtureFaithfulInputs??=[]).push(structuredClone(input));
+      const parts=[...new Map(input.parts.map(part=>[part.id,part])).values()];
+      const answers=parts.map((part,index)=>({id:part.id,title:'忠实摘要 '+part.id,summary:'这一回答的主题与已有依据',guide:'## AI 导读\n\n这一轮回答围绕原提问展开，原回答保留在导读下方。',parent:index?parts[index-1].id:(input.allowedParents.filter(id=>id!==part.id).at(-1)??null),reason:'按原对话顺序承接此前回答。'}));
+      faithfulDelta={content:JSON.stringify({schema:'lumen.faithful-metadata/v1',answers:window.__fixtureFaithfulMissing?answers.slice(0,-1):answers})};
+    }
+    let memoryDelta;
+    if(fixtureParams.has('memoryQA')){
+      if(request.messages[0]?.content.startsWith('你只整理给定对话资料')){
+        const fragments=JSON.parse(request.messages[1].content.split('新原文片段：')[1]);
+        const user=fragments.find(m=>m.role==='user');const item={text:'保留最早约束与原文定位，不把AI建议当用户理解。',sources:[(user??fragments[0]).id]};
+        memoryDelta={content:window.__fixtureBadMemory?'{}':JSON.stringify({schema:'lumen.chat-memory/v1',requirements:user?[item]:[],conclusions:[],unresolved:user?[]:[item]})};
+      }else{
+        const toolMessages=request.messages.filter(m=>m.role==='tool');
+        const question=[...request.messages].reverse().find(m=>m.role==='user')?.content??'';
+        memoryDelta=window.__fixtureHistoryRead&&!toolMessages.length?{tool_calls:[{index:0,id:'history-search',type:'function',function:{name:'search_conversation',arguments:JSON.stringify({keywords:['最早秘密标识']})}}]}:window.__fixtureHistoryRead&&toolMessages.length===1?{tool_calls:[{index:0,id:'history-read',type:'function',function:{name:'read_conversation',arguments:JSON.stringify({messageId:JSON.parse(toolMessages[0].content).hits[0].messageId,length:200})}}]}:{content:'合成回答：'+question.slice(0,80)+'。原文可重读。公式 $x_i^2$。'};
+      }
+    }
+    const delta=faithfulDelta??memoryDelta??(fixtureParams.has('retrievalQA')?retrievalDelta:fixtureParams.has('importQA')?{content:JSON.stringify(window.__fixtureImportDeep?{...importPlan,nodes:Array.from({length:window.__fixtureImportCount??32},(_,i)=>({reference:'level'+i,title:'层级 '+i,summary:'继续追问',markdown:'# 第'+i+'层\\n\\n$x_i$',parent:i?'level'+(i-1):null}))}:importPlan)}:fixtureParams.has('operationsQA')?(request.messages.filter(m=>m.role==='tool').length>=(window.__fixtureWriteBatches??1)?{content:'已完成整理。公式 $x_i^2$。'}:request.tools?.some(t=>t.function.name==='apply_board_operations')?{tool_calls:[{index:0,id:'create-synthetic-'+request.messages.filter(m=>m.role==='tool').length,type:'function',function:{name:'apply_board_operations',arguments:JSON.stringify({schema:'lumen.board-operations/v1',operations:[{type:'create_node',reference:'new_topic',title:'AI 生成的方向',parentId:'synthetic-node',markdown:'# 新的理解\n\n公式 $x_i^2$。'}]})}}]}:{content:'当前只读，尚未获得修改授权。'}):fixtureParams.has('keychainQA')?{content:'合成凭据验收通过，未调用真实模型。'}:request.messages.some(m=>m.role==='tool')?{content:JSON.stringify(catalogueProposal)}:{tool_calls:[{index:0,id:'catalog-read',type:'function',function:{name:'catalog_read',arguments:JSON.stringify({url:'https://example.com/model-docs'})}}]});
+    if(window.__fixtureTokenDelay&&delta.content){
+      for(const piece of delta.content.match(/.{1,18}/gs)??[]){emitFixture('ai://chunk',{requestId:args.requestId,data:'data: '+JSON.stringify({choices:[{delta:{content:piece}}]})+'\n\n'});await new Promise(r=>setTimeout(r,window.__fixtureTokenDelay));}
+      emitFixture('ai://chunk',{requestId:args.requestId,data:'data: '+JSON.stringify({choices:[{delta:{},finish_reason:'stop'}]})+'\n\ndata: [DONE]\n\n'});
+    }else{
+      const data='data: '+JSON.stringify({choices:[{delta,finish_reason:delta.tool_calls?'tool_calls':'stop'}]})+'\n\ndata: [DONE]\n\n';
+      emitFixture('ai://chunk',{requestId:args.requestId,data});
+    }
+    for(const [id,listener]of [...listeners])if(listener.event==='ai://done')callbacks.get(id)?.({event:listener.event,id,payload:{requestId:args.requestId}});
+    return;
+  }
+  if(command.startsWith('plugin:window|')){window.__fixtureWindowCommands.push(command);return;}
+  return null;
+}};
+window.__TAURI_EVENT_PLUGIN_INTERNALS__={unregisterListener:()=>{}};
+const fixtureApp=fixtureParams.get('mode')==='ai-fallback'?React.createElement(AiFab,{projectId:'project',boardId:'board',boardName:'合成白板'}):React.createElement(fixtureParams.get('mode')==='ai'?AiApp:fixtureParams.get('mode')==='reader'?ReaderApp:App);
+// Parent passive effect runs after child listeners; navigation alone is not React readiness.
+window.__fixtureReactMounted=false;
+function FixtureReady({children}){
+  React.useEffect(()=>{window.__fixtureReactMounted=true;return()=>{window.__fixtureReactMounted=false;};},[]);
+  return children;
+}
+const fixtureRoot=React.createElement(FixtureReady,null,fixtureApp);
+createRoot(document.getElementById('root')).render(fixtureParams.has('strict')?React.createElement(React.StrictMode,null,fixtureRoot):fixtureRoot);
+</script></body></html>
