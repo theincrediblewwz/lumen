@@ -5,8 +5,8 @@
 - 桌面源码0.1.14：长Markdown无损顺序分批、满载/限流有限重试、AI重构图谱与忠实逐轮图谱。忠实方式每条回答一个节点，AI只生成标题、简短导读及建议层级，原回答完整保留。知识库、PDF/图文原件、会话与项目/全库备份恢复继续保留。
 - Android源码2.1.0-preview.8 / code23，知识核心已与桌面迭代上下文收集保持一致。本次没有重发Android APK，旧公开预览包不冒充新源码安装包。
 - 当前开发入口是本公共仓库main：桌面在根目录，Android在android-app；README与SOURCE.json说明公开构建、来源和适配。公共Git历史保留，未导入其他仓库的私有历史、治理文件、真实用户资料或凭据。
-- 验证：桌面457、原生104通过/2项既有环境测试忽略、Android287合同和2项离线知识转换通过；19份Mac WebKit报告/184组本机检查及隔离原生进程验证通过。公共代码提交a6553e0的桌面、Rust、Android CI三项全绿；公开Mac打包复核正在稳定后台测试完成时机，不降低原断言。
-- [Mac 0.1.14下载](https://github.com/theincrediblewwz/lumen/releases/tag/mac-v0.1.14) · [两种导入方式、升级与恢复](LONG_MARKDOWN_AND_FAITHFUL_IMPORT.md)。发布以Release校验和为准，旧附件保持不变。
+- 验证：桌面457、原生104通过/2项既有环境测试忽略、Android287合同和2项离线知识转换通过；19份Mac WebKit报告/184组本机检查及隔离原生进程验证通过。公共代码提交c884eb0的[桌面、Rust、Android CI](https://github.com/theincrediblewwz/lumen/actions/runs/40759936538)与[Mac完整打包](https://github.com/theincrediblewwz/lumen/actions/runs/40759937720)均成功，含19份WebKit/184组、双架构签名与原生启动；后台QA使用显式流完成时机，保留完整落盘/隔离/取消断言。
+- [Mac 0.1.14下载](https://github.com/theincrediblewwz/lumen/releases/tag/mac-v0.1.14) · [两种导入方式、升级与恢复](LONG_MARKDOWN_AND_FAITHFUL_IMPORT.md)。已发布为预发行，5份附件远端大小/摘要及tag=c884eb0均已核对。App与经验证安装包完全相同，185个运行源码/构建输入与公开代码逐项一致；完整来源见BUILD-INFO.json。旧附件保持不变。
 
 ## 历史记录
 
