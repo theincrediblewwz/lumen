@@ -9,12 +9,13 @@ export const FONT_FAMILIES = {
   sans: '"PingFang SC", "Microsoft YaHei", sans-serif',
   mono: '"SFMono-Regular", Menlo, monospace',
 } as const;
-export type BoardAppearance = { fontFamily: keyof typeof FONT_FAMILIES; fontSize: number; previewFontFamily?: keyof typeof FONT_FAMILIES; previewFontSize?: number };
-export function boardAppearance(value?: Partial<BoardAppearance>): BoardAppearance {
+export type BoardAppearance = { fontFamily: keyof typeof FONT_FAMILIES; fontSize: number; previewFontFamily?: keyof typeof FONT_FAMILIES; previewFontSize?: number; zoomSensitivity?: number };
+export function boardAppearance(value?: Partial<BoardAppearance>): Required<BoardAppearance> {
   return { fontFamily: value?.fontFamily && value.fontFamily in FONT_FAMILIES ? value.fontFamily : 'system',
     fontSize: Number.isFinite(value?.fontSize) ? Math.min(32, Math.max(12, Number(value!.fontSize))) : 15,
     previewFontFamily: value?.previewFontFamily && Object.prototype.hasOwnProperty.call(FONT_FAMILIES,value.previewFontFamily) ? value.previewFontFamily : (value?.fontFamily && Object.prototype.hasOwnProperty.call(FONT_FAMILIES,value.fontFamily) ? value.fontFamily : 'system'),
-    previewFontSize: Number.isFinite(value?.previewFontSize) ? Math.min(32,Math.max(12,Number(value!.previewFontSize))) : (Number.isFinite(value?.fontSize)?Math.min(32,Math.max(12,Number(value!.fontSize))):15) };
+    previewFontSize: Number.isFinite(value?.previewFontSize) ? Math.min(32,Math.max(12,Number(value!.previewFontSize))) : (Number.isFinite(value?.fontSize)?Math.min(32,Math.max(12,Number(value!.fontSize))):15),
+    zoomSensitivity: Number.isFinite(value?.zoomSensitivity) ? Math.min(3,Math.max(0.25,Number(value!.zoomSensitivity))) : 1 };
 }
 export function heatLevel(zoom: number): number {
   return zoom >= DETAIL_ZOOM ? 0 : Math.max(1, Math.ceil(Math.log2(DETAIL_ZOOM / Math.max(MIN_BOARD_ZOOM, zoom))));

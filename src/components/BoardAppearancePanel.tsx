@@ -8,6 +8,8 @@ export function BoardAppearancePanel({value,onChange,onClose,name}:{value?:Board
     </select></label><label>字号 <output>{v.fontSize}px</output><input aria-label="白板字号" type="range" min="12" max="32" value={v.fontSize} onChange={e=>onChange({...v,fontSize:Number(e.target.value)})}/></label>
     <label>文档预览字体<select aria-label="文档预览字体" value={v.previewFontFamily} onChange={e=>onChange({...v,previewFontFamily:e.target.value as BoardAppearance['fontFamily']})}><option value="system">系统字体</option><option value="sans">黑体</option><option value="serif">宋体</option><option value="mono">等宽字体</option></select></label>
     <label>文档预览字号 <output>{v.previewFontSize}px</output><input aria-label="文档预览字号" type="range" min="12" max="32" value={v.previewFontSize} onChange={e=>onChange({...v,previewFontSize:Number(e.target.value)})}/></label>
+    <label>双指缩放灵敏度 <output>{v.zoomSensitivity.toFixed(2)}×</output><input aria-label="双指缩放灵敏度" aria-valuetext={`${v.zoomSensitivity.toFixed(2)}倍`} type="range" min="0.25" max="3" step="0.05" value={v.zoomSensitivity} onChange={e=>onChange({...v,zoomSensitivity:Number(e.target.value)})}/></label>
+    <div className="board-appearance-range-ends"><span>慢</span><span>快</span></div>
     <p>只应用于这块白板，自动保存。</p>
   </section>;
 }

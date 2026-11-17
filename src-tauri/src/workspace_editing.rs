@@ -132,9 +132,9 @@ mod tests {
     fn question_markdown_and_presentation_survive_disk_and_clearing(){
         let(root,mut b)=setup();
         let mut n:storage::BoardNode=serde_json::from_value(serde_json::json!({"id":"n1","title":"\\nu","summary":"# 问题\r\n\r\n$\\nu$  \r\n","x":1,"y":2,"w":400,"h":270,"sticker":false,"docs":[],"created_at":"","updated_at":""})).unwrap();
-        b.nodes.push(n.clone());b.extra.insert("appearance".into(),serde_json::json!({"fontFamily":"serif","fontSize":23}));
+        b.nodes.push(n.clone());b.extra.insert("appearance".into(),serde_json::json!({"fontFamily":"serif","fontSize":23,"zoomSensitivity":0.75}));
         save_board(&root,&b).unwrap();let loaded=storage::load_board(&root,&b.project_id,&b.id).unwrap();
-        assert_eq!(loaded.nodes[0].extra["h"],270);assert_eq!(loaded.extra["appearance"]["fontSize"],23);
+        assert_eq!(loaded.nodes[0].extra["h"],270);assert_eq!(loaded.extra["appearance"]["fontSize"],23);assert_eq!(loaded.extra["appearance"]["zoomSensitivity"],0.75);
         assert_eq!(fs::read_to_string(documents::doc_path(&root,&b.project_id,&b.id,"docs/question_n1.md").unwrap()).unwrap(),n.summary.clone().unwrap());
         assert_eq!(loaded.nodes[0].docs[0].path,"docs/question_n1.md");n.summary=None;b.nodes=vec![n];save_board(&root,&b).unwrap();
         assert_eq!(documents::read_payload(&root,&b.project_id,&b.id,"docs/question_n1.md").unwrap().markdown,"");

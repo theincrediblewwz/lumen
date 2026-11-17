@@ -598,7 +598,7 @@ export function BoardCanvas({
     if(drag.current?.kind==='node'||drag.current?.kind==='resize')return;
     const r = rect();
     const anchor = { x: e.clientX - r.left, y: e.clientY - r.top };
-    engine.zoomByFactor(anchor, Math.exp(-e.deltaY * 0.0015));
+    engine.zoomByFactor(anchor, Math.exp(-e.deltaY * 0.0015 * appearance.zoomSensitivity));
     rerender();
     onChange(nodes, edges, engine.viewport);
   };

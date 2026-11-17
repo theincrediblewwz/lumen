@@ -115,7 +115,7 @@ export function AiFab({ projectId, boardId, boardName, suspended = false, onBoar
         <MessageCircle size={18} strokeWidth={1.7} aria-hidden="true"/><span>问 AI</span>
       </button>
 
-      {onBoardSettings&&<button type="button" className="board-settings-fab glass-surface" aria-label="白板设置" title="本白板字体与字号" style={{right:pos.right+118,bottom:pos.bottom,visibility:suspended||!boardId?'hidden':undefined}} onClick={onBoardSettings}>⚙</button>}
+      {onBoardSettings&&<button type="button" className="board-settings-fab glass-surface" aria-label="白板设置" title="本白板字体、字号与缩放灵敏度" style={{right:pos.right+118,bottom:pos.bottom,visibility:suspended||!boardId?'hidden':undefined}} onClick={onBoardSettings}>⚙</button>}
       {Object.entries(panels).map(([key,panel])=>(
         <div key={key} className="ai-overlay-backdrop" hidden={key!==overlay} style={suspended||key!==overlay ? { visibility:'hidden',pointerEvents:'none',display:'none' } : undefined} onClick={closeOverlay}>
           <div className="ai-overlay-panel" onClick={e=>e.stopPropagation()}>

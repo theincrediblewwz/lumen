@@ -153,9 +153,9 @@ describe('desktop portable adapter',()=>{
   });
 });
 
-it('preserves flow ownership, ordering, image geometry, mixed resource order and board fonts through synchronization',async()=>{
+it('preserves flow ownership, ordering, image geometry, mixed resources and per-board settings through synchronization',async()=>{
   const snapshot=fixture();const board=JSON.parse(new TextDecoder().decode(new Uint8Array(snapshot.files['p1/b1/board.json'])));
-  board.appearance={fontFamily:'serif',fontSize:20,previewFontFamily:'mono',previewFontSize:18};
+  board.appearance={fontFamily:'serif',fontSize:20,previewFontFamily:'mono',previewFontSize:18,zoomSensitivity:2.25};
   board.nodes[0]={...board.nodes[0],h:370,flow:{nodeIds:['flow_child']}};
   board.nodes.push({...board.nodes[0],id:'flow_child',flow:undefined,flowOwnerId:board.nodes[0].id,h:80,sticker:true,imageAspect:3});
   board.edges=[{id:'flow-edge',from:board.nodes[0].id,to:'flow_child',directed:true,created_at:time,route:{kind:'bent',control:{x:350,y:750}}}];

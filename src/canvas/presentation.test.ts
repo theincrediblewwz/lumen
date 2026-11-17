@@ -23,5 +23,11 @@ describe('canvas presentation',()=>{
   const r=resizedBox(b,'nw',200,200);expect(r.w).toBe(120);expect(r.h).toBe(64);expect(r.x+r.w).toBe(b.x+b.w);expect(r.y+r.h).toBe(b.y+b.h);
  });
  it('places images at their true ratio and keeps that ratio from every resize corner',()=>{const size=imageDisplaySize(1600,900);expect(size.w/size.h).toBeCloseTo(16/9);for(const corner of ['nw','ne','sw','se']){const box=resizedImageBox({x:100,y:200,...size},corner,120,40);expect(box.w/box.h).toBeCloseTo(16/9);}expect(imageDisplaySize(1,1)).toEqual({w:160,h:160});});
- it('validates stored board font values',()=>{expect(boardAppearance({fontSize:Infinity})).toEqual({fontFamily:'system',fontSize:15,previewFontFamily:'system',previewFontSize:15});expect(boardAppearance({fontSize:400,fontFamily:'serif'}).fontSize).toBe(32);});
+ it('validates stored board font values',()=>{expect(boardAppearance({fontSize:Infinity})).toEqual({fontFamily:'system',fontSize:15,previewFontFamily:'system',previewFontSize:15,zoomSensitivity:1});expect(boardAppearance({fontSize:400,fontFamily:'serif'}).fontSize).toBe(32);});
+ it('keeps the previous zoom speed for old boards and bounds each board sensitivity',()=>{
+  expect(boardAppearance().zoomSensitivity).toBe(1);expect(boardAppearance({zoomSensitivity:NaN}).zoomSensitivity).toBe(1);
+  expect(boardAppearance({zoomSensitivity:Infinity}).zoomSensitivity).toBe(1);
+  expect(boardAppearance({zoomSensitivity:0}).zoomSensitivity).toBe(.25);expect(boardAppearance({zoomSensitivity:9}).zoomSensitivity).toBe(3);
+  expect(boardAppearance({zoomSensitivity:.75}).zoomSensitivity).toBe(.75);expect(boardAppearance({fontSize:18}).zoomSensitivity).toBe(1);
+ });
 });
