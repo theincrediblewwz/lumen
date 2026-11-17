@@ -35,6 +35,18 @@ export const assetBytes = (
     assetPath: asset.path,
     expectedScope,
   }).then((b) => new Uint8Array(b));
+/** Decode a locally verified asset before placing it; the first frame already has its true ratio. */
+export async function stickerDimensions(projectId:string,boardId:string,path:string):Promise<{width:number;height:number}>{
+  const payload=await documentPayload(projectId,boardId,path),asset=Object.values(payload.attachment?.images??{})[0];
+  if(!asset)throw Error('图片文档没有图像');
+  const bytes=await assetBytes(projectId,boardId,path,asset,payload.scope);
+  const url=URL.createObjectURL(new Blob([bytes.slice().buffer as ArrayBuffer],{type:asset.media_type}));
+  try{return await new Promise((resolve,reject)=>{
+    const image=new Image(),timer=setTimeout(()=>reject(Error('图片无法解码，请更换图片')),10000);
+    image.onload=()=>{clearTimeout(timer);if(image.naturalWidth&&image.naturalHeight)resolve({width:image.naturalWidth,height:image.naturalHeight});else reject(Error('图片尺寸无效'));};
+    image.onerror=()=>{clearTimeout(timer);reject(Error('图片无法解码'));};image.src=url;
+  });}finally{URL.revokeObjectURL(url);}
+}
 export async function exportDocument(
   projectId: string,
   boardId: string,

@@ -370,7 +370,7 @@ fn apply_at(
             }
         }
         created_documents.insert(id.clone(), docs.iter().map(|d| d.path.clone()).collect());
-        board.nodes.push(storage::BoardNode {
+        board.nodes.push(storage::BoardNode { extra: Default::default(),
             id: id.clone(),
             title: node.title.clone(),
             summary: Some(node.summary.clone()),
@@ -773,7 +773,7 @@ mod tests {
         let doc =
             storage::write_doc(&r, &p, &b, "original", "# Original\n\nUser owned $x_i$.").unwrap();
         let mut original = storage::load_board(&r, &p, &b).unwrap();
-        original.nodes.push(storage::BoardNode {
+        original.nodes.push(storage::BoardNode { extra: Default::default(),
             id: "original_node".into(),
             title: "User title".into(),
             summary: Some("User understanding".into()),

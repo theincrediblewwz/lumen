@@ -20,13 +20,15 @@ import {renderRichMarkdown} from '../documents/render';
 
 
 export function DocPreview({
-  doc,
+  doc, refresh=0,
   projectId,
   boardId,
   guessMath,
   onOpen,
-  onRemove,
+  onRemove, onEdit,
 }: {
+  onEdit?:()=>void;
+  refresh?:number;
   doc: DocRef;
   projectId: string;
   boardId: string;
@@ -34,7 +36,7 @@ export function DocPreview({
   onOpen: () => void;
   onRemove: () => void;
 }) {
-  const key = `${projectId}/${boardId}/${doc.path}::${doc.bytes}::${guessMath}`;
+  const key = `${projectId}/${boardId}/${doc.path}::${doc.bytes}::${guessMath}::${refresh}`;
   const [html, setHtml] = useState<string | null>(null);
   const [err, setErr] = useState(false);
   const [exportStatus,setExportStatus]=useState('');
@@ -72,6 +74,7 @@ export function DocPreview({
   return (
     <div className="doc-card" title={`${doc.path}\n点击打开阅读`}>
       { /\.(?:md|markdown)$/i.test(doc.path) && <button type="button" className="doc-card-export" aria-label={`导出 Markdown：${doc.title}`} title={attachment?.kind==='pdf'?'导出 PDF 原件':attachment?'导出 Markdown 与图片包':'导出 Markdown'} onClick={()=>void (attachment?exportDocument(projectId,boardId,doc.path,doc.title):exportMarkdown(projectId,boardId,doc.path,doc.title)).then(p=>p&&setExportStatus(`已导出：${p}`)).catch(e=>setExportStatus(String(e)))}><Download size={13}/></button>}
+      {onEdit&&attachment?.kind!=='pdf'&&<button type="button" className="doc-card-edit" title="编辑Markdown" aria-label={`编辑Markdown：${doc.title}`} onClick={onEdit}>编辑</button>}
       {exportStatus&&<span className="doc-export-status" role="status">{exportStatus}</span>}
       <button type="button" className="doc-card-remove" title="移除此文档" onClick={onRemove}>
         <svg width="12" height="12" viewBox="0 0 16 16" aria-hidden="true">

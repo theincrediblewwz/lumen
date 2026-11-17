@@ -19,7 +19,15 @@ import { matchShortcut, isEditableTarget, shortcut } from '../canvas/shortcuts';
 import { dropPointToClient, detectMacOS } from '../canvas/dropPoint';
 import { pickMarkdownFiles, type BoardFile, type BoardNode, type BoardEdge } from '../api';
 import { openReaderWindow } from '../reader/windowManager';
-import {attachDocument} from '../documents/client';
+import {attachDocument,stickerDimensions} from '../documents/client';
+import { api, type DocRef } from '../api';
+import { invoke } from '@tauri-apps/api/core';
+import { open } from '@tauri-apps/plugin-dialog';
+import { loadWritePolicy } from '../ai/boardOperations';
+import { MIN_BOARD_ZOOM, boardAppearance, FONT_FAMILIES, heatLevel, aggregateHeat, intersects, snapConnection, resizedBox, resizedImageBox, imageDisplaySize, questionPath, type BoardAppearance } from '../canvas/presentation';
+import { DocumentEditor } from './DocumentEditor';
+import { QuestionEditor } from './QuestionEditor';
+import { BoardAppearancePanel } from './BoardAppearancePanel';
 import { NodeCard } from './NodeCard';
 import { NodePanel } from './NodePanel';
 import { NodeTooltip } from './NodeTooltip';
@@ -49,14 +57,15 @@ const FALLBACK_NODE_H = 64;
  */
 export function BoardCanvas({
   board,
-  onChange,
+  onChange, onFlush, saveState,
   edgeStyle = 'curved',
   guessMath = false,
   focusNode = null,
   onBlankClick,
 }: {
+  onFlush:()=>Promise<void>; saveState:'saved'|'dirty'|'saving'|'error';
   board: BoardFile;
-  onChange: (nodes: BoardNode[], edges: BoardEdge[], viewport: Viewport) => void;
+  onChange: (nodes: BoardNode[], edges: BoardEdge[], viewport: Viewport, appearance?:BoardAppearance) => void;
   edgeStyle?: EdgeStyle;
   guessMath?: boolean;
   /** AI 引用跳转目标（M5-6）：居中并闪烁高亮该节点。nonce 变化即重新触发。 */
@@ -72,7 +81,7 @@ export function BoardCanvas({
   }, []);
   const mutationsBlocked = () => syncMutationLock.current || !!document.querySelector('[aria-modal="true"]');
   const engineRef = useRef<CanvasEngine>(
-    new CanvasEngine(board.viewport, { minZoom: 0.2, maxZoom: 3 }),
+    new CanvasEngine(board.viewport, { minZoom: MIN_BOARD_ZOOM, maxZoom: 3 }),
   );
   const [, force] = useState(0);
   const rerender = useCallback(() => force((n) => n + 1), []);
@@ -93,6 +102,13 @@ export function BoardCanvas({
   const addNodeRef = useRef<(x: number, y: number) => void>(() => {});
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editingEdge, setEditingEdge] = useState<string | null>(null);
+  const [appearanceOpen,setAppearanceOpen]=useState(false);
+  const [docVersions,setDocVersions]=useState<Record<string,number>>({});
+  const [documentEditor,setDocumentEditor]=useState<{nodeId:string;path:string;title:string;kind?:'question'}>();
+  const [canvasSize,setCanvasSize]=useState({width:1280,height:800});
+  useEffect(()=>{const el=wrapRef.current;if(!el)return;const report=()=>setCanvasSize({width:el.clientWidth,height:el.clientHeight});report();const observer=new ResizeObserver(report);observer.observe(el);return()=>observer.disconnect();},[]);
+  useEffect(()=>{const show=(e:Event)=>{if((e as CustomEvent).detail===board.id)setAppearanceOpen(v=>!v);};window.addEventListener('lumen:board-settings',show);return()=>window.removeEventListener('lumen:board-settings',show);},[board.id]);
+  const appearance=boardAppearance(board.appearance);
   const [menu, setMenu] = useState<ContextMenuState | null>(null);
   const [panelId, setPanelId] = useState<string | null>(null);
   const [moveRoot,setMoveRoot]=useState<string|null>(null);
@@ -108,6 +124,7 @@ export function BoardCanvas({
   const [dropBusy, setDropBusy] = useState(false);
   const[documentStatus,setDocumentStatus]=useState('');
   const documentImport=useRef<AbortController|null>(null);
+  const imageJobs=useRef(0);
   const mounted=useRef(true);
   const documentBoard=useRef(`${board.projectId}/${board.id}`);documentBoard.current=`${board.projectId}/${board.id}`;
   useEffect(()=>{mounted.current=true;return()=>{mounted.current=false;documentImport.current?.abort();};},[]);
@@ -134,7 +151,7 @@ export function BoardCanvas({
 
   // 切换白板时重置引擎、历史栈、测量缓存
   useEffect(() => {
-    engineRef.current = new CanvasEngine(board.viewport, { minZoom: 0.2, maxZoom: 3 });
+    engineRef.current = new CanvasEngine(board.viewport, { minZoom: MIN_BOARD_ZOOM, maxZoom: 3 });
     setHistory(createHistory({ nodes: board.nodes, edges: board.edges ?? [] }));
     sizesRef.current = {};
     setSelected(null);
@@ -203,7 +220,7 @@ export function BoardCanvas({
     const world = engineRef.current.toWorld({ x: clientX - r.left, y: clientY - r.top });
     for (const nn of graphRef.current.nodes) {
       const s = sizesRef.current[nn.id];
-      const box = { x: nn.x, y: nn.y, w: s?.w ?? nn.w ?? DEFAULT_NODE_W, h: s?.h ?? FALLBACK_NODE_H };
+      const box = { x: nn.x, y: nn.y, w: nn.w ?? DEFAULT_NODE_W, h: nn.h ?? s?.h ?? FALLBACK_NODE_H };
       if (boxContains(box, world)) return nn.id;
     }
     return null;
@@ -230,7 +247,7 @@ export function BoardCanvas({
             setDrop(null);
             if (target && p.paths && p.paths.length > 0) {
               void importDroppedRef.current(target, p.paths);
-            }
+            } else if(!target&&p.paths){const wrap=wrapRef.current?.getBoundingClientRect();if(wrap){const client=dropPointToClient(pos.x,pos.y,{isMac:detectMacOS(),dpr:window.devicePixelRatio||1,viewportW:window.innerWidth,viewportH:window.innerHeight});const at=engineRef.current.toWorld({x:client.x-wrap.left,y:client.y-wrap.top});for(const path of p.paths.filter(p=>/\.(png|jpe?g|gif|webp)$/i.test(p)))void stickerImport.current(path,undefined,at);}}
           } else {
             // leave / cancel
             setDrop(null);
@@ -292,7 +309,7 @@ export function BoardCanvas({
         drag.current=null;setDraggingNodes(false);suppressClick.current=true;
       }
       setMoveRoot(null);
-      setHistory((h) => pushState(h, next));
+      const nextHistory=pushState(historyRef.current,next);historyRef.current=nextHistory;graphRef.current=next;setHistory(nextHistory);
       onChange(next.nodes, next.edges, engine.viewport);
     },
     [engine, onChange],
@@ -300,7 +317,7 @@ export function BoardCanvas({
 
   /** 树状自动布局（M6-4）：只重排位置、不改结构，进历史可撤销；带 360ms 归位过渡。 */
   const autoArrange = useCallback(() => {
-    if(drag.current?.kind==='node')return;
+    if(drag.current?.kind==='node'||drag.current?.kind==='resize')return;
     const g = graphRef.current;
     if (g.nodes.length === 0) return;
     // 用节点原坐标包围盒左上作为布局原点，避免整块图跳到别处
@@ -308,7 +325,7 @@ export function BoardCanvas({
     const layoutNodes = g.nodes.map((n) => ({
       id: n.id,
       w: sizesRef.current[n.id]?.w ?? n.w ?? 240,
-      h: sizesRef.current[n.id]?.h ?? 96,
+      h: n.h ?? sizesRef.current[n.id]?.h ?? 96,
     }));
     const pos = computeTreeLayout(layoutNodes, g.edges, {
       originX: minX,
@@ -330,7 +347,7 @@ export function BoardCanvas({
   /** 以视口中心为锚缩放（键盘缩放不该跟着鼠标跑）。 */
   const zoomCenter = useCallback(
     (factor: number) => {
-      if(drag.current?.kind==='node')return;
+      if(drag.current?.kind==='node'||drag.current?.kind==='resize')return;
       const r = rect();
       engine.zoomByFactor({ x: r.width / 2, y: r.height / 2 }, factor);
       rerender();
@@ -341,7 +358,7 @@ export function BoardCanvas({
 
   /** 缩放重置为 100%，保持视口中心对应的世界点不动。 */
   const zoomReset = useCallback(() => {
-    if(drag.current?.kind==='node')return;
+    if(drag.current?.kind==='node'||drag.current?.kind==='resize')return;
     const r = rect();
     engine.zoomAtPoint({ x: r.width / 2, y: r.height / 2 }, 1);
     rerender();
@@ -350,7 +367,7 @@ export function BoardCanvas({
 
   /** 适配全部内容到屏幕（zoom-to-fit）。 */
   const fitAll = useCallback(() => {
-    if(drag.current?.kind==='node')return;
+    if(drag.current?.kind==='node'||drag.current?.kind==='resize')return;
     const g = graphRef.current;
     const r = rect();
     if (g.nodes.length === 0) {
@@ -358,14 +375,20 @@ export function BoardCanvas({
     } else {
       let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
       for (const n of g.nodes) {
-        const s = sizesRef.current[n.id] ?? { w: n.w || 240, h: 96 };
+        const s = {w:n.w||240,h:n.h??sizesRef.current[n.id]?.h??96};
         minX = Math.min(minX, n.x);
         minY = Math.min(minY, n.y);
         maxX = Math.max(maxX, n.x + s.w);
         maxY = Math.max(maxY, n.y + s.h);
       }
-      const worldBoxes=new Map(g.nodes.map(n=>{const size=sizesRef.current[n.id]??{w:n.w||240,h:96};return[n.id,{x:n.x,y:n.y,...size}];}));
-      const routes=routeBoardEdges(worldBoxes,g.edges,'curved');for(const edge of g.edges){const geo=routes.get(edge.id);if(!geo)continue;const lines=edgeLabelLines(edge.label??''),width=Math.max(24,...lines.map(s=>Array.from(s).length*12))+16,height=Math.max(24,lines.length*16+12);minX=Math.min(minX,geo.mid.x-width/2);maxX=Math.max(maxX,geo.mid.x+width/2);minY=Math.min(minY,geo.mid.y-height/2);maxY=Math.max(maxY,geo.mid.y+height/2);}
+      // Fit is linear in graph size and includes custom node/image dimensions.
+      const boxes=new Map(g.nodes.map(n=>[n.id,{x:n.x,y:n.y,w:n.w||240,h:n.h??sizesRef.current[n.id]?.h??96}]));
+      const detailedFit=Math.min((r.width-96)/Math.max(1,maxX-minX),(r.height-96)/Math.max(1,maxY-minY))>=0.35;
+      if(detailedFit&&g.nodes.length*g.edges.length<=200000){
+        const routes=routeBoardEdges(boxes,g.edges,edgeStyle);
+        for(const edge of g.edges){const route=routes.get(edge.id);if(!route)continue;const lines=edgeLabelLines(edge.label??''),width=Math.max(24,...lines.map(s=>Array.from(s).length*12))+16,height=Math.max(24,lines.length*16+12);minX=Math.min(minX,route.mid.x-width/2);maxX=Math.max(maxX,route.mid.x+width/2);minY=Math.min(minY,route.mid.y-height/2);maxY=Math.max(maxY,route.mid.y+height/2);}
+      }
+
       engine.fit(
         { x: minX, y: minY, width: maxX - minX, height: maxY - minY },
         { width: r.width, height: r.height },
@@ -373,7 +396,7 @@ export function BoardCanvas({
     }
     rerender();
     onChange(graphRef.current.nodes, graphRef.current.edges, engine.viewport);
-  }, [engine, onChange, rerender]);
+  }, [engine, onChange, rerender,edgeStyle]);
 
   /** 在视口中心新建节点（键盘 N）。 */
   const addNodeAtCenter = useCallback(() => {
@@ -400,7 +423,7 @@ export function BoardCanvas({
 
   const doUndo = useCallback(() => {
     if (mutationsBlocked()) return;
-    if(drag.current?.kind==='node')return;
+    if(drag.current?.kind==='node'||drag.current?.kind==='resize')return;
     setHistory((h) => {
       if (!canUndo(h)) return h;
       const nh = histUndo(h);
@@ -413,7 +436,7 @@ export function BoardCanvas({
 
   const doRedo = useCallback(() => {
     if (mutationsBlocked()) return;
-    if(drag.current?.kind==='node')return;
+    if(drag.current?.kind==='node'||drag.current?.kind==='resize')return;
     setHistory((h) => {
       if (!canRedo(h)) return h;
       const nh = histRedo(h);
@@ -440,10 +463,11 @@ export function BoardCanvas({
     const hit = (id: string, e: KeyboardEvent) => matchShortcut(e, shortcut(id)!);
     const onKey = (e: KeyboardEvent) => {
       if (mutationsBlocked()) return;
-      if(drag.current?.kind==='node'){
+      if(drag.current?.kind==='node'||drag.current?.kind==='resize'){
         if(e.key==='Escape'){e.preventDefault();cancelNodeDrag();}
         if(!isEditableTarget(e.target))return;
       }
+      if(e.key==='Escape'&&drag.current?.kind==='connect'){e.preventDefault();connectCleanup.current?.();return;}
       // 撤销/重做即便焦点在输入框外也应响应；但打字时交给输入框自身
       const editable = isEditableTarget(e.target);
       if (!editable) {
@@ -548,12 +572,15 @@ export function BoardCanvas({
     | null
     | { kind: 'pan'; startX: number; startY: number; vx: number; vy: number; moved: boolean }
     | { kind: 'node'; id: string; pointerId:number;startX:number;startY:number;zoom:number; moved: boolean; baseline: Graph; positions:Map<string,{x:number;y:number}>;group:boolean }
+    | { kind: 'resize'; id:string; pointerId:number; startX:number;startY:number;zoom:number;corner:string;box:Box;baseline:Graph }
     | { kind: 'connect'; fromId: string }
   >(null);
   const blankClickTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => () => { if (blankClickTimer.current) clearTimeout(blankClickTimer.current); }, []);
 
   /** 连线拖拽的实时状态（世界坐标）；单独 state 以驱动预览重绘 */
+  const connectCleanup=useRef<(()=>void)|null>(null);
+  useEffect(()=>()=>connectCleanup.current?.(),[]);
   const [connect, setConnect] = useState<{ fromId: string; to: { x: number; y: number }; hoverId: string | null } | null>(
     null,
   );
@@ -566,7 +593,7 @@ export function BoardCanvas({
   const boxOf = useCallback(
     (n: BoardNode): Box => {
       const s = sizesRef.current[n.id];
-      return { x: n.x, y: n.y, w: s?.w ?? n.w ?? DEFAULT_NODE_W, h: s?.h ?? FALLBACK_NODE_H };
+      return { x: n.x, y: n.y, w: n.w ?? DEFAULT_NODE_W, h: n.h ?? s?.h ?? FALLBACK_NODE_H };
     },
     [],
   );
@@ -574,7 +601,7 @@ export function BoardCanvas({
   /* ── 滚轮缩放 ── */
   const onWheel = (e: React.WheelEvent) => {
     e.preventDefault();
-    if(drag.current?.kind==='node')return;
+    if(drag.current?.kind==='node'||drag.current?.kind==='resize')return;
     const r = rect();
     const anchor = { x: e.clientX - r.left, y: e.clientY - r.top };
     engine.zoomByFactor(anchor, Math.exp(-e.deltaY * 0.0015));
@@ -622,6 +649,19 @@ export function BoardCanvas({
     (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
   };
 
+  const onResizeStart=(e:React.PointerEvent,id:string,corner:string)=>{
+    if(e.button!==0||mutationsBlocked()||drag.current)return;e.preventDefault();e.stopPropagation();
+    const node=graphRef.current.nodes.find(n=>n.id===id);if(!node)return;
+    setSelected(id);suppressClick.current=true;
+    drag.current={kind:'resize',id,corner,pointerId:e.pointerId,startX:e.clientX,startY:e.clientY,zoom:engine.viewport.zoom,box:boxOf(node),baseline:historyRef.current.present};
+    wrapRef.current?.setPointerCapture(e.pointerId);setDraggingNodes(true);
+  };
+  const previewResize=(d:Extract<NonNullable<typeof drag.current>,{kind:'resize'}>,e:{clientX:number;clientY:number})=>{
+    const isImage=graphRef.current.nodes.find(n=>n.id===d.id)?.sticker;
+    const box=(isImage?resizedImageBox:resizedBox)(d.box,d.corner,(e.clientX-d.startX)/d.zoom,(e.clientY-d.startY)/d.zoom);
+    const graph={...historyRef.current.present,nodes:historyRef.current.present.nodes.map(n=>n.id===d.id?{...n,...box}:n)};
+    const next=replacePresent(historyRef.current,graph);historyRef.current=next;graphRef.current=graph;setHistory(next);
+  };
   /* ── 锚点按下：开始拉连线 ──
      锚点元素在拖拽中会因 hover 消失而被卸载、指针捕获也会随之失效，
      故不依赖锚点元素/指针捕获，直接挂 window 级监听全程自算，
@@ -640,32 +680,17 @@ export function BoardCanvas({
     const onMove = (ev: PointerEvent) => {
       const r = rect();
       const world = engine.toWorld({ x: ev.clientX - r.left, y: ev.clientY - r.top });
-      let hoverId: string | null = null;
-      for (const nn of graphRef.current.nodes) {
-        if (nn.id === id) continue;
-        if (boxContains(boxOf(nn), world)) {
-          hoverId = nn.id;
-          break;
-        }
-      }
+      const hoverId=snapConnection(world,graphRef.current.nodes,id,boxOf,engine.viewport.zoom);
       setConnect({ fromId: id, to: world, hoverId });
     };
 
     const onUp = (ev: PointerEvent) => {
-      window.removeEventListener('pointermove', onMove);
-      window.removeEventListener('pointerup', onUp);
-      drag.current = null;
+      connectCleanup.current?.();
+      if(ev.button!==0)return;
       // 用落点重新命中，避免依赖异步 state
       const r = rect();
       const world = engine.toWorld({ x: ev.clientX - r.left, y: ev.clientY - r.top });
-      let target: string | null = null;
-      for (const nn of graphRef.current.nodes) {
-        if (nn.id === id) continue;
-        if (boxContains(boxOf(nn), world)) {
-          target = nn.id;
-          break;
-        }
-      }
+      const target=snapConnection(world,graphRef.current.nodes,id,boxOf,engine.viewport.zoom);
       setConnect(null);
       if (target && target !== id) {
         const curEdges = graphRef.current.edges;
@@ -690,19 +715,21 @@ export function BoardCanvas({
       }
     };
 
-    window.addEventListener('pointermove', onMove);
-    window.addEventListener('pointerup', onUp);
+    const cancel=()=>{window.removeEventListener('pointermove',onMove);window.removeEventListener('pointerup',onUp);window.removeEventListener('pointercancel',cancel);window.removeEventListener('blur',cancel);drag.current=null;setConnect(null);connectCleanup.current=null;};
+    connectCleanup.current=cancel;
+    window.addEventListener('pointermove', onMove);window.addEventListener('pointerup', onUp);window.addEventListener('pointercancel',cancel);window.addEventListener('blur',cancel);
   };
 
   const onPointerMove = (e: React.PointerEvent) => {
     const d = drag.current;
     if (!d) return;
-    if(d.kind==='node'&&d.pointerId!==e.pointerId)return;
+    if((d.kind==='node'||d.kind==='resize')&&d.pointerId!==e.pointerId)return;
     if (d.kind === 'pan') {
       if (Math.hypot(e.clientX - d.startX, e.clientY - d.startY) > 4) d.moved = true;
       const vp = engine.viewport;
       engine.setViewport({ ...vp, x: d.vx + (e.clientX - d.startX), y: d.vy + (e.clientY - d.startY) });
       rerender();
+    } else if (d.kind === 'resize') {previewResize(d,e);
     } else if (d.kind === 'node') {
       previewNodeDrag(d,e);
     }
@@ -716,7 +743,7 @@ export function BoardCanvas({
     historyRef.current=next;graphRef.current=next.present;setHistory(next);
   };
   const cancelNodeDrag=()=>{
-    const d=drag.current;if(d?.kind!=='node')return;
+    const d=drag.current;if(d?.kind!=='node'&&d?.kind!=='resize')return;
     drag.current=null;setDraggingNodes(false);setMoveRoot(null);suppressClick.current=true;
     const next=replacePresent(historyRef.current,d.baseline);historyRef.current=next;graphRef.current=d.baseline;setHistory(next);
   };
@@ -724,7 +751,7 @@ export function BoardCanvas({
 
   const onPointerUp = (e: React.PointerEvent) => {
     const d = drag.current;
-    if(d?.kind==='node'&&d.pointerId!==e.pointerId)return;
+    if((d?.kind==='node'||d?.kind==='resize')&&d.pointerId!==e.pointerId)return;
     if(d?.kind==='node'&&e.type==='pointerup'&&e.button!==0)return;
     drag.current = null;
     if (!d) return;
@@ -735,6 +762,9 @@ export function BoardCanvas({
         // Give a double click time to create a node before the canvas changes width.
         blankClickTimer.current = setTimeout(() => onBlankClick?.(), 220);
       }
+    } else if(d.kind==='resize'){
+      if(e.type==='pointercancel'){drag.current=d;cancelNodeDrag();return;}
+      previewResize(d,e);const next=commitFromBaseline(historyRef.current,d.baseline);historyRef.current=next;graphRef.current=next.present;setHistory(next);setDraggingNodes(false);suppressClick.current=true;onChange(next.present.nodes,next.present.edges,engine.viewport);
     } else if (d.kind === 'node') {
       if(e.type==='pointercancel'){drag.current=d;cancelNodeDrag();return;}
       previewNodeDrag(d,e);setDraggingNodes(false);
@@ -755,7 +785,7 @@ export function BoardCanvas({
   const onCanvasContextMenu = (e: React.MouseEvent) => {
     e.preventDefault();
     e.stopPropagation();
-    if(drag.current?.kind==='node')return;
+    if(drag.current?.kind==='node'||drag.current?.kind==='resize')return;
     const r = rect();
     const world = engine.toWorld({ x: e.clientX - r.left, y: e.clientY - r.top });
     setMenu({
@@ -763,6 +793,7 @@ export function BoardCanvas({
       y: e.clientY,
       items: [
         { type: 'item', label: '在此新建节点', onClick: () => addNode(world.x, world.y) },
+        {type:'item',label:'插入贴图…',onClick:()=>void pickSticker(world)},
         { type: 'separator' },
         { type: 'item', label: '撤销  Ctrl+Z', disabled: !canUndo(history), onClick: doUndo },
         { type: 'item', label: '重做  Ctrl+Shift+Z', disabled: !canRedo(history), onClick: doRedo },
@@ -773,7 +804,7 @@ export function BoardCanvas({
   const onNodeContextMenu = (e: React.MouseEvent, id: string) => {
     e.preventDefault();
     e.stopPropagation();
-    if(drag.current?.kind==='node')return;
+    if(drag.current?.kind==='node'||drag.current?.kind==='resize')return;
     setSelected(id);
     setSelectedEdge(null);
     setPanelId(null);setMoveRoot(null);clearTip();
@@ -791,7 +822,7 @@ export function BoardCanvas({
   const onEdgeContextMenu = (e: React.MouseEvent, id: string) => {
     e.preventDefault();
     e.stopPropagation();
-    if(drag.current?.kind==='node')return;
+    if(drag.current?.kind==='node'||drag.current?.kind==='resize')return;
     const edge = edges.find((x) => x.id === id);
     if (!edge) return;
     setSelectedEdge(id);
@@ -868,7 +899,7 @@ export function BoardCanvas({
   const onNodeHover = useCallback(
     (id: string, hovering: boolean, clientX: number, clientY: number) => {
       setHoverNode((cur) => (hovering ? id : cur === id ? null : cur));
-      if (!hovering) {
+      if (!hovering||graphRef.current.nodes.find(n=>n.id===id)?.sticker) {
         clearTip();
         return;
       }
@@ -925,7 +956,7 @@ export function BoardCanvas({
   /** OS 文件拖放到节点：过滤 .md/.markdown，导入并挂到该节点，并短暂高亮 */
   const importDroppedToNode = async (nodeId: string, paths: string[]) => {
     if(documentImport.current)return;
-    const mdPaths = paths.filter((p) => /\.(md|markdown|pdf|zip)$/i.test(p));
+    const mdPaths = paths.filter((p) => /\.(md|markdown|pdf|zip|png|jpg|jpeg|gif|webp)$/i.test(p));
     if (mdPaths.length === 0) {
       alert('可以拖入 Markdown、PDF 或 Markdown 图片 ZIP。');
       return;
@@ -944,6 +975,33 @@ export function BoardCanvas({
   };
   importDroppedRef.current = importDroppedToNode;
 
+  const newDocument=async(nodeId:string)=>{
+    try{const doc=await api.docWrite(board.projectId,board.id,'新建Markdown','');if(!mounted.current)return;
+      const g=graphRef.current;apply({nodes:g.nodes.map(n=>n.id===nodeId?{...n,docs:[...n.docs,doc]}:n),edges:g.edges});setDocumentEditor({nodeId,path:doc.path,title:doc.title});
+    }catch(e){setDocumentStatus(String(e));throw e;}
+  };
+  const stickerImport=useRef<(path?:string,file?:File,point?:{x:number;y:number})=>Promise<void>>(async()=>{});
+  stickerImport.current=async(path,file,point)=>{
+    if(mutationsBlocked())return;
+    imageJobs.current++;setDropBusy(true);setDocumentStatus('正在保存贴图…');
+    try{let base64Data:string|undefined;
+      if(file){if(file.size>16*1024*1024)throw Error('贴图最多16MiB');const bytes=new Uint8Array(await file.arrayBuffer());let binary='';for(let i=0;i<bytes.length;i+=8192)binary+=String.fromCharCode(...bytes.subarray(i,i+8192));base64Data=btoa(binary);}
+      const permission=await loadWritePolicy();const doc=await invoke<DocRef>('image_document',{projectId:board.projectId,boardId:board.id,srcPath:path??null,base64Data:base64Data??null,expectedScope:permission.scope});
+      const dimensions=await stickerDimensions(board.projectId,board.id,doc.path),size=imageDisplaySize(dimensions.width,dimensions.height);
+      if(!mounted.current)return;const r=rect(),at=point??engine.toWorld({x:r.width/2,y:r.height/2}),now=new Date().toISOString();
+      const name=file?.name||path?.split(/[\\/]/).pop()||'贴图';
+      const n:BoardNode={id:newNodeId(),title:name,x:at.x-size.w/2,y:at.y-size.h/2,...size,imageAspect:dimensions.width/dimensions.height,sticker:true,docs:[doc],created_at:now,updated_at:now};const g=graphRef.current;apply({nodes:[...g.nodes,n],edges:g.edges});setSelected(n.id);
+      setDocumentStatus('已插入贴图');
+    }catch(e){if(mounted.current)setDocumentStatus(`插入贴图失败：${String(e)}`);}
+    finally{imageJobs.current--;if(mounted.current)setDropBusy(imageJobs.current>0||!!documentImport.current);}
+  };
+  useEffect(()=>{const beforeClose=(e:Event)=>{if(imageJobs.current){e.preventDefault();setDocumentStatus('贴图正在保存，请完成后再关闭。');}};window.addEventListener('lumen:before-window-close',beforeClose);return()=>window.removeEventListener('lumen:before-window-close',beforeClose);},[]);
+  useEffect(()=>{const paste=(e:ClipboardEvent)=>{
+    if(isEditableTarget(e.target)||document.querySelector('[aria-modal="true"]'))return;
+    const file=[...(e.clipboardData?.files??[])].find(f=>/^image\/(png|jpeg|gif|webp)$/.test(f.type));
+    if(file){e.preventDefault();void stickerImport.current(undefined,file);}
+  };window.addEventListener('paste',paste);return()=>window.removeEventListener('paste',paste);},[]);
+  const pickSticker=async(point?:{x:number;y:number})=>{const path=await open({title:'插入白板贴图',multiple:false,filters:[{name:'图片',extensions:['png','jpg','jpeg','gif','webp']}]});if(typeof path==='string')await stickerImport.current(path,undefined,point);};
   const openDoc = (_nodeId: string, path: string, title: string) => {
     void openReaderWindow({ projectId: board.projectId, boardId: board.id, path, title });
   };
@@ -1002,27 +1060,17 @@ export function BoardCanvas({
   removeNodeRef.current = removeNode;
 
   const commitNode = (id: string, patch: { title?: string; summary?: string }) => {
-    const target = nodes.find((n) => n.id === id);
-    if (!target) return;
-    const nextTitle = patch.title !== undefined ? (patch.title.trim() || '未命名问题') : target.title;
-    const nextSummary =
-      patch.summary !== undefined ? (patch.summary.trim() || null) : (target.summary ?? null);
-    if (nextTitle === target.title && nextSummary === (target.summary ?? null)) return;
-    apply({
-      nodes: nodes.map((n) =>
-        n.id === id
-          ? { ...n, title: nextTitle, summary: nextSummary, updated_at: new Date().toISOString() }
-          : n,
-      ),
-      edges,
-    });
+    const g=graphRef.current,target=g.nodes.find(n=>n.id===id);if(!target)return;
+    const title=patch.title??target.title,summary=patch.summary!==undefined?patch.summary:target.summary;
+    if(title===target.title&&summary===target.summary)return;
+    const docs=patch.summary!==undefined&&!target.docs.some(d=>d.path===questionPath(id))?[...target.docs,{path:questionPath(id),title:'完整问题',bytes:new TextEncoder().encode(summary??'').length}]:target.docs;
+    apply({nodes:g.nodes.map(n=>n.id===id?{...n,title,summary,docs,updated_at:new Date().toISOString()}:n),edges:g.edges});
   };
 
   const onCanvasDoubleClick = (e: React.MouseEvent) => {
     if (blankClickTimer.current) clearTimeout(blankClickTimer.current);
     const t = e.target as HTMLElement;
-    if (t.closest('.node-card')) return;
-    if (t.closest('.edge-hit')) return;
+    if(mutationsBlocked()||t.closest('.node-card,.edge-hit,.canvas-toolbar,.canvas-zoom-label,.board-appearance,.document-editor-modal,.node-panel,button,input,textarea,select,a'))return;
     addNodeAtScreen(e.clientX, e.clientY);
   };
 
@@ -1050,8 +1098,8 @@ export function BoardCanvas({
   const screenBoxOf = useCallback(
     (n: BoardNode): Box => {
       const s = sizesRef.current[n.id];
-      const w = s?.w ?? n.w ?? DEFAULT_NODE_W;
-      const h = s?.h ?? FALLBACK_NODE_H;
+      const w = n.w ?? DEFAULT_NODE_W;
+      const h = n.h ?? s?.h ?? FALLBACK_NODE_H;
       const tl = engine.toScreen({ x: n.x, y: n.y });
       const z = engine.viewport.zoom;
       return { x: tl.x, y: tl.y, w: w * z, h: h * z };
@@ -1062,11 +1110,22 @@ export function BoardCanvas({
   const vp = engine.viewport;
   const vpSig = `${vp.x},${vp.y},${vp.zoom}`;
 
+  const level=heatLevel(zoom),heatMode=level>0;
+  const heatCells=useMemo(()=>level?aggregateHeat(nodes,level,sizesRef.current):[],[nodes,level,sizesVer]);
+  const visibleWorld=engine.visibleWorldRect(canvasSize);
+  const visibleBox={x:visibleWorld.x,y:visibleWorld.y,w:visibleWorld.width,h:visibleWorld.height};
+  const visibleNodes=heatMode?[]:nodes.filter(n=>n.id===editingId||n.id===selected||intersects(boxOf(n),visibleBox,100/zoom));
+  const renderedHeat=heatMode?heatCells.filter(c=>intersects(c,visibleBox,80/zoom)):[];
+
   const laidEdges = useMemo(() => {
     void sizesVer;
     void vpSig;
-    const routed=routeBoardEdges(new Map(nodes.map(n=>[n.id,screenBoxOf(n)])),edges,edgeStyle,engine.viewport.zoom);
-    return edges
+    if(heatMode)return [];
+    const candidates=edges.filter(e=>{const a=nodeById[e.from],b=nodeById[e.to];if(!a||!b)return false;const x=Math.min(a.x,b.x),y=Math.min(a.y,b.y);return intersects({x,y,w:Math.abs(a.x-b.x)+Math.max(a.w,b.w),h:Math.abs(a.y-b.y)+Math.max(a.h??96,b.h??96)},visibleBox,100/zoom);});
+    const ids=new Set(candidates.flatMap(e=>[e.from,e.to]));
+    const boxes=new Map(nodes.filter(n=>ids.has(n.id)).map(n=>[n.id,screenBoxOf(n)]));
+    const routed=boxes.size*candidates.length<=200000?routeBoardEdges(boxes,candidates,edgeStyle,engine.viewport.zoom):new Map(candidates.map(e=>[e.id,edgeGeometry(boxes.get(e.from)!,boxes.get(e.to)!,edgeStyle)]));
+    return candidates
       .map((e) => {
         const a = nodeById[e.from];
         const b = nodeById[e.to];
@@ -1075,7 +1134,7 @@ export function BoardCanvas({
         return { edge: e, geo: g };
       })
       .filter((x): x is { edge: BoardEdge; geo: ReturnType<typeof edgeGeometry> } => x !== null);
-  }, [edges, nodeById, screenBoxOf, sizesVer, vpSig, edgeStyle]);
+  }, [edges, nodeById, screenBoxOf, sizesVer, vpSig, edgeStyle,heatMode,canvasSize]);
 
   // 连线拖拽预览路径（屏幕坐标）
   const connectPreview = useMemo(() => {
@@ -1088,6 +1147,12 @@ export function BoardCanvas({
     const toScreen = engine.toScreen(connect.to);
     return straightPath(fromCenter, toScreen);
   }, [connect, nodeById, screenBoxOf, engine, vpSig]);
+  const onDocumentSaved=useCallback((bytes:number)=>{
+    if(!documentEditor)return;
+    const g=graphRef.current,next={...g,nodes:g.nodes.map(n=>n.id===documentEditor.nodeId?{...n,docs:n.docs.map(d=>d.path===documentEditor.path?{...d,bytes}:d)}:n)};
+    const state=replacePresent(historyRef.current,next);historyRef.current=state;graphRef.current=next;setHistory(state);
+    setDocVersions(v=>({...v,[documentEditor.path]:(v[documentEditor.path]??0)+1}));onChange(next.nodes,next.edges,engine.viewport);
+  },[documentEditor?.nodeId,documentEditor?.path,onChange,engine]);
 
 
   return (
@@ -1099,13 +1164,14 @@ export function BoardCanvas({
       onPointerMove={onPointerMove}
       onPointerUp={onPointerUp}
       onPointerCancel={onPointerUp}
-      onLostPointerCapture={e=>{if(drag.current?.kind==='node'&&drag.current.pointerId===e.pointerId)cancelNodeDrag();}}
-      aria-busy={draggingNodes}
+      onLostPointerCapture={e=>{if((drag.current?.kind==='node'||drag.current?.kind==='resize')&&drag.current.pointerId===e.pointerId)cancelNodeDrag();}}
+      style={{['--board-font-family' as string]:FONT_FAMILIES[appearance.fontFamily],['--board-font-size' as string]:`${appearance.fontSize}px`}}
+      aria-busy={draggingNodes||dropBusy}
       onContextMenu={onCanvasContextMenu}
       onDoubleClick={onCanvasDoubleClick}
     >
       {/* 悬浮工具栏：撤销 / 重做 / 整理 / 缩放 / 适配 */}
-      {documentStatus&&<div className="document-import-status" role="status" onPointerDown={e=>e.stopPropagation()}><span>{documentStatus}</span>{dropBusy&&<button type="button" className="btn" disabled={documentStatus==='正在保存文档与原件'} onClick={()=>documentImport.current?.abort()}>停止</button>}<button type="button" className="btn" onClick={()=>setDocumentStatus('')} disabled={dropBusy}>关闭</button></div>}
+      {documentStatus&&<div className="document-import-status" role="status" onPointerDown={e=>e.stopPropagation()}><span>{documentStatus}</span>{dropBusy&&<button type="button" className="btn" disabled={!documentImport.current||documentStatus==='正在保存文档与原件'} onClick={()=>documentImport.current?.abort()}>停止</button>}<button type="button" className="btn" onClick={()=>setDocumentStatus('')} disabled={dropBusy}>关闭</button></div>}
       <div className="canvas-toolbar" role="toolbar" aria-label="画布工具" onPointerDown={(e) => e.stopPropagation()}>
         <button type="button" className="tb-btn" title="撤销 (Ctrl+Z)" aria-label="撤销" disabled={!canUndo(history)} onClick={doUndo}>
           <svg width="15" height="15" viewBox="0 0 16 16" aria-hidden="true">
@@ -1127,19 +1193,6 @@ export function BoardCanvas({
           </svg>
         </button>
         <span className="tb-sep" aria-hidden="true" />
-        <button type="button" className="tb-btn" title="缩小 (Ctrl+-)" aria-label="缩小" onClick={() => zoomCenter(1 / 1.2)}>
-          <svg width="15" height="15" viewBox="0 0 16 16" aria-hidden="true">
-            <path d="M4 8h8" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
-          </svg>
-        </button>
-        <button type="button" className="tb-btn tb-zoom" title="缩放重置为 100% (Ctrl+0)" aria-label={`当前缩放 ${Math.round(zoom * 100)}%，点击重置为 100%`} onClick={zoomReset}>
-          {Math.round(zoom * 100)}%
-        </button>
-        <button type="button" className="tb-btn" title="放大 (Ctrl+=)" aria-label="放大" onClick={() => zoomCenter(1.2)}>
-          <svg width="15" height="15" viewBox="0 0 16 16" aria-hidden="true">
-            <path d="M8 4v8M4 8h8" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
-          </svg>
-        </button>
         <button type="button" className="tb-btn" title="适配全部内容 (Shift+1)" aria-label="适配全部内容到屏幕" onClick={fitAll}>
           <svg width="15" height="15" viewBox="0 0 16 16" aria-hidden="true">
             <path d="M2 5.5V2.5h3M14 5.5V2.5h-3M2 10.5v3h3M14 10.5v3h-3" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" />
@@ -1149,6 +1202,10 @@ export function BoardCanvas({
 
       {/* 连线层：覆盖整块画布的全尺寸 SVG，用屏幕坐标绘制（避免 0×0 世界层不渲染）。
           置于节点层之下（DOM 顺序在前 + CSS 定位），指针默认穿透、仅命中区可点。 */}
+      <button className="canvas-zoom-label" title="点击恢复100% · 滚轮或快捷键缩放" aria-label={`当前缩放 ${zoom<0.01?(zoom*100).toFixed(1):Math.round(zoom*100)}%，点击重置为100%`} onPointerDown={e=>e.stopPropagation()} onClick={zoomReset}>{zoom<0.01?(zoom*100).toFixed(1):Math.round(zoom*100)}%</button>
+      {heatMode&&<div className="heat-layer" aria-label={`热力概览，共${nodes.length}个节点`} data-level={level}>{renderedHeat.map(c=>{
+        const at=engine.toScreen(c);return <button type="button" key={c.id} className="heat-cell" data-count={c.count} title={`${c.count}个节点 · 点击逐级展开`} aria-label={`展开${c.count}个节点的热力区域`} style={{left:at.x,top:at.y,width:Math.max(8,c.w*zoom),height:Math.max(8,c.h*zoom),opacity:Math.min(.95,.45+Math.log2(c.count+1)*.08),['--heat-color' as string]:c.color||'var(--accent)'}} onPointerDown={e=>e.stopPropagation()} onDoubleClick={e=>e.stopPropagation()} onClick={e=>{e.stopPropagation();const r=rect();engine.zoomAtPoint({x:r.width/2,y:r.height/2},Math.min(1,zoom*2));const z=engine.viewport.zoom;engine.setViewport({zoom:z,x:r.width/2-(c.x+c.w/2)*z,y:r.height/2-(c.y+c.h/2)*z});rerender();onChange(nodes,edges,engine.viewport);}}>{c.count>1?c.count:''}</button>;
+      })}</div>}
       <svg className="edge-layer">
         <defs>
           <marker id="lm-arrow" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
@@ -1186,7 +1243,7 @@ export function BoardCanvas({
                 pathLength={1}
                 markerEnd={edge.directed ? (isSel ? 'url(#lm-arrow-sel)' : 'url(#lm-arrow)') : undefined}
               />
-              {edge.label && !editingEdge && (
+              {edge.label && zoom>=0.6 && !editingEdge && (
                 <g transform={`translate(${geo.mid.x} ${geo.mid.y})`}>
                   <text className="edge-label" style={{fontSize:12*engine.viewport.zoom,strokeWidth:4*engine.viewport.zoom}} textAnchor="middle" dominantBaseline="central" onDoubleClick={(e) => { e.stopPropagation(); startEdgeLabel(edge.id); }} onPointerDown={(e) => e.stopPropagation()}>
                     <title>{edge.label}</title>{edgeLabelLines(edge.label).map((line,index,lines)=><tspan key={index} x={0} dy={index===0?-(lines.length-1)*8*engine.viewport.zoom:16*engine.viewport.zoom}>{line}</tspan>)}
@@ -1205,10 +1262,10 @@ export function BoardCanvas({
 
       {/* 世界层：只改 transform（DESIGN §5.4） */}
       <div className={`canvas-world${arranging ? ' is-arranging' : ''}`} style={{ transform: engine.transform, transformOrigin: '0 0', ...glowVars }}>
-        {nodes.map((n) => (
+        {visibleNodes.map((n) => (
           <NodeCard
             key={n.id}
-            node={n}
+            node={n} projectId={board.projectId} boardId={board.id} onResizeStart={onResizeStart}
             selected={selected === n.id||!!moveRoot&&moveIds.has(n.id)}
             flash={flashId === n.id}
             editing={editingId === n.id}
@@ -1277,7 +1334,7 @@ export function BoardCanvas({
         const pn = nodes.find((n) => n.id === panelId);
         return pn ? (
           <NodePanel
-            node={pn}
+            node={pn} docVersions={docVersions}
             onCommit={commitNode}
             onColor={setNodeColor}
             onDelete={removeNode}
@@ -1285,11 +1342,21 @@ export function BoardCanvas({
             onOpenDoc={openDoc}
             onImportDocs={importDocs}
             onRemoveDoc={removeDoc}
+            onEditMarkdown={()=>setDocumentEditor({nodeId:pn.id,path:questionPath(pn.id),title:'完整问题',kind:'question'})} onSettings={()=>setAppearanceOpen(true)}
             projectId={board.projectId}
             boardId={board.id}
             guessMath={guessMath}
           />
         ) : null;
+      })()}
+
+      {appearanceOpen&&<BoardAppearancePanel name={board.name} value={board.appearance} onClose={()=>setAppearanceOpen(false)} onChange={v=>onChange(graphRef.current.nodes,graphRef.current.edges,engine.viewport,v)}/>}
+      {documentEditor&&(()=>{
+        const node=nodes.find(n=>n.id===documentEditor.nodeId);if(!node)return null;
+        const docs=node.docs.filter(d=>d.path!==questionPath(node.id)),counts=new Map<string,number>();for(const d of docs)counts.set(d.title,(counts.get(d.title)??0)+1);
+        const choices=[{path:questionPath(node.id),title:'完整问题'},...docs.map(d=>({path:d.path,title:(counts.get(d.title)??0)>1?`${d.title} · ${d.path.replace(/^docs\//,'')}`:d.title||d.path}))];
+        const choose=(path:string)=>{const doc=choices.find(d=>d.path===path);if(doc)setDocumentEditor({nodeId:node.id,path,title:doc.title,kind:path===questionPath(node.id)?'question':undefined});};
+        return documentEditor.kind==='question'?<QuestionEditor key={documentEditor.path} value={node.summary??''} onChange={v=>commitNode(node.id,{summary:v})} onFlush={onFlush} saveState={saveState} onClose={()=>setDocumentEditor(undefined)} path={documentEditor.path} choices={choices} onChoose={choose} onNew={()=>newDocument(node.id)}/>:<DocumentEditor key={documentEditor.path} {...documentEditor} projectId={board.projectId} boardId={board.id} onClose={()=>setDocumentEditor(undefined)} onSaved={onDocumentSaved} choices={choices} onChoose={choose} onNew={()=>newDocument(node.id)}/>;
       })()}
 
       {menu && <ContextMenu state={menu} onClose={() => setMenu(null)} />}

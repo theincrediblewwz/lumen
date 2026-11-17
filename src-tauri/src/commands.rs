@@ -116,7 +116,7 @@ pub fn board_save(board: storage::BoardFile, expected_revision: String) -> Resul
     if crate::sync::board_revision(&root, &board.project_id, &board.id)? != expected_revision {
         return Err("白板已由另一个窗口或同步更新；当前编辑未覆盖磁盘，请先保留内容再重新打开白板".into());
     }
-    storage::save_board(&root, &board)?;
+    crate::workspace_editing::save_board(&root, &board)?;
     crate::sync::board_revision(&root, &board.project_id, &board.id)
 }
 

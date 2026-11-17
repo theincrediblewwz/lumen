@@ -414,7 +414,7 @@ mod tests {
         let p = storage::create_project(&root, "synthetic").unwrap();
         let meta = storage::create_board(&root, &p.id, "synthetic").unwrap();
         let mut board = storage::load_board(&root, &p.id, &meta.id).unwrap();
-        board.nodes.push(storage::BoardNode {
+        board.nodes.push(storage::BoardNode { extra: Default::default(),
             id: "saved".into(),
             title: "saved note".into(),
             summary: None,

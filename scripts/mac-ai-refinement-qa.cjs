@@ -59,7 +59,7 @@ async function profileState(page) { return page.evaluate(async () => { const { l
   await page.locator('.board-canvas-live').click({ position: { x: 30, y: 430 } });
   await page.locator('.sidebar.is-collapsed').waitFor({ state: 'attached' });
   assert.equal(await page.locator('.node-card').count(), 2);
-  await click(page, page.locator('.canvas-toolbar .tb-zoom'));
+  await click(page, page.locator('.canvas-zoom-label'));
   await shot(page, '05-after-canvas-focus');
   await click(page, page.getByRole('button', { name: '展开侧栏', exact: true })); await page.locator('.pane-projects').waitFor();
   checks.push('double click still creates node; blank primary click hides both panes and titlebar restores navigation');

@@ -3,6 +3,8 @@ import type { BoardNode } from '../api';
 import { DocPreview } from './DocPreview';
 import { MessageCircle } from 'lucide-react';
 import { openAiWindow } from '../ai/aiWindow';
+import { MarkdownView } from './MarkdownView';
+import { isQuestionDoc } from '../canvas/presentation';
 
 /** 可选的节点颜色标记（左边框色条），null = 默认（用主题强调色） */
 const COLOR_SWATCHES: { id: string | null; label: string; color: string }[] = [
@@ -41,8 +43,8 @@ function GrowArea({
     <textarea
       ref={ref}
       className={className}
-      defaultValue={value}
-      key={value}
+      value={value}
+      onChange={e=>onCommit(e.target.value)}
       placeholder={placeholder}
       rows={1}
       onInput={grow}
@@ -62,7 +64,7 @@ function GrowArea({
  * - 删除节点
  */
 export function NodePanel({
-  node,
+  node, docVersions={},
   onCommit,
   onColor,
   onDelete,
@@ -70,10 +72,13 @@ export function NodePanel({
   onOpenDoc,
   onImportDocs,
   onRemoveDoc,
+  onEditMarkdown, onSettings,
   projectId,
   boardId,
   guessMath = false,
 }: {
+  onEditMarkdown:()=>void;onSettings:()=>void;
+  docVersions?:Record<string,number>;
   node: BoardNode;
   onCommit: (id: string, patch: { title?: string; summary?: string }) => void;
   onColor: (id: string, color: string | null) => void;
@@ -245,7 +250,7 @@ export function NodePanel({
     }
   };
 
-  const docCount = node.docs.length;
+  const docCount = node.docs.filter(d=>!isQuestionDoc(d.path)).length;
   const updated = new Date(node.updated_at);
   const updatedStr = Number.isNaN(updated.getTime())
     ? ''
@@ -277,7 +282,7 @@ export function NodePanel({
         onDoubleClick={resetDock}
         title="按住此处拖动面板 · 双击复位到默认位置"
       >
-        <span className="np-kicker">问题节点</span>
+        <span className="np-kicker">{node.sticker?'贴图':'问题节点'}</span>
         <button type="button" className="np-close" title="收起面板 (Esc)" onClick={onClose}>
           <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true">
             <path d="M3 3l10 10M13 3L3 13" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
@@ -288,6 +293,7 @@ export function NodePanel({
       <div className="np-body">
         <div className="np-top">
         <button type="button" className="btn np-ask" onClick={()=>void openAiWindow({projectId,boardId,boardName:node.title,nodeId:node.id}).catch(e=>setActionStatus(String(e)))}><MessageCircle size={16} strokeWidth={1.7}/> 与 AI 对话</button>
+        <button type="button" className="btn np-settings" onClick={onSettings}>白板设置</button>
         {actionStatus && <p className="np-empty" role="status">{actionStatus}</p>}
         <label className="np-label">概括标题</label>
         <GrowArea
@@ -297,13 +303,9 @@ export function NodePanel({
           onCommit={(v) => onCommit(node.id, { title: v })}
         />
 
-        <label className="np-label">完整问题</label>
-        <GrowArea
-          className="np-question"
-          value={node.summary ?? ''}
-          placeholder="写下完整、具体的问题…"
-          onCommit={(v) => onCommit(node.id, { summary: v })}
-        />
+        {node.summary?<MarkdownView className="np-question-preview" value={node.summary.slice(0,1200)}/>:<p className="np-empty">为这个节点写下完整问题，或新建一篇文档。</p>}
+        <button type="button" className="np-markdown-open" onClick={onEditMarkdown}><span aria-hidden="true">✎</span> Markdown 编辑器 <span aria-hidden="true">↗</span></button>
+
 
         <label className="np-label">颜色标记</label>
         <div className="np-swatches">
@@ -346,10 +348,10 @@ export function NodePanel({
           <p className="np-empty">将 Markdown、PDF 或含图片的 Markdown ZIP 拖到节点，也可以点「＋ 导入」。</p>
         ) : (
           <div className="np-doc-grid">
-            {node.docs.map((d) => (
+            {node.docs.filter(d=>!isQuestionDoc(d.path)).map((d) => (
               <DocPreview
                 key={d.path}
-                doc={d}
+                doc={d} refresh={docVersions[d.path]??0}
                 projectId={projectId}
                 boardId={boardId}
                 guessMath={guessMath}

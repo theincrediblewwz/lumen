@@ -32,6 +32,9 @@ export type BoardNode = {
   x: number;
   y: number;
   w: number;
+  h?: number;
+  sticker?: boolean;
+  imageAspect?: number;
   color?: string | null;
   docs: DocRef[];
   created_at: string;
@@ -59,6 +62,7 @@ export type BoardFile = {
   viewport: Viewport;
   nodes: BoardNode[];
   edges: BoardEdge[];
+  appearance?: import('./canvas/presentation').BoardAppearance;
 };
 
 const boardRevisions = new Map<string, string>();

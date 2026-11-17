@@ -533,6 +533,8 @@ mod tests {
                         Err(e) => panic!("accept failed: {e}"),
                     }
                 };
+                // macOS inherits O_NONBLOCK from the listener; read a complete request.
+                socket.set_nonblocking(false).unwrap();
                 socket
                     .set_read_timeout(Some(Duration::from_secs(2)))
                     .unwrap();
@@ -679,7 +681,7 @@ mod tests {
             |_| retries += 1,
         )
         .await;
-        assert!(result.unwrap_err().contains("已自动重试 3 次"));
+        let error=result.unwrap_err();assert!(error.contains("已自动重试 3 次"),"{error}");
         peer.join().unwrap();
         assert_eq!(retries, MAX_RETRIES);
         assert_eq!(count.load(Ordering::SeqCst), (MAX_RETRIES + 1) as usize);

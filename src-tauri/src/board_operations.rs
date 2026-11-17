@@ -517,7 +517,7 @@ fn apply_full_at(
                     .and_then(|v| board.nodes.iter().find(|n| &n.id == v))
                     .map(|n| (n.x + n.w + 80.0, n.y + (nodes - 1) as f64 * 180.0))
                     .unwrap_or((80.0, 80.0 + board.nodes.len() as f64 * 180.0));
-                board.nodes.push(storage::BoardNode {
+                board.nodes.push(storage::BoardNode { extra: Default::default(),
                     id: id.clone(),
                     title: title.trim().into(),
                     summary: Some(summary.clone()),

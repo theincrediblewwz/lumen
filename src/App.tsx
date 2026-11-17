@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { api, pickStorageDir, type AppInfo, type BoardEdge, type BoardFile, type BoardMeta, type BoardNode, type ProjectMeta } from './api';
 import { ContextMenu, type ContextMenuState } from './components/ContextMenu';
 import { TitleBar } from './components/TitleBar';
@@ -22,6 +22,9 @@ import { KnowledgeLibrary } from './components/KnowledgeLibrary';
 import type { KnowledgeDraft } from './knowledge/store';
 import {exportBoardPackage,importBoardPackage} from './documents/client';
 import {exportLibraryPackage,restoreLibraryPackage,applyLibraryPreferences} from './libraryPackages';
+
+import { loadFavorites, saveFavorites, pinnedFirst } from './favorites';
+import type { BoardAppearance } from './canvas/presentation';
 
 type Phase = 'loading' | 'setup' | 'ready';
 
@@ -94,6 +97,10 @@ export default function App() {
     if ('__TAURI_INTERNALS__' in window) void import('@tauri-apps/api/event').then(({ listen }) => listen<{ entryId?: string; revisionId?: string; draft?: KnowledgeDraft }>('lumen://open-knowledge', event => { setKnowledgeTarget(event.payload); setKnowledgeOpen(true); })).then(stop => { if (active) unlisten = stop; else stop(); }).catch(error => setError(String(error)));
     return () => { active = false; unlisten?.(); window.removeEventListener('lumen:open-knowledge', open); };
   }, []);
+  const [favoriteVersion,setFavoriteVersion]=useState(0);
+  const favorites=useMemo(()=>loadFavorites(root??''),[root,favoriteVersion]);
+  const toggleFavorite=(kind:'projects'|'boards',id:string)=>{if(!root)return;const next={...favorites,[kind]:favorites[kind].includes(id)?favorites[kind].filter(v=>v!==id):[...favorites[kind],id]};try{saveFavorites(root,next);setFavoriteVersion(v=>v+1);}catch(e){setError(`收藏未能保存：${String(e)}`);}};
+  const [saveState,setSaveState]=useState<'saved'|'dirty'|'saving'|'error'>('saved');
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pendingBoards = useRef(new Map<string,BoardFile>());
   const pendingSave = useRef<Promise<void>>(Promise.resolve());
@@ -148,13 +155,18 @@ export default function App() {
 
   const flushBoards = useCallback(async () => {
     if(saveTimer.current)clearTimeout(saveTimer.current);
-    await pendingSave.current;
-    for(const [id,board] of [...pendingBoards.current]) {
-      const save=api.boardSave(board);pendingSave.current=save;
-      try { await save; if(pendingBoards.current.get(id)===board)pendingBoards.current.delete(id); }
-      finally { pendingSave.current=Promise.resolve(); }
-    }
+    const run=pendingSave.current.catch(()=>{}).then(async()=>{
+      while(pendingBoards.current.size){
+        const [id,board]=pendingBoards.current.entries().next().value!;
+        setSaveState('saving');await api.boardSave(board);
+        if(pendingBoards.current.get(id)===board)pendingBoards.current.delete(id);
+      }
+      setSaveState('saved');
+    });
+    pendingSave.current=run;
+    try {await run;} catch(error){setSaveState('error');throw error;}
   },[]);
+  useEffect(()=>{const flush=()=>{if(pendingBoards.current.size&&!syncLockRef.current)void flushBoards().catch(e=>setError(String(e)));};window.addEventListener('blur',flush);return()=>window.removeEventListener('blur',flush);},[flushBoards]);
   useEffect(()=>registerEditorFlush(async()=>{
     if(syncLockRef.current)throw new Error('主窗口正在保存或同步，请稍后重试');
     if(pointerActiveRef.current||(isEditableTarget(document.activeElement)&&!document.activeElement?.closest('.ai-root,.conversation-import')))throw new Error('正在编辑内容，请先完成本次操作后重试');
@@ -171,12 +183,13 @@ export default function App() {
     let closing=false;let disposed=false;let stop:(()=>void)|undefined;
     const nativeWindow=getCurrentWindow();
     void nativeWindow.onCloseRequested(async event=>{
-      if(!window.dispatchEvent(new Event('lumen:before-window-close',{cancelable:true}))){event.preventDefault();return;}
+      const pending:Promise<void>[]=[];
+      if(!window.dispatchEvent(new CustomEvent('lumen:before-window-close',{cancelable:true,detail:{pending}}))){event.preventDefault();void Promise.allSettled(pending);return;}
       if(knowledgeEditing.current){event.preventDefault();setError('当前写作尚未保存，请保存或取消写作后再关闭窗口。');return;}
       if(closing){event.preventDefault();return;}
       closing=true;
       // Tauri awaits this handler then destroys the window unless prevented.
-      try{(document.activeElement as HTMLElement|null)?.blur();await Promise.resolve();await flushBoards();}
+      try{(document.activeElement as HTMLElement|null)?.blur();await Promise.resolve();await Promise.all(pending);await flushBoards();}
       catch(error){event.preventDefault();closing=false;setError(`未能保存当前编辑，窗口保留：${String(error)}`);}
     }).then(unlisten=>{if(disposed)unlisten();else stop=unlisten;});
     return()=>{disposed=true;stop?.();};
@@ -272,7 +285,9 @@ export default function App() {
   /* 全局快捷键（M6-9）：全屏 / 搜索 / 帮助；Esc 退出全屏。画布级快捷键在 BoardCanvas 内处理 */
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (matchShortcut(e, shortcut('fullscreen')!, { mac })) {
+      if ((e.metaKey||e.ctrlKey)&&e.key.toLowerCase()==='s') {
+        e.preventDefault();void flushBoards().catch(err=>setError(String(err)));
+      } else if (matchShortcut(e, shortcut('fullscreen')!, { mac })) {
         e.preventDefault();
         toggleFullscreen();
       } else if (matchShortcut(e, shortcut('search')!, { mac })) {
@@ -289,7 +304,7 @@ export default function App() {
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [fullscreen, toggleFullscreen, applyFullscreen, mac]);
+  }, [fullscreen, toggleFullscreen, applyFullscreen, mac,flushBoards]);
 
   useEffect(() => {
     if (editing) {
@@ -383,10 +398,10 @@ export default function App() {
 
   /* ── 画布变更：本地即时更新 + 防抖落盘（DESIGN §6.5） ── */
   const onCanvasChange = useCallback(
-    (nodes: BoardNode[], edges: BoardEdge[], viewport: Viewport) => {
+    (nodes: BoardNode[], edges: BoardEdge[], viewport: Viewport, appearance?:BoardAppearance) => {
       if(syncLockRef.current)return;
       const prev=activeBoardRef.current;if(!prev)return;
-      const next:BoardFile={...prev,nodes,edges,viewport};
+      const next:BoardFile={...prev,nodes,edges,viewport,...(appearance?{appearance}:{})};setSaveState('dirty');
       activeBoardRef.current=next;setActiveBoard(next);pendingBoards.current.set(next.id,next);
       if(saveTimer.current)clearTimeout(saveTimer.current);
       saveTimer.current=setTimeout(()=>{void flushBoards().catch(e=>setError(String(e)));},600);
@@ -395,6 +410,8 @@ export default function App() {
   );
 
   const withBusy = async (fn: () => Promise<void>) => {
+    if(document.querySelector('.board-canvas-live[aria-busy="true"]')){setError('请先完成正在进行的画布操作。');return;}
+    if(document.querySelector('.document-editor-modal')){setError('请先保存并关闭Markdown编辑器，再切换白板或项目。');return;}
     if (busyRef.current) return;
     busyRef.current = true;
     setBusy(true);
@@ -639,6 +656,7 @@ export default function App() {
   const projectItemMenu = (e: React.MouseEvent, p: ProjectMeta) =>
     openAt(e, [
       { type: 'item', label: '打开', onClick: () => selectProject(p) },
+      {type:'item',label:favorites.projects.includes(p.id)?'取消收藏置顶':'收藏并置顶',onClick:()=>toggleFavorite('projects',p.id)},
       { type: 'item', label: '导出完整项目资料包…', onClick: () => exportLibrary(p) },
       {
         type: 'item',
@@ -663,6 +681,7 @@ export default function App() {
   const boardItemMenu = (e: React.MouseEvent, b: BoardMeta) =>
     openAt(e, [
       { type: 'item', label: '打开', onClick: () => activeProject && openBoard(activeProject.id, b.id) },
+      {type:'item',label:favorites.boards.includes(b.id)?'取消收藏置顶':'收藏并置顶',onClick:()=>toggleFavorite('boards',b.id)},
       { type:'item',label:'导入对话生成树…',onClick:()=>activeProject&&leaveKnowledge(()=>setImportTarget({projectId:activeProject.id,boardId:b.id,boardName:b.name})) },
       {
         type: 'item',
@@ -781,18 +800,20 @@ export default function App() {
                 </button>
               </div>
               <ul className="list" onContextMenu={projectsPaneMenu}>
-                {projects.map((p) => editing?.kind === 'rename-project' && editing.id === p.id ? inlineEditor : (
+                {pinnedFirst(projects,favorites.projects).map((p) => editing?.kind === 'rename-project' && editing.id === p.id ? inlineEditor : (
                   <li
                     key={p.id}
                     className={`list-item ${activeProject?.id === p.id ? 'is-active' : ''}`}
                     role="button"
                     tabIndex={0}
+                    aria-label={p.name}
                     aria-expanded={activeProject?.id === p.id && boardsExpanded}
                     onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); selectProject(p); } }}
                     onClick={() => selectProject(p)}
                     onContextMenu={(e) => projectItemMenu(e, p)}
                   >
                     <span className="list-title">{p.name}</span>
+                    <button className="favorite-toggle" aria-label={`收藏置顶项目：${p.name}`} aria-pressed={favorites.projects.includes(p.id)} title={favorites.projects.includes(p.id)?'取消收藏置顶':'收藏并置顶'} onKeyDown={e=>e.stopPropagation()} onClick={e=>{e.stopPropagation();toggleFavorite('projects',p.id);}}>{favorites.projects.includes(p.id)?'★':'☆'}</button>
                   </li>
                 ))}
                 {editing?.kind === 'new-project' && inlineEditor}
@@ -815,15 +836,18 @@ export default function App() {
                 )}
               </div>
               <ul className="list" onContextMenu={activeProject ? boardsPaneMenu : undefined}>
-                {boards.map((b) => editing?.kind === 'rename-board' && editing.id === b.id ? inlineEditor : (
+                {pinnedFirst(boards,favorites.boards).map((b) => editing?.kind === 'rename-board' && editing.id === b.id ? inlineEditor : (
                   <li
                     key={b.id}
-                    className={`list-item ${activeBoard?.id === b.id ? 'is-active' : ''}`}
+                    className={`list-item ${activeBoard?.id === b.id ? 'is-active' : ''}`} role="button" tabIndex={0} aria-label={b.name}
+                    onKeyDown={e=>{if(e.target===e.currentTarget&&(e.key==='Enter'||e.key===' ')){e.preventDefault();activeProject&&openBoard(activeProject.id,b.id);}}}
                     onClick={() => activeProject && openBoard(activeProject.id, b.id)}
                     onContextMenu={(e) => boardItemMenu(e, b)}
                   >
                     <span className="list-title">{b.name}</span>
+
                     <span className="list-meta">{b.updated_at.slice(0, 10)}</span>
+                    <button className="favorite-toggle" aria-label={`收藏置顶白板：${b.name}`} aria-pressed={favorites.boards.includes(b.id)} title={favorites.boards.includes(b.id)?'取消收藏置顶':'收藏并置顶'} onClick={e=>{e.stopPropagation();toggleFavorite('boards',b.id);}}>{favorites.boards.includes(b.id)?'★':'☆'}</button>
                   </li>
                 ))}
                 {editing?.kind === 'new-board' && inlineEditor}
@@ -841,7 +865,7 @@ export default function App() {
           <BoardCanvas
             key={`${activeBoard.id}:${boardGeneration}`}
             board={activeBoard}
-            onChange={onCanvasChange}
+            onChange={onCanvasChange} onFlush={flushBoards} saveState={saveState}
             edgeStyle={settings.edgeStyle ?? 'curved'}
             guessMath={settings.guessMath}
             focusNode={focusNode && activeBoard.nodes.some((n) => n.id === focusNode.id) ? focusNode : null}
@@ -859,6 +883,7 @@ export default function App() {
           </main>
         )}
       </div>
+      {activeBoard&&!knowledgeOpen&&<button className={`board-save-state is-${saveState}`} title="内容自动保存 · Cmd/Ctrl+S立即保存" onClick={()=>void flushBoards().catch(e=>setError(String(e)))}>{saveState==='saved'?'已保存':saveState==='saving'?'保存中…':saveState==='error'?'保存失败 · 点击重试':'等待保存…'}</button>}
       {syncLocked&&<div className="sync-edit-lock" role="status">正在保存并同步资料…</div>}
 
       {menu && <ContextMenu state={menu} onClose={() => setMenu(null)} />}
@@ -890,6 +915,7 @@ export default function App() {
         boardId={activeBoard?.id ?? null}
         boardName={activeBoard?.name ?? null}
         suspended={knowledgeOpen}
+        onBoardSettings={()=>window.dispatchEvent(new CustomEvent('lumen:board-settings',{detail:activeBoard?.id}))}
       />
     </div>
   );

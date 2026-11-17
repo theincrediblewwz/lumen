@@ -169,6 +169,7 @@ export function isEditableTarget(target: EventTarget | null): boolean {
 /** 全部快捷键定义（帮助面板与集中匹配共用）。 */
 export const SHORTCUTS: ShortcutDef[] = [
   // 全局
+  { id: 'save', combos: ['mod+s'], label: '立即保存（内容也会自动保存）', group: '全局' },
   { id: 'search', combos: ['mod+k'], label: '全局搜索', group: '全局' },
   { id: 'help', combos: ['shift+/'], label: '快捷键帮助', group: '全局' },
   { id: 'fullscreen', combos: ['f11'], label: '进入 / 退出全屏', group: '全局' },

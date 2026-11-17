@@ -207,6 +207,22 @@ fn image_type(bytes: &[u8]) -> Result<(&'static str, &'static str), String> {
         Err("ZIP 含无效图片；仅支持 PNG/JPEG/GIF/WebP".into())
     }
 }
+
+pub fn image_source(path:&Path)->Result<Vec<u8>,String>{read_source(path)}
+pub fn prepare_image(bytes:Vec<u8>,title:String)->Result<Prepared,String>{
+    if bytes.len()>16*1024*1024{return Err("贴图最多16MiB".into());}
+    let (ext,mime)=image_type(&bytes)?;
+    let digest=hash(&bytes);let alias=format!("images/image.{ext}");
+    let body=format!("![贴图]({alias})\n");
+    let archive=crate::portable_documents::archive(&BTreeMap::from([("answer.md".into(),body.as_bytes().to_vec()),(alias.clone(),bytes.clone())]))?;
+    let mut files=BTreeMap::new();
+    let image=make_asset(bytes,ext,mime,&mut files);
+    let original=make_asset(archive,"zip","application/zip",&mut files);
+    let meta=Metadata{schema:"lumen-document/v1".into(),kind:"markdown_bundle".into(),original,images:BTreeMap::from([(alias,image)]),pages:0,extraction:"ready".into()};
+    let content=format!("{PREFIX}{}{END}{body}",serde_json::to_string(&meta).map_err(err)?);split(&content)?;
+    let path=format!("docs/sticker_{digest}.md");let size=content.len() as u64;files.insert(path.clone(),content.into_bytes());
+    Ok(Prepared{reference:storage::DocRef{path,title,bytes:Some(size)},files})
+}
 pub fn unzip(bytes: &[u8]) -> Result<BTreeMap<String, Vec<u8>>, String> {
     unzip_limit(bytes, LIMIT, 512)
 }
@@ -290,6 +306,7 @@ pub fn prepare(
         .collect::<String>();
     let mut files = BTreeMap::new();
     let content = match ext.as_str() {
+        "png"|"jpg"|"jpeg"|"gif"|"webp" => return prepare_image(raw,title),
         "md" | "markdown" => {
             let text = storage::decode_text(&raw);
             if text.starts_with(PREFIX) {

@@ -1,5 +1,8 @@
 import { memo, useEffect, useLayoutEffect, useRef } from 'react';
 import type { BoardNode } from '../api';
+import { MarkdownView } from './MarkdownView';
+import { StickerImage } from './StickerImage';
+import { isQuestionDoc } from '../canvas/presentation';
 
 /** 自适应高度的文本域：随内容增减行数（修复长标题只显示尾部的问题） */
 function AutoTextarea({
@@ -42,6 +45,7 @@ function AutoTextarea({
       placeholder={placeholder}
       rows={1}
       onInput={grow}
+      onChange={e=>onCommit(e.target.value)}
       onPointerDown={(e) => e.stopPropagation()}
       onDoubleClick={(e) => e.stopPropagation()}
       onKeyDown={(e) => {
@@ -89,7 +93,10 @@ export const NodeCard = memo(function NodeCard({
   onExitEdit,
   onMeasure,
   onHoverChange,
+  onResizeStart, projectId, boardId,
 }: {
+  projectId:string; boardId:string;
+  onResizeStart:(e:React.PointerEvent,id:string,corner:string)=>void;
   node: BoardNode;
   selected: boolean;
   flash?: boolean;
@@ -109,7 +116,7 @@ export const NodeCard = memo(function NodeCard({
   onMeasure: (id: string, w: number, h: number) => void;
   onHoverChange: (hovering: boolean, clientX: number, clientY: number) => void;
 }) {
-  const docCount = node.docs.length;
+  const docCount = node.docs.filter(d=>!isQuestionDoc(d.path)).length;
   const cardRef = useRef<HTMLDivElement>(null);
 
   // 测量真实布局尺寸（世界单位，不受 transform 缩放影响：offsetWidth/Height）
@@ -126,11 +133,12 @@ export const NodeCard = memo(function NodeCard({
   return (
     <div
       ref={cardRef}
-      className={`node-card glass-surface${selected ? ' is-selected' : ''}${flash ? ' is-flash' : ''}${editing ? ' is-editing' : ''}${connectTarget ? ' is-connect-target' : ''}${dropTarget ? ' is-drop-target' : ''}`}
+      className={`node-card${node.sticker?' is-sticker':' glass-surface'}${selected ? ' is-selected' : ''}${flash ? ' is-flash' : ''}${editing ? ' is-editing' : ''}${connectTarget ? ' is-connect-target' : ''}${dropTarget ? ' is-drop-target' : ''}`}
       style={{
         left: node.x,
         top: node.y,
         width: node.w,
+        height: node.h,
         // 节点自定义颜色：既作左侧色条，又作为该卡片的强调色（选中框/锚点/光晕）。
         // 未设色时回退到主题强调色 var(--accent)。
         ['--node-accent' as string]: node.color || 'var(--accent)',
@@ -141,7 +149,7 @@ export const NodeCard = memo(function NodeCard({
       onPointerLeave={(e) => onHoverChange(false, e.clientX, e.clientY)}
       onDoubleClick={(e) => {
         e.stopPropagation();
-        onStartEdit(node.id);
+        if(node.sticker)onOpen(node.id);else onStartEdit(node.id);
       }}
       onClick={(e) => {
         e.stopPropagation();
@@ -172,6 +180,7 @@ export const NodeCard = memo(function NodeCard({
             onCommit={(v) => onCommit(node.id, { title: v })}
             onCancel={onEditCancel}
           />
+          <MarkdownView className="node-title" inline value={node.title}/>
           <AutoTextarea
             className="node-q-input"
             value={node.summary ?? ''}
@@ -183,9 +192,10 @@ export const NodeCard = memo(function NodeCard({
         </div>
       ) : (
         <>
-          <div className="node-title">{node.title || '未命名问题'}</div>
-          {node.summary && <div className="node-question">{node.summary}</div>}
-          {docCount > 0 && (
+          {node.sticker&&node.docs[0]?<><StickerImage projectId={projectId} boardId={boardId} path={node.docs[0].path}/><span className="sticker-info">{node.title}</span></>:<>
+          <MarkdownView className="node-title" inline value={node.title || '未命名问题'}/>
+          {node.summary && <MarkdownView className="node-question" value={node.summary.slice(0,1200)}/>}</>}
+          {docCount > 0 && !node.sticker && (
             <div className="node-badge" title={`${docCount} 篇文档`}>
               <svg width="12" height="12" viewBox="0 0 16 16" aria-hidden="true">
                 <path d="M4 2h5l3 3v9H4z" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinejoin="round" />
@@ -196,6 +206,7 @@ export const NodeCard = memo(function NodeCard({
         </>
       )}
 
+      {selected&&!editing&&(['nw','ne','sw','se'] as const).map(corner=><span key={corner} className={`node-resize-handle corner-${corner}`} role="button" aria-label={`调整节点尺寸 ${corner}`} onPointerDown={e=>onResizeStart(e,node.id,corner)} onClick={e=>e.stopPropagation()}/>)}
       {/* 连线手柄（选中/悬停时出现，按下即拉线）：节点右侧中点，单个 */}
       {showAnchors && !editing && (
         <div className="node-anchors" aria-hidden="true">

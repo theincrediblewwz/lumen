@@ -89,6 +89,8 @@ pub struct BoardNode {
     pub docs: Vec<DocRef>,
     pub created_at: String,
     pub updated_at: String,
+    #[serde(default, flatten)]
+    pub extra: std::collections::BTreeMap<String, serde_json::Value>,
 }
 
 fn default_node_w() -> f64 {
@@ -1156,7 +1158,7 @@ mod tests {
 
         let mut loaded = load_board(&root, &project.id, &board.id).unwrap();
         loaded.name = "改过的名字".to_string();
-        loaded.nodes.push(BoardNode {
+        loaded.nodes.push(BoardNode { extra: Default::default(),
             id: "n1".into(),
             title: "什么是 ELBO？".into(),
             summary: Some("变分下界的推导".into()),
@@ -1318,7 +1320,7 @@ mod tests {
 
         // 改动白板 -> 再快照应新增一份
         let mut loaded = load_board(&root, &p.id, &b.id).unwrap();
-        loaded.nodes.push(BoardNode {
+        loaded.nodes.push(BoardNode { extra: Default::default(),
             id: "n1".into(),
             title: "T".into(),
             summary: None,

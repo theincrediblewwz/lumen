@@ -12,7 +12,7 @@ fn setup() -> (PathBuf, String, String) {
     let b = storage::create_board(&root, &p.id, "测试白板").unwrap();
     let mut board = storage::load_board(&root, &p.id, &b.id).unwrap();
     let now = storage::now_iso();
-    board.nodes.push(storage::BoardNode {
+    board.nodes.push(storage::BoardNode { extra: Default::default(),
         id: "n1".into(),
         title: "n1".into(),
         summary: None,

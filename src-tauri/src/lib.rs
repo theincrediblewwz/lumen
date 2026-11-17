@@ -7,6 +7,7 @@ mod secrets;
 mod local_credentials;
 mod storage;
 mod documents;
+mod workspace_editing;
 mod portable_documents;
 mod library_package;
 #[cfg(test)]
@@ -101,6 +102,7 @@ pub(crate) fn application_context() -> tauri::Context<tauri::Wry> {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    use tauri::Manager;
     let context = application_context();
     #[cfg(feature = "isolated-preview")]
     let context = {
@@ -109,7 +111,7 @@ pub fn run() {
         for window in &mut context.config_mut().app.windows { window.create = false; }
         context
     };
-    tauri::Builder::default()
+    let application=tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .on_window_event(|window,event|{if matches!(event,tauri::WindowEvent::Destroyed){chat_generation::release_owner(window.label());}})
         .setup(|_app| {
@@ -133,6 +135,8 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             documents::attachment_source,
             documents::attachment_attach,
+            workspace_editing::document_update,
+            workspace_editing::image_document,
             documents::document_payload,
             documents::document_asset_read,
             documents::document_export,
@@ -214,6 +218,16 @@ pub fn run() {
             apply_window_corners,
             preview_window_open,
         ])
-        .run(context)
+        .build(context)
         .expect("failed to launch Lumen");
+    let mut quitting=false;
+    application.run(move |app,event|match event {
+        // Cmd+Q must use the same async save/close guards as the window's close button.
+        tauri::RunEvent::ExitRequested{api,code,..} if code.is_none()||code==Some(0) => {
+            let windows=app.webview_windows();
+            if !windows.is_empty(){api.prevent_exit();quitting=true;for window in windows.values(){let _=window.close();}}
+        }
+        tauri::RunEvent::WindowEvent{event:tauri::WindowEvent::Destroyed,..} if quitting&&app.webview_windows().is_empty()=>app.exit(0),
+        _=>{}
+    });
 }

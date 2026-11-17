@@ -7,14 +7,14 @@ interface Props {
   projectId: string | null;
   boardId: string | null;
   boardName: string | null;
-  suspended?: boolean;
+  suspended?: boolean; onBoardSettings?:()=>void;
 }
 
 /**
  * 悬浮 AI 按钮（FAB，M5-1）。点击优先开独立 AI 窗口；
  * 浏览器预览 / 开窗失败时回退到应用内浮层面板（监听 OPEN_AI_EVENT）。
  */
-export function AiFab({ projectId, boardId, boardName, suspended = false }: Props) {
+export function AiFab({ projectId, boardId, boardName, suspended = false, onBoardSettings }: Props) {
   const [overlay,setOverlay]=useState<string|null>(null);
   const [panels,setPanels]=useState<Record<string,OpenAiArgs>>({});
   const [retention,setRetention]=useState<Record<string,boolean>>({});
@@ -115,6 +115,7 @@ export function AiFab({ projectId, boardId, boardName, suspended = false }: Prop
         <MessageCircle size={18} strokeWidth={1.7} aria-hidden="true"/><span>问 AI</span>
       </button>
 
+      {onBoardSettings&&<button type="button" className="board-settings-fab glass-surface" aria-label="白板设置" title="本白板字体与字号" style={{right:pos.right+118,bottom:pos.bottom,visibility:suspended||!boardId?'hidden':undefined}} onClick={onBoardSettings}>⚙</button>}
       {Object.entries(panels).map(([key,panel])=>(
         <div key={key} className="ai-overlay-backdrop" hidden={key!==overlay} style={suspended||key!==overlay ? { visibility:'hidden',pointerEvents:'none',display:'none' } : undefined} onClick={closeOverlay}>
           <div className="ai-overlay-panel" onClick={e=>e.stopPropagation()}>
