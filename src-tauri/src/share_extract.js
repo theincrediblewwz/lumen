@@ -67,7 +67,15 @@
  let scroller=document.scrollingElement||document.documentElement;
  for(let node=nodes[0]?.parentElement;node;node=node.parentElement){const style=getComputedStyle(node);if(/auto|scroll/.test(style.overflowY)&&node.clientHeight>0&&node.scrollHeight>node.clientHeight+2){scroller=node;break;}}
  const height=scroller.scrollHeight,view=scroller.clientHeight||innerHeight,top=scroller.scrollTop;
- const signature=height+'|'+messages.map((message,index)=>message.role+':'+cache.entries.get(messageElements[index])?.version).join('\u0001');
+ // WebKit can update scrollTop before the page recycles its virtual rows. Do
+ // not advance into another viewport until the currently mounted rows cover it.
+ let virtual=false,minRow=Infinity,maxRow=-Infinity;
+ const rowPositions=nodes.map(el=>{for(let node=el;node&&node!==scroller;node=node.parentElement){const style=getComputedStyle(node);if(style.position==='absolute'||style.transform!=='none'){virtual=true;break;}}const rect=el.getBoundingClientRect(),y=rect.top-scroller.getBoundingClientRect().top+top;minRow=Math.min(minRow,y);maxRow=Math.max(maxRow,y+rect.height);return Math.round(y);});
+ const atBottom=top+view>=height-3;
+ // Leading/trailing page padding is not a missing row. At the end, the existing
+ // five-second stable tail scan waits for the final recycle without advancing.
+ const viewportReady=!virtual||(minRow<top+view&&(atBottom||maxRow>=top+view-3));
+ const signature=height+'|'+messages.map((message,index)=>message.role+':'+cache.entries.get(messageElements[index])?.version+':'+rowPositions[index]).join('\u0001');
  if(signature!==state.signature||busy){state.signature=signature;state.stable=Date.now();if(state.phase==='complete')state.phase='down';}
  const settled=Date.now()-state.stable;
  const more=Array.from(document.querySelectorAll('button')).find(el=>visible(el)&&!el.disabled&&/^(加载更多(?:消息|对话)?|查看更多(?:消息|对话)?|Load (?:more|older)(?: messages)?|Show more messages|View previous messages)$/i.test(el.textContent.trim()));
@@ -75,8 +83,14 @@
    scroller.scrollTo({top:0,behavior:'instant'});
    if(top>2)state.stable=Date.now();
    else if(more){more.click();state.stable=Date.now();}
-   else if(snapshot.ready&&messages.length&&settled>=2000){state.phase='down';state.topSeen=true;state.signature='';}
+   else if(snapshot.ready&&messages.length&&viewportReady&&settled>=2000){state.phase='down';state.topSeen=true;state.signature='';}
  }else{
+   if(!viewportReady){
+     state.awaitingViewport??=Date.now();state.stable=Date.now();
+     if(Date.now()-state.awaitingViewport>5000)return {...snapshot,error:'页面滚动后消息尚未更新，未将部分回答标为完整；请重试或导入Markdown',complete:false};
+     return {...snapshot,total:state.entries.size,phase:state.phase,scrolledTop:state.topSeen,position:top,bytes:state.bytes,waitingForViewport:true};
+   }
+   state.awaitingViewport=undefined;
    // A DOM element identity is stable for normal lazy lists. Explicit message/turn
    // IDs (or virtual-list indexes) survive virtualization and equal repeated text.
    const roots=nodes;
