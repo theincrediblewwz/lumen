@@ -1,14 +1,16 @@
-import {edgeGeometry,type Box,type EdgeStyle,type EdgeGeometry} from './geometry';
+import {edgeGeometry,bentGeometry,segmentHitsBox,type Box,type EdgeStyle,type EdgeGeometry} from './geometry';
 export function edgeLabelLines(label:string):string[]{
  const result:string[]=[];for(const paragraph of label.split('\n')){const chars=Array.from(paragraph);if(!chars.length)result.push('');for(let i=0;i<chars.length;i+=22)result.push(chars.slice(i,i+22).join(''));}return result;
 }
-export interface RoutingEdge{id:string;from:string;to:string;label?:string|null}
+export interface RoutingEdge{id:string;from:string;to:string;label?:string|null;route?:{kind:'straight'|'bent';control?:{x:number;y:number}}}
 /** Same-row relationships get their own channels above the row, outside cards. */
 export function routeBoardEdges(boxes:Map<string,Box>,edges:RoutingEdge[],style:EdgeStyle,scale=1):Map<string,EdgeGeometry>{
  const routes=new Map<string,EdgeGeometry>();const bands=new Map<number,{bottom:number;height:number;intervals:[number,number][] }[]>();
  for(const edge of edges){const a=boxes.get(edge.from),b=boxes.get(edge.to);if(!a||!b)continue;
-  const normal=edgeGeometry(a,b,style);routes.set(edge.id,normal);if(edge.from===edge.to)continue;
+  const normal=edge.route?.kind==='bent'&&edge.route.control?bentGeometry(a,b,edge.route.control,scale):edgeGeometry(a,b,edge.route?.kind==='straight'?'straight':style);routes.set(edge.id,normal);if(edge.from===edge.to||edge.route)continue;
   const sameRow=a.y<b.y+b.h&&b.y<a.y+a.h;if(!sameRow)continue;
+  const gap=Math.max(b.x-a.x-a.w,a.x-b.x-b.w),captionWidth=edge.label?(Math.min(360,Math.max(...edge.label.split('\n').map(s=>Array.from(s).length))*14)+16)*scale:0;
+  const obstructed=[...boxes].some(([id,box])=>id!==edge.from&&id!==edge.to&&(segmentHitsBox(normal.start,normal.mid,box,8*scale)||segmentHitsBox(normal.mid,normal.end,box,8*scale)));if(!obstructed&&gap>=captionWidth)continue;
   const x1=a.x+a.w/2,x2=b.x+b.w/2,mid=(x1+x2)/2,lines=edge.label?edgeLabelLines(edge.label):[];
   const width=Math.max(24,...lines.map(s=>Array.from(s).length*12))*scale+16*scale;
   const height=Math.max(24,lines.length*16+12)*scale;

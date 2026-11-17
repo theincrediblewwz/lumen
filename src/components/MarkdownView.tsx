@@ -14,8 +14,8 @@ export const MarkdownView = memo(function MarkdownView({value, className='', inl
   useLayoutEffect(()=>{
     if(ref.current && ref.current.querySelectorAll('[data-tex]').length>24){const job=typesetMath(ref.current,16);return()=>job.cancel();}
     ref.current?.querySelectorAll<HTMLElement>('[data-tex]').forEach(el=>{
-      try { katex.render(el.dataset.tex??'',el,{displayMode:el.classList.contains('math-block'),throwOnError:false,trust:false,strict:false}); }
-      catch { el.textContent=el.dataset.tex??''; }
+      try { katex.render(el.dataset.tex??'',el,{displayMode:el.classList.contains('math-block'),throwOnError:false,trust:false,strict:false}); el.setAttribute('data-done','1'); }
+      catch { el.textContent=el.dataset.tex??''; el.setAttribute('data-done','1'); }
     });
   },[html]);
   return <div ref={ref} className={`markdown-body markdown-live${inline?' is-inline':''} ${className}`} dangerouslySetInnerHTML={{__html:html}} onClick={e=>{

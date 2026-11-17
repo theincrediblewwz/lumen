@@ -44,7 +44,7 @@ export async function captureDesktop(snapshot:DesktopSnapshot):Promise<{entities
       if(!board) throw new Error('白板目录不完整');
       const boardId=board.id; const now=board.updated_at||date;
       const oldProject=previous[entityKey({kind:'projects',id:boardId})]?.data;
-      emit('projects',boardId,boardId,{id:boardId,title:board.name,source_text:oldProject?.source_text??'',created_at:board.created_at,updated_at:now,layout_direction:oldProject?.layout_direction??'vertical',topic_id:oldProject?.topic_id??null,mode:oldProject?.mode??'learning',explanation_style:oldProject?.explanation_style??'plain_language',detail_level:oldProject?.detail_level??'detailed',allow_outside_knowledge:oldProject?.allow_outside_knowledge??1,graph_kind:oldProject?.graph_kind??'free',_lumen_project:group,_lumen_viewport:board.viewport});
+      emit('projects',boardId,boardId,{id:boardId,title:board.name,source_text:oldProject?.source_text??'',created_at:board.created_at,updated_at:now,layout_direction:oldProject?.layout_direction??'vertical',topic_id:oldProject?.topic_id??null,mode:oldProject?.mode??'learning',explanation_style:oldProject?.explanation_style??'plain_language',detail_level:oldProject?.detail_level??'detailed',allow_outside_knowledge:oldProject?.allow_outside_knowledge??1,graph_kind:oldProject?.graph_kind??'free',_lumen_project:group,_lumen_viewport:board.viewport,...(board.appearance?{_lumen_appearance:board.appearance}:{})});
       const docs=new Map<string,string>();
       const assetOwners=new Map<string,{documentPath:string;asset:DocumentAsset;bundle:boolean}>();
       const addDoc=async(path:string,title:string,body:string,origin='source')=>{
@@ -96,7 +96,7 @@ export async function captureDesktop(snapshot:DesktopSnapshot):Promise<{entities
         const docId=primary?docs.get(primary):await addDoc(`docs/node_${safeId(node.id)}.md`,node.title,node.summary??'','learner');
         if(!docId)throw new Error(`节点文档缺失：${node.title}`);
         const old=previous[entityKey({kind:'nodes',id:node.id})]?.data;
-        emit('nodes',node.id,boardId,{id:node.id,project_id:boardId,title:node.title,subtitle:node.summary??'',x:node.x,y:node.y,importance:old?.importance??5,status:old?.status??'learning',sort_order:old?.sort_order??i,document_id:docId,_lumen_w:node.w,_lumen_color:node.color??null,_lumen_created_at:node.created_at,_lumen_updated_at:node.updated_at});
+        emit('nodes',node.id,boardId,{id:node.id,project_id:boardId,title:node.title,subtitle:node.summary??'',x:node.x,y:node.y,importance:old?.importance??5,status:old?.status??'learning',sort_order:old?.sort_order??i,document_id:docId,...(Object.keys(node).some(key=>['h','sticker','imageAspect','flowOwnerId','flow'].includes(key))?{_lumen_presentation:Object.fromEntries(['h','sticker','imageAspect','flowOwnerId','flow'].filter(key=>node[key as keyof typeof node]!==undefined).map(key=>[key,node[key as keyof typeof node]]))}:{}),_lumen_w:node.w,_lumen_color:node.color??null,_lumen_created_at:node.created_at,_lumen_updated_at:node.updated_at});
         for(const [sort,ref] of node.docs.entries()) {
           const document_id=docs.get(ref.path); if(!document_id)throw new Error('节点文档未找到');
           const prior=Object.values(previous).find(e=>e.kind==='node_documents'&&e.data?.node_id===node.id&&e.data?.document_id===document_id);
@@ -107,7 +107,7 @@ export async function captureDesktop(snapshot:DesktopSnapshot):Promise<{entities
       for(const edge of board.edges) {
         const old=previous[entityKey({kind:'edges',id:edge.id})]?.data;
         const docId=typeof old?.document_id==='string'&&entities[entityKey({kind:'documents',id:old.document_id})]?.data?old.document_id:await addDoc(`docs/edge_${safeId(edge.id)}.md`,edge.label??'关系',edge.label??'','learner');
-        emit('edges',edge.id,boardId,{id:edge.id,project_id:boardId,source_id:edge.from,target_id:edge.to,relation:old?.relation??'support',importance:old?.importance??5,document_id:docId,relation_kind:old?.relation_kind??'related',directed:edge.directed?1:0,label:edge.label??null,_lumen_created_at:edge.created_at});
+        emit('edges',edge.id,boardId,{id:edge.id,project_id:boardId,source_id:edge.from,target_id:edge.to,relation:old?.relation??'support',importance:old?.importance??5,document_id:docId,relation_kind:old?.relation_kind??'related',directed:edge.directed?1:0,label:edge.label??null,_lumen_created_at:edge.created_at,...(edge.route?{_lumen_route:edge.route}:{})});
       }
       const chatBytes=snapshot.files[`${base}/chats.json`];
       const hadChats=Object.values(previous).some(e=>e.kind==='conversations'&&e.boardId===boardId&&e.data);
@@ -196,7 +196,7 @@ export function projectDesktop(entities:Record<string,SyncEntity>,blobs:Record<s
       if(!docs.has(text(n.document_id))||links.some(l=>!docs.has(text(l.data!.document_id))))throw new Error('节点引用的文档尚未到齐，保留当前白板');
       const ids=[text(n.document_id),...links.map(l=>text(l.data!.document_id))];
       const refs=[...new Set(ids)].map(id=>docs.get(id)).filter((d):d is {path:string;title:string;bytes:number}=>!!d);
-      return {id:e.id,title:text(n.title),summary:text(n.subtitle),x:num(n.x),y:num(n.y),w:num(n._lumen_w,240),color:n._lumen_color??null,docs:refs,created_at:text(n._lumen_created_at,text(d.created_at,date)),updated_at:text(n._lumen_updated_at,text(d.updated_at,date))};
+      return {...(n._lumen_presentation&&typeof n._lumen_presentation==='object'?n._lumen_presentation:{}),id:e.id,title:text(n.title),summary:text(n.subtitle),x:num(n.x),y:num(n.y),w:num(n._lumen_w,240),color:n._lumen_color??null,docs:refs,created_at:text(n._lumen_created_at,text(d.created_at,date)),updated_at:text(n._lumen_updated_at,text(d.updated_at,date))};
     });
     const nodeIds=new Set(nodes.map(n=>n.id));
     if (knowledge.bindings.some(row => row.project_id === boardId && row.node_id && !nodeIds.has(row.node_id))) throw new Error('知识引用节点不属于白板');
@@ -208,8 +208,8 @@ export function projectDesktop(entities:Record<string,SyncEntity>,blobs:Record<s
     if(rows('conversation_documents').some(e=>!docs.has(text(e.data!.document_id))||!nodeIds.has(text(e.data!.node_id))||(e.data!.conversation_id&&!conversationIds.has(text(e.data!.conversation_id)))))throw new Error('对话文档的来源尚未到齐，已保留本机资料');
     if(rows('reading_positions').some(e=>!docs.has(text(e.data!.document_id))))throw new Error('阅读位置的文档尚未到齐，已保留本机资料');
     if(rows('source_items').some(e=>!docs.has(text(e.data!.derived_document_id))))throw new Error('附件的说明文档尚未到齐，已保留本机资料');
-    const edges=rows('edges').filter(e=>nodeIds.has(text(e.data!.source_id))&&nodeIds.has(text(e.data!.target_id))).map(e=>({id:e.id,from:text(e.data!.source_id),to:text(e.data!.target_id),directed:e.data!.directed!==0,label:e.data!.label??null,created_at:text(e.data!._lumen_created_at,text(d.created_at,date))}));
-    files[`${base}/board.json`]=fileBytes({version:1,id:boardId,name:text(d.title),projectId:groupId,created_at:text(d.created_at,date),updated_at:text(d.updated_at,date),viewport:d._lumen_viewport??{x:0,y:0,zoom:1},nodes,edges,_sync_content_policy:{mode:d.mode??'learning',allowOutsideKnowledge:d.allow_outside_knowledge===1}});
+    const edges=rows('edges').filter(e=>nodeIds.has(text(e.data!.source_id))&&nodeIds.has(text(e.data!.target_id))).map(e=>({id:e.id,from:text(e.data!.source_id),to:text(e.data!.target_id),directed:e.data!.directed!==0,label:e.data!.label??null,created_at:text(e.data!._lumen_created_at,text(d.created_at,date)),...(e.data!._lumen_route?{route:e.data!._lumen_route}:{})}));
+    files[`${base}/board.json`]=fileBytes({version:1,id:boardId,name:text(d.title),projectId:groupId,created_at:text(d.created_at,date),updated_at:text(d.updated_at,date),viewport:d._lumen_viewport??{x:0,y:0,zoom:1},...(d._lumen_appearance?{appearance:d._lumen_appearance}:{}),nodes,edges,_sync_content_policy:{mode:d.mode??'learning',allowOutsideKnowledge:d.allow_outside_knowledge===1}});
     const conversations=rows('conversations').sort((a,b)=>text(a.data!.created_at).localeCompare(text(b.data!.created_at))).map(e=>({id:e.id,title:text(e.data!.title),sourceNodeId:typeof e.data!.node_id==='string'?e.data!.node_id:undefined,createdAt:text(e.data!.created_at),updatedAt:text(e.data!.updated_at),messages:rows('conversation_messages').filter(m=>m.data!.conversation_id===e.id).sort((a,b)=>num(a.data!.ordinal)-num(b.data!.ordinal)).map(m=>({id:m.id,role:m.data!.role,content:text(m.data!.body),error:m.data!.status==='failed',at:text(m.data!.created_at)}))}));
     files[`${base}/chats.json`]=fileBytes({version:1,conversations});
     files[`${base}/chat-captures.json`]=fileBytes(rows('conversation_documents').map(e=>({...e.data,document_path:docs.get(text(e.data!.document_id))?.path??''})));

@@ -111,3 +111,10 @@ describe('exportSvg', () => {
     expect(exportSvg(board([], []))).toContain('空白板');
   });
 });
+
+ it('exports a mounted linear flow under its owner without duplicating hidden cards',()=>{
+   const b=board([node('owner','解方程',{flow:{nodeIds:['a','b']}}),node('a','变形',{flowOwnerId:'owner'}),node('b','求解',{flowOwnerId:'owner'})],[edge('a','b')]);
+   const forest=buildForest(b.nodes,b.edges);expect(forest).toHaveLength(1);expect(forest[0].children[0].node.id).toBe('a');
+   const text=exportMarkdown(b);expect(text).toContain('## 解方程');expect(text).toContain('### 变形');expect(text).toContain('#### 求解');
+   expect(exportSvg(b)).not.toContain('变形');
+ });

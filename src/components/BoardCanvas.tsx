@@ -11,7 +11,7 @@ import {
   canRedo,
   type History,
 } from '../canvas/history';
-import { edgeGeometry, straightPath, boxContains, type Box, type EdgeStyle } from '../canvas/geometry';
+import { edgeGeometry, bentGeometry, distanceToSegment, straightPath, boxContains, type Box, type EdgeStyle } from '../canvas/geometry';
 import { computeTreeLayout } from '../canvas/autoLayout';
 import {routeBoardEdges,edgeLabelLines} from '../canvas/edgeRouting';
 import { descendantIds,translateFromBaseline } from '../canvas/subtree';
@@ -31,6 +31,10 @@ import { BoardAppearancePanel } from './BoardAppearancePanel';
 import { NodeCard } from './NodeCard';
 import { NodePanel } from './NodePanel';
 import { NodeTooltip } from './NodeTooltip';
+import { EdgeLabel } from './EdgeLabel';
+import { FlowPanel } from './FlowPanel';
+import { imageDoc, imageOnly, clipboardText, nonemptyNode, flowNodes, orderFlow, topLevelNodes } from '../canvas/composition';
+import { measureNodes } from '../canvas/measureNodes';
 import { ContextMenu, type ContextMenuState } from './ContextMenu';
 
 /** 白板图状态：节点 + 连线由同一个历史栈驱动，撤销/重做覆盖两者 */
@@ -91,10 +95,14 @@ export function BoardCanvas({
   );
   const nodes = history.present.nodes;
   const edges = history.present.edges;
+  const mainNodes=useMemo(()=>topLevelNodes(nodes),[nodes]);
+  const mainIds=useMemo(()=>new Set(mainNodes.map(n=>n.id)),[mainNodes]);
+  const mainEdges=useMemo(()=>edges.filter(e=>mainIds.has(e.from)&&mainIds.has(e.to)),[edges,mainIds]);
   const historyRef = useRef(history);
   historyRef.current = history;
 
   const [selected, setSelected] = useState<string | null>(null);
+  const edgeRouteCleanup=useRef<(()=>void)|null>(null);
   const [selectedEdge, setSelectedEdge] = useState<string | null>(null);
   // 供键盘快捷键在稳定回调里读取最新选中与新建节点（规避闭包旧值）
   const selectedRef = useRef<string | null>(null);
@@ -110,6 +118,10 @@ export function BoardCanvas({
   useEffect(()=>{const show=(e:Event)=>{if((e as CustomEvent).detail===board.id)setAppearanceOpen(v=>!v);};window.addEventListener('lumen:board-settings',show);return()=>window.removeEventListener('lumen:board-settings',show);},[board.id]);
   const appearance=boardAppearance(board.appearance);
   const [menu, setMenu] = useState<ContextMenuState | null>(null);
+  const [flowOwnerId,setFlowOwnerId]=useState<string|null>(null);
+  const pasteTarget=useRef<string|null>(null),pasteFlow=useRef<string|null>(null);
+  const arrangeJob=useRef<AbortController|null>(null);
+  const [arrangeBusy,setArrangeBusy]=useState(false);
   const [panelId, setPanelId] = useState<string | null>(null);
   const [moveRoot,setMoveRoot]=useState<string|null>(null);
   const [moveIds,setMoveIds]=useState<Set<string>>(new Set());
@@ -137,11 +149,13 @@ export function BoardCanvas({
 
   /** 每个节点测得的真实布局尺寸（世界单位；不随 transform 缩放变化） */
   const sizesRef = useRef<Record<string, { w: number; h: number }>>({});
+  const minimumRef=useRef<Record<string,{w:number;h:number}>>({});
   const [sizesVer, setSizesVer] = useState(0);
   /** 自动布局归位期间给世界层加过渡类（§4.3：慢 360ms 归位） */
   const [arranging, setArranging] = useState(false);
   const arrangeTimer = useRef<number | null>(null);
-  const onMeasure = useCallback((id: string, w: number, h: number) => {
+  const onMeasure = useCallback((id: string, w: number, h: number, minimumW=120, minimumH=64) => {
+    minimumRef.current[id]={w:minimumW,h:minimumH};
     const prev = sizesRef.current[id];
     if (!prev || Math.abs(prev.w - w) > 0.5 || Math.abs(prev.h - h) > 0.5) {
       sizesRef.current[id] = { w, h };
@@ -153,7 +167,7 @@ export function BoardCanvas({
   useEffect(() => {
     engineRef.current = new CanvasEngine(board.viewport, { minZoom: MIN_BOARD_ZOOM, maxZoom: 3 });
     setHistory(createHistory({ nodes: board.nodes, edges: board.edges ?? [] }));
-    sizesRef.current = {};
+    sizesRef.current = {};minimumRef.current={};setFlowOwnerId(null);
     setSelected(null);
     setSelectedEdge(null);
     setEditingId(null);
@@ -204,23 +218,16 @@ export function BoardCanvas({
       viewportH: window.innerHeight,
     });
 
-    // ① 先判「问题节点面板」：它浮在最上层（position:fixed），
-    //    落在面板上就当作落到面板正在展示的那个节点上。
-    const panel = wrap.querySelector('.node-panel');
-    if (panel) {
-      const pr = panel.getBoundingClientRect();
-      if (clientX >= pr.left && clientX <= pr.right && clientY >= pr.top && clientY <= pr.bottom) {
-        return panelIdRef.current;
-      }
-    }
-
-    // ② 再判画布里的节点（换算到世界坐标后做盒子命中）
     const r = wrap.getBoundingClientRect();
     if (clientX < r.left || clientX > r.right || clientY < r.top || clientY > r.bottom) return null;
+    const front=document.elementFromPoint(clientX,clientY) as HTMLElement|null;
+    if(front?.closest('.node-panel'))return panelIdRef.current;
+    const card=front?.closest<HTMLElement>('[data-node-id]');if(card&&graphRef.current.nodes.some(n=>n.id===card.dataset.nodeId))return card.dataset.nodeId!;
+    if(front?.closest('.flow-panel'))return null;
     const world = engineRef.current.toWorld({ x: clientX - r.left, y: clientY - r.top });
-    for (const nn of graphRef.current.nodes) {
+    for (const nn of topLevelNodes(graphRef.current.nodes)) {
       const s = sizesRef.current[nn.id];
-      const box = { x: nn.x, y: nn.y, w: nn.w ?? DEFAULT_NODE_W, h: nn.h ?? s?.h ?? FALLBACK_NODE_H };
+      const box = { x: nn.x, y: nn.y, w: Math.max(nn.w??DEFAULT_NODE_W,s?.w??0), h:Math.max(nn.h??0,s?.h??FALLBACK_NODE_H) };
       if (boxContains(box, world)) return nn.id;
     }
     return null;
@@ -247,7 +254,7 @@ export function BoardCanvas({
             setDrop(null);
             if (target && p.paths && p.paths.length > 0) {
               void importDroppedRef.current(target, p.paths);
-            } else if(!target&&p.paths){const wrap=wrapRef.current?.getBoundingClientRect();if(wrap){const client=dropPointToClient(pos.x,pos.y,{isMac:detectMacOS(),dpr:window.devicePixelRatio||1,viewportW:window.innerWidth,viewportH:window.innerHeight});const at=engineRef.current.toWorld({x:client.x-wrap.left,y:client.y-wrap.top});for(const path of p.paths.filter(p=>/\.(png|jpe?g|gif|webp)$/i.test(p)))void stickerImport.current(path,undefined,at);}}
+            } else if(!target&&p.paths){const wrap=wrapRef.current?.getBoundingClientRect();if(wrap){const client=dropPointToClient(pos.x,pos.y,{isMac:detectMacOS(),dpr:window.devicePixelRatio||1,viewportW:window.innerWidth,viewportH:window.innerHeight});const at=engineRef.current.toWorld({x:client.x-wrap.left,y:client.y-wrap.top});const over=document.elementFromPoint(client.x,client.y) as HTMLElement|null;void importBlank.current(p.paths,at,over?.closest<HTMLElement>('[data-flow-owner]')?.dataset.flowOwner??null);}}
           } else {
             // leave / cancel
             setDrop(null);
@@ -316,31 +323,21 @@ export function BoardCanvas({
   );
 
   /** 树状自动布局（M6-4）：只重排位置、不改结构，进历史可撤销；带 360ms 归位过渡。 */
-  const autoArrange = useCallback(() => {
-    if(drag.current?.kind==='node'||drag.current?.kind==='resize')return;
-    const g = graphRef.current;
-    if (g.nodes.length === 0) return;
-    // 用节点原坐标包围盒左上作为布局原点，避免整块图跳到别处
-    let minX=Infinity,minY=Infinity;for(const node of g.nodes){minX=Math.min(minX,node.x);minY=Math.min(minY,node.y);}
-    const layoutNodes = g.nodes.map((n) => ({
-      id: n.id,
-      w: sizesRef.current[n.id]?.w ?? n.w ?? 240,
-      h: n.h ?? sizesRef.current[n.id]?.h ?? 96,
-    }));
-    const pos = computeTreeLayout(layoutNodes, g.edges, {
-      originX: minX,
-      originY: minY,
-    });
-    const nextNodes = g.nodes.map((n) => {
-      const p = pos.get(n.id);
-      return p ? { ...n, x: p.x, y: p.y } : n;
-    });
-    // 先开启过渡类，再更新坐标，让节点平滑滑到新位；到时长后移除类
-    setArranging(true);
-    if (arrangeTimer.current) window.clearTimeout(arrangeTimer.current);
-    arrangeTimer.current = window.setTimeout(() => setArranging(false), 420);
-    apply({ nodes: nextNodes, edges: g.edges });
-  }, [apply]);
+  const autoArrange = useCallback(async () => {
+    if(drag.current||arrangeJob.current||!wrapRef.current)return;
+    const snapshot=historyRef.current.present,visible=topLevelNodes(snapshot.nodes);if(!visible.length)return;
+    const controller=new AbortController();arrangeJob.current=controller;setArrangeBusy(true);
+    try {
+      const sizes=await measureNodes(wrapRef.current,visible,board.projectId,board.id,controller.signal,done=>setDocumentStatus(`正在适配内容 ${done}/${visible.length}`));
+      if(controller.signal.aborted||historyRef.current.present!==snapshot)throw Error('整理期间内容发生变化，原布局保留，请重试');
+      const layout=visible.map(n=>({id:n.id,...sizes.get(n.id)!})),ids=new Set(visible.map(n=>n.id));
+      const origin=visible.reduce((at,n)=>({originX:Math.min(at.originX,n.x),originY:Math.min(at.originY,n.y)}),{originX:Infinity,originY:Infinity});
+      const positions=computeTreeLayout(layout,snapshot.edges.filter(e=>ids.has(e.from)&&ids.has(e.to)),origin);
+      setArranging(true);if(arrangeTimer.current)window.clearTimeout(arrangeTimer.current);arrangeTimer.current=window.setTimeout(()=>setArranging(false),420);
+      apply({nodes:snapshot.nodes.map(n=>positions.has(n.id)?{...n,...positions.get(n.id),...sizes.get(n.id)}:n),edges:snapshot.edges});setDocumentStatus('已适配全部节点内容并整理布局');
+    } catch(error){if(mounted.current)setDocumentStatus(String(error));}
+    finally{arrangeJob.current=null;if(mounted.current)setArrangeBusy(false);}
+  }, [apply,board.projectId,board.id]);
 
   /* ── 键盘视图操作（M6-9）：缩放 / 重置 / 适配 / 中心新建 / 微移 ── */
 
@@ -368,21 +365,22 @@ export function BoardCanvas({
   /** 适配全部内容到屏幕（zoom-to-fit）。 */
   const fitAll = useCallback(() => {
     if(drag.current?.kind==='node'||drag.current?.kind==='resize')return;
-    const g = graphRef.current;
+    const whole=graphRef.current,shown=topLevelNodes(whole.nodes),ids=new Set(shown.map(n=>n.id));
+    const g={nodes:shown,edges:whole.edges.filter(e=>ids.has(e.from)&&ids.has(e.to))};
     const r = rect();
     if (g.nodes.length === 0) {
       engine.fit(null, { width: r.width, height: r.height });
     } else {
       let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
       for (const n of g.nodes) {
-        const s = {w:n.w||240,h:n.h??sizesRef.current[n.id]?.h??96};
+        const s = {w:Math.max(n.w||240,sizesRef.current[n.id]?.w??0),h:Math.max(n.h??0,sizesRef.current[n.id]?.h??96)};
         minX = Math.min(minX, n.x);
         minY = Math.min(minY, n.y);
         maxX = Math.max(maxX, n.x + s.w);
         maxY = Math.max(maxY, n.y + s.h);
       }
       // Fit is linear in graph size and includes custom node/image dimensions.
-      const boxes=new Map(g.nodes.map(n=>[n.id,{x:n.x,y:n.y,w:n.w||240,h:n.h??sizesRef.current[n.id]?.h??96}]));
+      const boxes=new Map(g.nodes.map(n=>[n.id,{x:n.x,y:n.y,w:Math.max(n.w||240,sizesRef.current[n.id]?.w??0),h:Math.max(n.h??0,sizesRef.current[n.id]?.h??96)}]));
       const detailedFit=Math.min((r.width-96)/Math.max(1,maxX-minX),(r.height-96)/Math.max(1,maxY-minY))>=0.35;
       if(detailedFit&&g.nodes.length*g.edges.length<=200000){
         const routes=routeBoardEdges(boxes,g.edges,edgeStyle);
@@ -424,12 +422,9 @@ export function BoardCanvas({
   const doUndo = useCallback(() => {
     if (mutationsBlocked()) return;
     if(drag.current?.kind==='node'||drag.current?.kind==='resize')return;
-    setHistory((h) => {
-      if (!canUndo(h)) return h;
-      const nh = histUndo(h);
-      onChange(nh.present.nodes, nh.present.edges, engine.viewport);
-      return nh;
-    });
+    const h=historyRef.current;if(!canUndo(h))return;
+    const nh=histUndo(h);historyRef.current=nh;graphRef.current=nh.present;setHistory(nh);
+    onChange(nh.present.nodes,nh.present.edges,engine.viewport);
     setEditingId(null);
     setEditingEdge(null);
   }, [engine, onChange]);
@@ -437,12 +432,9 @@ export function BoardCanvas({
   const doRedo = useCallback(() => {
     if (mutationsBlocked()) return;
     if(drag.current?.kind==='node'||drag.current?.kind==='resize')return;
-    setHistory((h) => {
-      if (!canRedo(h)) return h;
-      const nh = histRedo(h);
-      onChange(nh.present.nodes, nh.present.edges, engine.viewport);
-      return nh;
-    });
+    const h=historyRef.current;if(!canRedo(h))return;
+    const nh=histRedo(h);historyRef.current=nh;graphRef.current=nh.present;setHistory(nh);
+    onChange(nh.present.nodes,nh.present.edges,engine.viewport);
     setEditingId(null);
     setEditingEdge(null);
   }, [engine, onChange]);
@@ -463,6 +455,8 @@ export function BoardCanvas({
     const hit = (id: string, e: KeyboardEvent) => matchShortcut(e, shortcut(id)!);
     const onKey = (e: KeyboardEvent) => {
       if (mutationsBlocked()) return;
+      if(edgeRouteCleanup.current){if(e.key==='Escape'){e.preventDefault();edgeRouteCleanup.current();}return;}
+      if(arrangeJob.current){if(e.key==='Escape'){e.preventDefault();arrangeJob.current.abort();}return;}
       if(drag.current?.kind==='node'||drag.current?.kind==='resize'){
         if(e.key==='Escape'){e.preventDefault();cancelNodeDrag();}
         if(!isEditableTarget(e.target))return;
@@ -593,7 +587,7 @@ export function BoardCanvas({
   const boxOf = useCallback(
     (n: BoardNode): Box => {
       const s = sizesRef.current[n.id];
-      return { x: n.x, y: n.y, w: n.w ?? DEFAULT_NODE_W, h: n.h ?? s?.h ?? FALLBACK_NODE_H };
+      return { x: n.x, y: n.y, w:Math.max(n.w??DEFAULT_NODE_W,s?.w??0),h:Math.max(n.h??0,s?.h??FALLBACK_NODE_H) };
     },
     [],
   );
@@ -611,13 +605,13 @@ export function BoardCanvas({
 
   /* ── 空白按下：平移 ── */
   const onCanvasPointerDown = (e: React.PointerEvent) => {
-    if(drag.current)return;
+    if(drag.current||arrangeJob.current)return;
     if (e.button !== 0) return;
     if ((e.target as HTMLElement).closest('button,input,textarea,select,a,[contenteditable],.ctx-menu,.node-card,.edge-hit')) return;
     if (blankClickTimer.current) clearTimeout(blankClickTimer.current);
     setSelected(null);
     setSelectedEdge(null);
-    setPanelId(null);
+    setPanelId(null);setFlowOwnerId(null);pasteTarget.current=null;pasteFlow.current=null;
     setMoveRoot(null);
     clearTip();
     const vp = engine.viewport;
@@ -629,7 +623,7 @@ export function BoardCanvas({
   const onNodePointerDown = (e: React.PointerEvent, id: string) => {
     if(drag.current)return;
     if (e.button !== 0||e.ctrlKey&&detectMacOS()) return;
-    e.stopPropagation();
+    e.stopPropagation();if(blankClickTimer.current)clearTimeout(blankClickTimer.current);
     setSelected(id);
     setSelectedEdge(null);
     suppressClick.current=false;
@@ -650,15 +644,16 @@ export function BoardCanvas({
   };
 
   const onResizeStart=(e:React.PointerEvent,id:string,corner:string)=>{
-    if(e.button!==0||mutationsBlocked()||drag.current)return;e.preventDefault();e.stopPropagation();
+    if(e.button!==0||mutationsBlocked()||drag.current)return;e.preventDefault();e.stopPropagation();if(blankClickTimer.current)clearTimeout(blankClickTimer.current);
     const node=graphRef.current.nodes.find(n=>n.id===id);if(!node)return;
     setSelected(id);suppressClick.current=true;
     drag.current={kind:'resize',id,corner,pointerId:e.pointerId,startX:e.clientX,startY:e.clientY,zoom:engine.viewport.zoom,box:boxOf(node),baseline:historyRef.current.present};
     wrapRef.current?.setPointerCapture(e.pointerId);setDraggingNodes(true);
   };
   const previewResize=(d:Extract<NonNullable<typeof drag.current>,{kind:'resize'}>,e:{clientX:number;clientY:number})=>{
-    const isImage=graphRef.current.nodes.find(n=>n.id===d.id)?.sticker;
-    const box=(isImage?resizedImageBox:resizedBox)(d.box,d.corner,(e.clientX-d.startX)/d.zoom,(e.clientY-d.startY)/d.zoom);
+    const resizeNode=graphRef.current.nodes.find(n=>n.id===d.id),isImage=resizeNode?imageOnly(resizeNode):false;
+    let box=(isImage?resizedImageBox:resizedBox)(d.box,d.corner,(e.clientX-d.startX)/d.zoom,(e.clientY-d.startY)/d.zoom);
+    if(!isImage){const min=minimumRef.current[d.id]??{w:120,h:64},w=Math.max(box.w,min.w),h=Math.max(box.h,min.h);box={x:d.corner.includes('w')?d.box.x+d.box.w-w:box.x,y:d.corner.includes('n')?d.box.y+d.box.h-h:box.y,w,h};}
     const graph={...historyRef.current.present,nodes:historyRef.current.present.nodes.map(n=>n.id===d.id?{...n,...box}:n)};
     const next=replacePresent(historyRef.current,graph);historyRef.current=next;graphRef.current=graph;setHistory(next);
   };
@@ -680,7 +675,7 @@ export function BoardCanvas({
     const onMove = (ev: PointerEvent) => {
       const r = rect();
       const world = engine.toWorld({ x: ev.clientX - r.left, y: ev.clientY - r.top });
-      const hoverId=snapConnection(world,graphRef.current.nodes,id,boxOf,engine.viewport.zoom);
+      const hoverId=snapConnection(world,topLevelNodes(graphRef.current.nodes),id,boxOf,engine.viewport.zoom);
       setConnect({ fromId: id, to: world, hoverId });
     };
 
@@ -690,7 +685,7 @@ export function BoardCanvas({
       // 用落点重新命中，避免依赖异步 state
       const r = rect();
       const world = engine.toWorld({ x: ev.clientX - r.left, y: ev.clientY - r.top });
-      const target=snapConnection(world,graphRef.current.nodes,id,boxOf,engine.viewport.zoom);
+      const target=snapConnection(world,topLevelNodes(graphRef.current.nodes),id,boxOf,engine.viewport.zoom);
       setConnect(null);
       if (target && target !== id) {
         const curEdges = graphRef.current.edges;
@@ -878,6 +873,7 @@ export function BoardCanvas({
       return;
     }
     if(moveRoot===id)return;
+    const target=graphRef.current.nodes.find(n=>n.id===id);setFlowOwnerId(target?.flow?id:target?.flowOwnerId??null);pasteTarget.current=null;
     setSelected(id);
     setSelectedEdge(null);
     setPanelId(id);
@@ -899,7 +895,7 @@ export function BoardCanvas({
   const onNodeHover = useCallback(
     (id: string, hovering: boolean, clientX: number, clientY: number) => {
       setHoverNode((cur) => (hovering ? id : cur === id ? null : cur));
-      if (!hovering||graphRef.current.nodes.find(n=>n.id===id)?.sticker) {
+      if (!hovering||!!graphRef.current.nodes.find(n=>n.id===id)&&imageOnly(graphRef.current.nodes.find(n=>n.id===id)!)) {
         clearTip();
         return;
       }
@@ -975,32 +971,72 @@ export function BoardCanvas({
   };
   importDroppedRef.current = importDroppedToNode;
 
+  const openFlow=(id:string)=>{const g=graphRef.current,node=g.nodes.find(n=>n.id===id);if(!node||node.flowOwnerId)return;if(!node.flow)apply({nodes:g.nodes.map(n=>n.id===id?{...n,flow:{nodeIds:[]}}:n),edges:g.edges});setFlowOwnerId(id);if(canvasSize.width<900)onBlankClick?.();};
+  const addFlowStep=(ownerId:string,after?:string)=>{
+    const g=graphRef.current,owner=g.nodes.find(n=>n.id===ownerId);if(!owner)return;const now=new Date().toISOString(),node:BoardNode={id:newNodeId(),title:'新步骤',x:0,y:0,w:300,docs:[],flowOwnerId:ownerId,created_at:now,updated_at:now};
+    const order=flowNodes(owner,g.nodes).map(n=>n.id),at=after?order.indexOf(after)+1:order.length;order.splice(at,0,node.id);apply(orderFlow([...g.nodes,node],g.edges,ownerId,order,newEdgeId));setPanelId(node.id);setSelected(node.id);pasteTarget.current=node.id;
+  };
+  const promoteDoc=(id:string,path:string)=>{const g=graphRef.current;apply({nodes:g.nodes.map(n=>n.id===id?{...n,docs:[...n.docs.filter(d=>d.path===path),...n.docs.filter(d=>d.path!==path)]}:n),edges:g.edges});};
   const newDocument=async(nodeId:string)=>{
     try{const doc=await api.docWrite(board.projectId,board.id,'新建Markdown','');if(!mounted.current)return;
       const g=graphRef.current;apply({nodes:g.nodes.map(n=>n.id===nodeId?{...n,docs:[...n.docs,doc]}:n),edges:g.edges});setDocumentEditor({nodeId,path:doc.path,title:doc.title});
     }catch(e){setDocumentStatus(String(e));throw e;}
   };
-  const stickerImport=useRef<(path?:string,file?:File,point?:{x:number;y:number})=>Promise<void>>(async()=>{});
-  stickerImport.current=async(path,file,point)=>{
+  const stickerImport=useRef<(path?:string,file?:File,point?:{x:number;y:number},target?:string|null,flow?:string|null)=>Promise<void>>(async()=>{});
+  const importBlank=useRef<(paths:string[],point:{x:number;y:number},flow?:string|null)=>Promise<void>>(async()=>{});
+  const textPaste=useRef<(text:string,target:string|null,flow:string|null)=>Promise<void>>(async()=>{});
+  const mountResource=(doc:DocRef,target:string|null,point:{x:number;y:number},dimensions?:{width:number;height:number},flowId?:string|null,title?:string)=>{
+    const g=graphRef.current,existing=target?g.nodes.find(n=>n.id===target):undefined;
+    if(existing){apply({nodes:g.nodes.map(n=>n.id===target?{...n,docs:[...n.docs.filter(d=>d.path!==doc.path),doc]}:n),edges:g.edges});return;}
+    const now=new Date().toISOString(),isImage=!!dimensions,size=dimensions?imageDisplaySize(dimensions.width,dimensions.height):{w:420,h:undefined};
+    const n:BoardNode={id:newNodeId(),title:isImage?'':title??doc.title,x:point.x-size.w/2,y:point.y-(size.h??80)/2,...size,sticker:isImage,imageAspect:dimensions?dimensions.width/dimensions.height:undefined,docs:[doc],flowOwnerId:flowId??undefined,created_at:now,updated_at:now};
+    if(flowId){const owner=g.nodes.find(n=>n.id===flowId);apply(orderFlow([...g.nodes,n],g.edges,flowId,[...(owner?.flow?.nodeIds??[]),n.id],newEdgeId));setPanelId(n.id);setFlowOwnerId(flowId);}else apply({nodes:[...g.nodes,n],edges:g.edges});setSelected(n.id);
+  };
+  const pastePoint=()=>{const r=rect();return engine.toWorld({x:r.width/2,y:r.height/2});};
+  stickerImport.current=async(path,file,point,target=null,flow=null)=>{
     if(mutationsBlocked())return;
     imageJobs.current++;setDropBusy(true);setDocumentStatus('正在保存贴图…');
     try{let base64Data:string|undefined;
       if(file){if(file.size>16*1024*1024)throw Error('贴图最多16MiB');const bytes=new Uint8Array(await file.arrayBuffer());let binary='';for(let i=0;i<bytes.length;i+=8192)binary+=String.fromCharCode(...bytes.subarray(i,i+8192));base64Data=btoa(binary);}
       const permission=await loadWritePolicy();const doc=await invoke<DocRef>('image_document',{projectId:board.projectId,boardId:board.id,srcPath:path??null,base64Data:base64Data??null,expectedScope:permission.scope});
-      const dimensions=await stickerDimensions(board.projectId,board.id,doc.path),size=imageDisplaySize(dimensions.width,dimensions.height);
-      if(!mounted.current)return;const r=rect(),at=point??engine.toWorld({x:r.width/2,y:r.height/2}),now=new Date().toISOString();
-      const name=file?.name||path?.split(/[\\/]/).pop()||'贴图';
-      const n:BoardNode={id:newNodeId(),title:name,x:at.x-size.w/2,y:at.y-size.h/2,...size,imageAspect:dimensions.width/dimensions.height,sticker:true,docs:[doc],created_at:now,updated_at:now};const g=graphRef.current;apply({nodes:[...g.nodes,n],edges:g.edges});setSelected(n.id);
-      setDocumentStatus('已插入贴图');
+      const dimensions=await stickerDimensions(board.projectId,board.id,doc.path);
+      if(!mounted.current)return;mountResource(doc,target,point??pastePoint(),dimensions,flow);
+      setDocumentStatus(target?'已挂载图片':'已插入贴图');
     }catch(e){if(mounted.current)setDocumentStatus(`插入贴图失败：${String(e)}`);}
     finally{imageJobs.current--;if(mounted.current)setDropBusy(imageJobs.current>0||!!documentImport.current);}
   };
-  useEffect(()=>{const beforeClose=(e:Event)=>{if(imageJobs.current){e.preventDefault();setDocumentStatus('贴图正在保存，请完成后再关闭。');}};window.addEventListener('lumen:before-window-close',beforeClose);return()=>window.removeEventListener('lumen:before-window-close',beforeClose);},[]);
-  useEffect(()=>{const paste=(e:ClipboardEvent)=>{
-    if(isEditableTarget(e.target)||document.querySelector('[aria-modal="true"]'))return;
-    const file=[...(e.clipboardData?.files??[])].find(f=>/^image\/(png|jpeg|gif|webp)$/.test(f.type));
-    if(file){e.preventDefault();void stickerImport.current(undefined,file);}
-  };window.addEventListener('paste',paste);return()=>window.removeEventListener('paste',paste);},[]);
+  importBlank.current=async(paths,point,flow=null)=>{
+    if(mutationsBlocked())return;
+    for(const path of paths.filter(p=>/\.(md|markdown|pdf|zip|png|jpg|jpeg|gif|webp)$/i.test(p))){
+      imageJobs.current++;setDropBusy(true);setDocumentStatus('正在导入资源…');
+      try{const policy=await loadWritePolicy(),doc=await invoke<DocRef>('document_import',{projectId:board.projectId,boardId:board.id,srcPath:path,expectedScope:policy.scope});
+        const dimensions=imageDoc(doc)?await stickerDimensions(board.projectId,board.id,doc.path):undefined;
+        if(mounted.current)mountResource(doc,null,point,dimensions,flow);setDocumentStatus('已导入文档与原件');
+      }catch(error){if(mounted.current)setDocumentStatus(String(error));}
+      finally{imageJobs.current--;if(mounted.current)setDropBusy(imageJobs.current>0||!!documentImport.current);}
+    }
+  };
+  textPaste.current=async(text,target,flow)=>{
+    if(!text.trim()||mutationsBlocked())return;
+    const plan=clipboardText(text);imageJobs.current++;setDropBusy(true);
+    try{if(target||plan.document){const doc=await api.docWrite(board.projectId,board.id,plan.title||'粘贴的内容',text);if(mounted.current)mountResource(doc,target,pastePoint(),undefined,flow,plan.title);}
+      else{const now=new Date().toISOString(),at=pastePoint(),node:BoardNode={id:newNodeId(),title:plan.title,x:at.x-130,y:at.y-30,w:260,docs:[],flowOwnerId:flow??undefined,created_at:now,updated_at:now},g=graphRef.current;if(flow){const owner=g.nodes.find(n=>n.id===flow);apply(orderFlow([...g.nodes,node],g.edges,flow,[...(owner?.flow?.nodeIds??[]),node.id],newEdgeId));setPanelId(node.id);}else apply({nodes:[...g.nodes,node],edges:g.edges});setSelected(node.id);}
+      setDocumentStatus(target?'已挂载文字文档':'已从剪贴板创建节点');
+    }catch(error){if(mounted.current)setDocumentStatus(String(error));}
+    finally{imageJobs.current--;if(mounted.current)setDropBusy(imageJobs.current>0||!!documentImport.current);}
+  };
+  useEffect(()=>{const beforeClose=(e:Event)=>{arrangeJob.current?.abort();if(imageJobs.current){e.preventDefault();setDocumentStatus('资源正在保存，请完成后再关闭。');}};window.addEventListener('lumen:before-window-close',beforeClose);return()=>{arrangeJob.current?.abort();window.removeEventListener('lumen:before-window-close',beforeClose);};},[]);
+  useEffect(()=>{
+    const region=(e:PointerEvent)=>{const el=e.target as HTMLElement;if(el.closest('.node-panel')){pasteTarget.current=panelIdRef.current;pasteFlow.current=null;}else if(el.closest('.flow-panel')){pasteTarget.current=el.closest<HTMLElement>('[data-node-id]')?.dataset.nodeId??null;pasteFlow.current=el.closest<HTMLElement>('[data-flow-owner]')?.dataset.flowOwner??null;}else if(el.closest('.board-canvas-live')){pasteTarget.current=null;pasteFlow.current=null;}};
+    const paste=(e:ClipboardEvent)=>{
+      if(document.querySelector('[aria-modal="true"]'))return;
+      const target=(e.target as HTMLElement)?.closest?.('.node-panel')?panelIdRef.current:pasteTarget.current,flow=target?null:pasteFlow.current;
+      const files=[...(e.clipboardData?.files??[])].filter(f=>/^image\/(png|jpeg|gif|webp)$/.test(f.type));
+      if(files.length){e.preventDefault();for(const file of files)void stickerImport.current(undefined,file,undefined,target,flow);return;}
+      if(isEditableTarget(e.target))return;const text=e.clipboardData?.getData('text/plain');if(text?.trim()){e.preventDefault();void textPaste.current(text,target,flow);}
+    };
+    window.addEventListener('pointerdown',region,true);window.addEventListener('paste',paste);return()=>{window.removeEventListener('pointerdown',region,true);window.removeEventListener('paste',paste);};
+  },[]);
   const pickSticker=async(point?:{x:number;y:number})=>{const path=await open({title:'插入白板贴图',multiple:false,filters:[{name:'图片',extensions:['png','jpg','jpeg','gif','webp']}]});if(typeof path==='string')await stickerImport.current(path,undefined,point);};
   const openDoc = (_nodeId: string, path: string, title: string) => {
     void openReaderWindow({ projectId: board.projectId, boardId: board.id, path, title });
@@ -1012,7 +1048,7 @@ export function BoardCanvas({
     apply({
       nodes: g.nodes.map((n) =>
         n.id === nodeId
-          ? { ...n, docs: n.docs.filter((d) => d.path !== path), updated_at: new Date().toISOString() }
+          ? nonemptyNode({ ...n, docs: n.docs.filter((d) => d.path !== path), updated_at: new Date().toISOString() })
           : n,
       ),
       edges: g.edges,
@@ -1047,15 +1083,11 @@ export function BoardCanvas({
   addNodeRef.current = addNode;
 
   const removeNode = (id: string) => {
-    // 级联清理该节点的连线（FR-4.5）
-    apply({
-      nodes: nodes.filter((n) => n.id !== id),
-      edges: edges.filter((e) => e.from !== id && e.to !== id),
-    });
-    if (selected === id) setSelected(null);
-    if (editingId === id) setEditingId(null);
-    if (panelId === id) setPanelId(null);
-    clearTip();
+    const g=graphRef.current,target=g.nodes.find(n=>n.id===id);if(!target)return;
+    const children=flowNodes(target,g.nodes),promoted=new Map(children.map((n,i)=>[n.id,{...n,flowOwnerId:undefined,x:target.x+35,y:target.y+i*180}]));
+    let next={nodes:g.nodes.filter(n=>n.id!==id).map(n=>promoted.get(n.id)??n),edges:g.edges.filter(e=>e.from!==id&&e.to!==id)};
+    if(target.flowOwnerId){const owner=next.nodes.find(n=>n.id===target.flowOwnerId);if(owner)next=orderFlow(next.nodes,next.edges,owner.id,owner.flow?.nodeIds.filter(n=>n!==id)??[],newEdgeId);}
+    apply(next);if(flowOwnerId===id)setFlowOwnerId(null);if(selected===id)setSelected(null);if(editingId===id)setEditingId(null);if(panelId===id)setPanelId(null);clearTip();
   };
   removeNodeRef.current = removeNode;
 
@@ -1064,7 +1096,7 @@ export function BoardCanvas({
     const title=patch.title??target.title,summary=patch.summary!==undefined?patch.summary:target.summary;
     if(title===target.title&&summary===target.summary)return;
     const docs=patch.summary!==undefined&&!target.docs.some(d=>d.path===questionPath(id))?[...target.docs,{path:questionPath(id),title:'完整问题',bytes:new TextEncoder().encode(summary??'').length}]:target.docs;
-    apply({nodes:g.nodes.map(n=>n.id===id?{...n,title,summary,docs,updated_at:new Date().toISOString()}:n),edges:g.edges});
+    apply({nodes:g.nodes.map(n=>n.id===id?nonemptyNode({...n,title,summary,docs,sticker:patch.title!==undefined?false:n.sticker,updated_at:new Date().toISOString()}):n),edges:g.edges});
   };
 
   const onCanvasDoubleClick = (e: React.MouseEvent) => {
@@ -1098,8 +1130,8 @@ export function BoardCanvas({
   const screenBoxOf = useCallback(
     (n: BoardNode): Box => {
       const s = sizesRef.current[n.id];
-      const w = n.w ?? DEFAULT_NODE_W;
-      const h = n.h ?? s?.h ?? FALLBACK_NODE_H;
+      const w = Math.max(n.w??DEFAULT_NODE_W,s?.w??0);
+      const h = Math.max(n.h??0,s?.h??FALLBACK_NODE_H);
       const tl = engine.toScreen({ x: n.x, y: n.y });
       const z = engine.viewport.zoom;
       return { x: tl.x, y: tl.y, w: w * z, h: h * z };
@@ -1111,20 +1143,21 @@ export function BoardCanvas({
   const vpSig = `${vp.x},${vp.y},${vp.zoom}`;
 
   const level=heatLevel(zoom),heatMode=level>0;
-  const heatCells=useMemo(()=>level?aggregateHeat(nodes,level,sizesRef.current):[],[nodes,level,sizesVer]);
+  const heatCells=useMemo(()=>level?aggregateHeat(mainNodes,level,sizesRef.current):[],[mainNodes,level,sizesVer]);
   const visibleWorld=engine.visibleWorldRect(canvasSize);
   const visibleBox={x:visibleWorld.x,y:visibleWorld.y,w:visibleWorld.width,h:visibleWorld.height};
-  const visibleNodes=heatMode?[]:nodes.filter(n=>n.id===editingId||n.id===selected||intersects(boxOf(n),visibleBox,100/zoom));
+  const visibleNodes=heatMode?[]:mainNodes.filter(n=>n.id===editingId||n.id===selected||intersects(boxOf(n),visibleBox,100/zoom));
   const renderedHeat=heatMode?heatCells.filter(c=>intersects(c,visibleBox,80/zoom)):[];
 
   const laidEdges = useMemo(() => {
     void sizesVer;
     void vpSig;
     if(heatMode)return [];
-    const candidates=edges.filter(e=>{const a=nodeById[e.from],b=nodeById[e.to];if(!a||!b)return false;const x=Math.min(a.x,b.x),y=Math.min(a.y,b.y);return intersects({x,y,w:Math.abs(a.x-b.x)+Math.max(a.w,b.w),h:Math.abs(a.y-b.y)+Math.max(a.h??96,b.h??96)},visibleBox,100/zoom);});
+    const candidates=mainEdges.filter(e=>{const a=nodeById[e.from],b=nodeById[e.to];if(!a||!b)return false;const ab=boxOf(a),bb=boxOf(b),c=e.route?.control;const x=Math.min(ab.x,bb.x,c?.x??Infinity),y=Math.min(ab.y,bb.y,c?.y??Infinity),right=Math.max(ab.x+ab.w,bb.x+bb.w,c?.x??-Infinity),bottom=Math.max(ab.y+ab.h,bb.y+bb.h,c?.y??-Infinity);return intersects({x,y,w:right-x,h:bottom-y},visibleBox,100/zoom);});
     const ids=new Set(candidates.flatMap(e=>[e.from,e.to]));
-    const boxes=new Map(nodes.filter(n=>ids.has(n.id)).map(n=>[n.id,screenBoxOf(n)]));
-    const routed=boxes.size*candidates.length<=200000?routeBoardEdges(boxes,candidates,edgeStyle,engine.viewport.zoom):new Map(candidates.map(e=>[e.id,edgeGeometry(boxes.get(e.from)!,boxes.get(e.to)!,edgeStyle)]));
+    const boxes=new Map(mainNodes.filter(n=>ids.has(n.id)).map(n=>[n.id,screenBoxOf(n)]));
+    const screenEdges=candidates.map(e=>e.route?.control?{...e,route:{...e.route,control:engine.toScreen(e.route.control)}}:e);
+    const routed=boxes.size*candidates.length<=200000?routeBoardEdges(boxes,screenEdges,edgeStyle,engine.viewport.zoom):new Map(screenEdges.map(e=>[e.id,e.route?.kind==='bent'&&e.route.control?bentGeometry(boxes.get(e.from)!,boxes.get(e.to)!,e.route.control):edgeGeometry(boxes.get(e.from)!,boxes.get(e.to)!,e.route?.kind==='straight'?'straight':edgeStyle)]));
     return candidates
       .map((e) => {
         const a = nodeById[e.from];
@@ -1134,7 +1167,28 @@ export function BoardCanvas({
         return { edge: e, geo: g };
       })
       .filter((x): x is { edge: BoardEdge; geo: ReturnType<typeof edgeGeometry> } => x !== null);
-  }, [edges, nodeById, screenBoxOf, sizesVer, vpSig, edgeStyle,heatMode,canvasSize]);
+  }, [mainEdges, nodeById, screenBoxOf, sizesVer, vpSig, edgeStyle,heatMode,canvasSize]);
+
+  useEffect(()=>{
+    if(!flowOwnerId||!canvasSize.width)return;const owner=graphRef.current.nodes.find(n=>n.id===flowOwnerId);if(!owner)return;
+    const left=Math.min(520,Math.max(310,canvasSize.width*.43))+16,right=canvasSize.width-332;
+    const at=engine.toScreen({x:owner.x+Math.max(owner.w,sizesRef.current[owner.id]?.w??0)/2,y:owner.y+(sizesRef.current[owner.id]?.h??owner.h??96)/2});
+    engine.setViewport({...engine.viewport,x:engine.viewport.x+(left+right)/2-at.x,y:engine.viewport.y+Math.max(120,Math.min(canvasSize.height-120,at.y))-at.y});
+    rerender();onChange(graphRef.current.nodes,graphRef.current.edges,engine.viewport);
+  },[flowOwnerId,canvasSize.width,canvasSize.height]);
+
+  // At overview scale, nearby relationship captions merge into bounded luminous hints.
+  const overviewLabels=useMemo(()=>{
+    if(!heatMode)return [];
+    const bins=new Map<string,{id:string;label:string;x:number;y:number;count:number}>();
+    for(const e of mainEdges){if(!e.label)continue;const a=nodeById[e.from],b=nodeById[e.to];if(!a||!b)continue;
+      const p=engine.toScreen(e.route?.control??{x:(a.x+a.w/2+b.x+b.w/2)/2,y:(a.y+(a.h??96)/2+b.y+(b.h??96)/2)/2});
+      if(p.x<0||p.y<0||p.x>canvasSize.width||p.y>canvasSize.height)continue;
+      const key=`${Math.floor(p.x/48)}:${Math.floor(p.y/48)}`,old=bins.get(key);
+      if(old)old.count++;else bins.set(key,{id:e.id,label:e.label,x:p.x,y:p.y,count:1});
+    }
+    return [...bins.values()];
+  },[mainEdges,nodeById,heatMode,vpSig,canvasSize]);
 
   // 连线拖拽预览路径（屏幕坐标）
   const connectPreview = useMemo(() => {
@@ -1147,6 +1201,21 @@ export function BoardCanvas({
     const toScreen = engine.toScreen(connect.to);
     return straightPath(fromCenter, toScreen);
   }, [connect, nodeById, screenBoxOf, engine, vpSig]);
+  const beginEdgeRoute=(event:React.PointerEvent<SVGCircleElement>,id:string)=>{
+    if(event.button!==0||mutationsBlocked()||imageJobs.current||documentImport.current||arrangeJob.current)return;
+    event.preventDefault();event.stopPropagation();const baseline=historyRef.current.present,edge=baseline.edges.find(e=>e.id===id);if(!edge)return;
+    const start={x:event.clientX,y:event.clientY},pointer=event.pointerId;let moved=false;
+    const preview=(e:PointerEvent)=>{if(e.pointerId!==pointer)return;if(!moved&&Math.hypot(e.clientX-start.x,e.clientY-start.y)<3)return;moved=true;
+      const r=rect(),point=engine.toWorld({x:e.clientX-r.left,y:e.clientY-r.top}),from=graphRef.current.nodes.find(n=>n.id===edge.from),to=graphRef.current.nodes.find(n=>n.id===edge.to);if(!from||!to)return;
+      const straight=edgeGeometry(boxOf(from),boxOf(to),'straight'),route:NonNullable<BoardEdge['route']>=distanceToSegment(point,straight.start,straight.end)*engine.viewport.zoom<18?{kind:'straight'}:{kind:'bent',control:point};
+      const next=replacePresent(historyRef.current,{...historyRef.current.present,edges:historyRef.current.present.edges.map(e=>e.id===id?{...e,route}:e)});historyRef.current=next;graphRef.current=next.present;setHistory(next);
+    };
+    const clean=()=>{window.removeEventListener('pointermove',preview);window.removeEventListener('pointerup',up);window.removeEventListener('pointercancel',cancel);window.removeEventListener('blur',cancel);window.removeEventListener('lumen:sync-edit-lock',cancel);edgeRouteCleanup.current=null;setDraggingNodes(false);if(wrapRef.current?.hasPointerCapture(pointer))wrapRef.current.releasePointerCapture(pointer);};
+    const cancel=()=>{clean();const state=replacePresent(historyRef.current,baseline);historyRef.current=state;graphRef.current=state.present;setHistory(state);};
+    const up=(e:PointerEvent)=>{if(e.pointerId!==pointer)return;preview(e);clean();if(moved){const next=commitFromBaseline(historyRef.current,baseline);historyRef.current=next;graphRef.current=next.present;setHistory(next);onChange(next.present.nodes,next.present.edges,engine.viewport);}};
+    edgeRouteCleanup.current=cancel;setDraggingNodes(true);wrapRef.current?.setPointerCapture(pointer);window.addEventListener('pointermove',preview);window.addEventListener('pointerup',up);window.addEventListener('pointercancel',cancel);window.addEventListener('blur',cancel);window.addEventListener('lumen:sync-edit-lock',cancel);
+  };
+  useEffect(()=>()=>edgeRouteCleanup.current?.(),[]);
   const onDocumentSaved=useCallback((bytes:number)=>{
     if(!documentEditor)return;
     const g=graphRef.current,next={...g,nodes:g.nodes.map(n=>n.id===documentEditor.nodeId?{...n,docs:n.docs.map(d=>d.path===documentEditor.path?{...d,bytes}:d)}:n)};
@@ -1165,11 +1234,12 @@ export function BoardCanvas({
       onPointerUp={onPointerUp}
       onPointerCancel={onPointerUp}
       onLostPointerCapture={e=>{if((drag.current?.kind==='node'||drag.current?.kind==='resize')&&drag.current.pointerId===e.pointerId)cancelNodeDrag();}}
-      style={{['--board-font-family' as string]:FONT_FAMILIES[appearance.fontFamily],['--board-font-size' as string]:`${appearance.fontSize}px`}}
-      aria-busy={draggingNodes||dropBusy}
+      style={{['--board-font-family' as string]:FONT_FAMILIES[appearance.fontFamily],['--board-font-size' as string]:`${appearance.fontSize}px`,['--board-preview-font-family' as string]:FONT_FAMILIES[appearance.previewFontFamily??appearance.fontFamily],['--board-preview-font-size' as string]:`${appearance.previewFontSize??appearance.fontSize}px`}}
+      aria-busy={draggingNodes||dropBusy||arrangeBusy}
       onContextMenu={onCanvasContextMenu}
       onDoubleClick={onCanvasDoubleClick}
     >
+      {arrangeBusy&&<div className="arrange-progress" role="status"><span>{documentStatus||'正在适配节点内容…'}</span><button className="btn" onClick={()=>arrangeJob.current?.abort()}>停止整理</button></div>}
       {/* 悬浮工具栏：撤销 / 重做 / 整理 / 缩放 / 适配 */}
       {documentStatus&&<div className="document-import-status" role="status" onPointerDown={e=>e.stopPropagation()}><span>{documentStatus}</span>{dropBusy&&<button type="button" className="btn" disabled={!documentImport.current||documentStatus==='正在保存文档与原件'} onClick={()=>documentImport.current?.abort()}>停止</button>}<button type="button" className="btn" onClick={()=>setDocumentStatus('')} disabled={dropBusy}>关闭</button></div>}
       <div className="canvas-toolbar" role="toolbar" aria-label="画布工具" onPointerDown={(e) => e.stopPropagation()}>
@@ -1203,7 +1273,7 @@ export function BoardCanvas({
       {/* 连线层：覆盖整块画布的全尺寸 SVG，用屏幕坐标绘制（避免 0×0 世界层不渲染）。
           置于节点层之下（DOM 顺序在前 + CSS 定位），指针默认穿透、仅命中区可点。 */}
       <button className="canvas-zoom-label" title="点击恢复100% · 滚轮或快捷键缩放" aria-label={`当前缩放 ${zoom<0.01?(zoom*100).toFixed(1):Math.round(zoom*100)}%，点击重置为100%`} onPointerDown={e=>e.stopPropagation()} onClick={zoomReset}>{zoom<0.01?(zoom*100).toFixed(1):Math.round(zoom*100)}%</button>
-      {heatMode&&<div className="heat-layer" aria-label={`热力概览，共${nodes.length}个节点`} data-level={level}>{renderedHeat.map(c=>{
+      {heatMode&&<div className="heat-layer" aria-label={`热力概览，共${mainNodes.length}个节点`} data-level={level}>{renderedHeat.map(c=>{
         const at=engine.toScreen(c);return <button type="button" key={c.id} className="heat-cell" data-count={c.count} title={`${c.count}个节点 · 点击逐级展开`} aria-label={`展开${c.count}个节点的热力区域`} style={{left:at.x,top:at.y,width:Math.max(8,c.w*zoom),height:Math.max(8,c.h*zoom),opacity:Math.min(.95,.45+Math.log2(c.count+1)*.08),['--heat-color' as string]:c.color||'var(--accent)'}} onPointerDown={e=>e.stopPropagation()} onDoubleClick={e=>e.stopPropagation()} onClick={e=>{e.stopPropagation();const r=rect();engine.zoomAtPoint({x:r.width/2,y:r.height/2},Math.min(1,zoom*2));const z=engine.viewport.zoom;engine.setViewport({zoom:z,x:r.width/2-(c.x+c.w/2)*z,y:r.height/2-(c.y+c.h/2)*z});rerender();onChange(nodes,edges,engine.viewport);}}>{c.count>1?c.count:''}</button>;
       })}</div>}
       <svg className="edge-layer">
@@ -1243,13 +1313,8 @@ export function BoardCanvas({
                 pathLength={1}
                 markerEnd={edge.directed ? (isSel ? 'url(#lm-arrow-sel)' : 'url(#lm-arrow)') : undefined}
               />
-              {edge.label && zoom>=0.6 && !editingEdge && (
-                <g transform={`translate(${geo.mid.x} ${geo.mid.y})`}>
-                  <text className="edge-label" style={{fontSize:12*engine.viewport.zoom,strokeWidth:4*engine.viewport.zoom}} textAnchor="middle" dominantBaseline="central" onDoubleClick={(e) => { e.stopPropagation(); startEdgeLabel(edge.id); }} onPointerDown={(e) => e.stopPropagation()}>
-                    <title>{edge.label}</title>{edgeLabelLines(edge.label).map((line,index,lines)=><tspan key={index} x={0} dy={index===0?-(lines.length-1)*8*engine.viewport.zoom:16*engine.viewport.zoom}>{line}</tspan>)}
-                  </text>
-                </g>
-              )}
+              {isSel&&<circle className="edge-route-handle" cx={geo.mid.x} cy={geo.mid.y} r={8} role="button" aria-label="拖动调整连线弯折" onPointerDown={e=>beginEdgeRoute(e,edge.id)}/>}
+
             </g>
           );
         })}
@@ -1260,12 +1325,13 @@ export function BoardCanvas({
         )}
       </svg>
 
+      <div className="edge-label-layer">{overviewLabels.map(h=><EdgeLabel key={h.id} label={h.count>1?`${h.count}条连线含说明；${h.label}`:h.label} x={h.x} y={h.y} zoom={zoom} onSelect={()=>{setSelectedEdge(h.id);zoomCenter(2);}} onEdit={()=>zoomCenter(2)}/>)}{laidEdges.map(({edge,geo})=>edge.label&&editingEdge!==edge.id?<EdgeLabel key={edge.id} label={edge.label} x={geo.mid.x} y={geo.mid.y-(selectedEdge===edge.id?24:0)} zoom={zoom} onSelect={()=>{setSelectedEdge(edge.id);setSelected(null);}} onEdit={()=>startEdgeLabel(edge.id)}/>:null)}</div>
       {/* 世界层：只改 transform（DESIGN §5.4） */}
       <div className={`canvas-world${arranging ? ' is-arranging' : ''}`} style={{ transform: engine.transform, transformOrigin: '0 0', ...glowVars }}>
         {visibleNodes.map((n) => (
           <NodeCard
             key={n.id}
-            node={n} projectId={board.projectId} boardId={board.id} onResizeStart={onResizeStart}
+            node={n} projectId={board.projectId} boardId={board.id} onResizeStart={onResizeStart} docVersions={docVersions}
             selected={selected === n.id||!!moveRoot&&moveIds.has(n.id)}
             flash={flashId === n.id}
             editing={editingId === n.id}
@@ -1309,7 +1375,7 @@ export function BoardCanvas({
         );
       })()}
 
-      {nodes.length === 0 && (
+      {mainNodes.length === 0 && (
         <div className="canvas-empty">
           <p>右键空白处 · 或双击空白处 · 新建第一个问题节点</p>
           <p className="canvas-empty-sub">拖节点四周的锚点到另一个节点即可连线 · 滚轮缩放 · Ctrl+Z 撤销</p>
@@ -1342,7 +1408,7 @@ export function BoardCanvas({
             onOpenDoc={openDoc}
             onImportDocs={importDocs}
             onRemoveDoc={removeDoc}
-            onEditMarkdown={()=>setDocumentEditor({nodeId:pn.id,path:questionPath(pn.id),title:'完整问题',kind:'question'})} onSettings={()=>setAppearanceOpen(true)}
+            onEditMarkdown={()=>setDocumentEditor({nodeId:pn.id,path:questionPath(pn.id),title:'完整问题',kind:'question'})} onOpenFlow={()=>openFlow(pn.id)} onPromoteDoc={promoteDoc}
             projectId={board.projectId}
             boardId={board.id}
             guessMath={guessMath}
@@ -1350,6 +1416,7 @@ export function BoardCanvas({
         ) : null;
       })()}
 
+      {flowOwnerId&&nodeById[flowOwnerId]?.flow&&<FlowPanel key={flowOwnerId} owner={nodeById[flowOwnerId]} nodes={flowNodes(nodeById[flowOwnerId],nodes)} projectId={board.projectId} boardId={board.id} selected={panelId} ownerBox={screenBoxOf(nodeById[flowOwnerId])} docVersions={docVersions} onClose={()=>setFlowOwnerId(null)} onSelect={id=>{setPanelId(id);setSelected(id);pasteTarget.current=id;}} onAdd={after=>addFlowStep(flowOwnerId,after)} onReorder={order=>{const g=graphRef.current;apply(orderFlow(g.nodes,g.edges,flowOwnerId,order,newEdgeId));}} onRemove={removeNode}/>}
       {appearanceOpen&&<BoardAppearancePanel name={board.name} value={board.appearance} onClose={()=>setAppearanceOpen(false)} onChange={v=>onChange(graphRef.current.nodes,graphRef.current.edges,engine.viewport,v)}/>}
       {documentEditor&&(()=>{
         const node=nodes.find(n=>n.id===documentEditor.nodeId);if(!node)return null;

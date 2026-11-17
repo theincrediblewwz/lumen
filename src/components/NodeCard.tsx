@@ -1,7 +1,8 @@
-import { memo, useEffect, useLayoutEffect, useRef } from 'react';
+import { memo, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import type { BoardNode } from '../api';
 import { MarkdownView } from './MarkdownView';
-import { StickerImage } from './StickerImage';
+import { NodeAttachment } from './NodeAttachment';
+import { contentDocs, imageOnly, nodeHeading } from '../canvas/composition';
 import { isQuestionDoc } from '../canvas/presentation';
 
 /** 自适应高度的文本域：随内容增减行数（修复长标题只显示尾部的问题） */
@@ -93,16 +94,16 @@ export const NodeCard = memo(function NodeCard({
   onExitEdit,
   onMeasure,
   onHoverChange,
-  onResizeStart, projectId, boardId,
+  onResizeStart, projectId, boardId, docVersions={}, measuring=false, hideHandles=false,
 }: {
-  projectId:string; boardId:string;
+  projectId:string; boardId:string; docVersions?:Record<string,number>; measuring?:boolean; hideHandles?:boolean;
   onResizeStart:(e:React.PointerEvent,id:string,corner:string)=>void;
   node: BoardNode;
   selected: boolean;
   flash?: boolean;
   editing: boolean;
   showAnchors: boolean;
-  connectTarget: boolean;
+  connectTarget?: boolean;
   /** 文件拖放（OS 拖入 .md）悬停到该节点时高亮 */
   dropTarget?: boolean;
   onPointerDown: (e: React.PointerEvent, id: string) => void;
@@ -113,32 +114,43 @@ export const NodeCard = memo(function NodeCard({
   onCommit: (id: string, patch: { title?: string; summary?: string }) => void;
   onEditCancel: () => void;
   onExitEdit: () => void;
-  onMeasure: (id: string, w: number, h: number) => void;
+  onMeasure: (id: string, w: number, h: number, minimumW?:number, minimumH?:number) => void;
   onHoverChange: (hovering: boolean, clientX: number, clientY: number) => void;
 }) {
   const docCount = node.docs.filter(d=>!isQuestionDoc(d.path)).length;
-  const cardRef = useRef<HTMLDivElement>(null);
+  const cardRef = useRef<HTMLDivElement>(null), contentRef=useRef<HTMLDivElement>(null);
+  const [minimum,setMinimum]=useState({w:120,h:64});
+  const heading=nodeHeading(node), primary=contentDocs(node)[0], pureImage=imageOnly(node), contentOnly=!heading.trim()&&!node.summary?.trim()&&!!primary;
 
   // 测量真实布局尺寸（世界单位，不受 transform 缩放影响：offsetWidth/Height）
   useLayoutEffect(() => {
     const el = cardRef.current;
     if (!el) return;
-    const report = () => onMeasure(node.id, el.offsetWidth, el.offsetHeight);
+    const report = () => {
+      const content=contentRef.current,style=getComputedStyle(el),padX=parseFloat(style.paddingLeft)+parseFloat(style.paddingRight)+parseFloat(style.borderLeftWidth)+parseFloat(style.borderRightWidth),padY=parseFloat(style.paddingTop)+parseFloat(style.paddingBottom)+parseFloat(style.borderTopWidth)+parseFloat(style.borderBottomWidth);
+      const mathWidth=Math.max(0,...Array.from(content?.querySelectorAll<HTMLElement>('.katex-html')??[]).map(n=>n.offsetWidth));
+      const min={w:pureImage?0:Math.max(120,mathWidth+padX),h:pureImage?0:Math.max(64,(content?.scrollHeight??0)+padY)};
+      setMinimum(old=>Math.abs(old.w-min.w)<1&&Math.abs(old.h-min.h)<1?old:min);
+      onMeasure(node.id,el.offsetWidth,el.offsetHeight,min.w,min.h);
+    };
     report();
     const ro = new ResizeObserver(report);
-    ro.observe(el);
+    ro.observe(el);if(contentRef.current)ro.observe(contentRef.current);
     return () => ro.disconnect();
-  }, [node.id, node.title, node.summary, editing, onMeasure]);
+  }, [node.id, node.title, node.summary, node.docs, editing, onMeasure, pureImage]);
 
   return (
     <div
       ref={cardRef}
-      className={`node-card${node.sticker?' is-sticker':' glass-surface'}${selected ? ' is-selected' : ''}${flash ? ' is-flash' : ''}${editing ? ' is-editing' : ''}${connectTarget ? ' is-connect-target' : ''}${dropTarget ? ' is-drop-target' : ''}`}
+      data-node-id={node.id}
+      className={`node-card${pureImage?' is-sticker':contentOnly?' is-content-only':' glass-surface'}${node.flow?' has-flow':''}${measuring?' is-measuring':''}${selected ? ' is-selected' : ''}${flash ? ' is-flash' : ''}${editing ? ' is-editing' : ''}${connectTarget ? ' is-connect-target' : ''}${dropTarget ? ' is-drop-target' : ''}`}
       style={{
         left: node.x,
         top: node.y,
         width: node.w,
-        height: node.h,
+        height: pureImage ? (node.h??node.w/(node.imageAspect||1)) : undefined,
+        minWidth: minimum.w,
+        minHeight: pureImage?0:Math.max(measuring?0:node.h??0,minimum.h),
         // 节点自定义颜色：既作左侧色条，又作为该卡片的强调色（选中框/锚点/光晕）。
         // 未设色时回退到主题强调色 var(--accent)。
         ['--node-accent' as string]: node.color || 'var(--accent)',
@@ -149,7 +161,7 @@ export const NodeCard = memo(function NodeCard({
       onPointerLeave={(e) => onHoverChange(false, e.clientX, e.clientY)}
       onDoubleClick={(e) => {
         e.stopPropagation();
-        if(node.sticker)onOpen(node.id);else onStartEdit(node.id);
+        if(pureImage)onOpen(node.id);else onStartEdit(node.id);
       }}
       onClick={(e) => {
         e.stopPropagation();
@@ -160,6 +172,7 @@ export const NodeCard = memo(function NodeCard({
       role="button"
       tabIndex={0}
     >
+      <div ref={contentRef} className="node-card-content">
       {editing ? (
         <div
           className="node-edit"
@@ -192,10 +205,11 @@ export const NodeCard = memo(function NodeCard({
         </div>
       ) : (
         <>
-          {node.sticker&&node.docs[0]?<><StickerImage projectId={projectId} boardId={boardId} path={node.docs[0].path}/><span className="sticker-info">{node.title}</span></>:<>
-          <MarkdownView className="node-title" inline value={node.title || '未命名问题'}/>
-          {node.summary && <MarkdownView className="node-question" value={node.summary.slice(0,1200)}/>}</>}
-          {docCount > 0 && !node.sticker && (
+          {heading.trim()&&<MarkdownView className="node-title" inline value={heading}/>}
+          {node.summary&&<MarkdownView className="node-question" value={node.summary}/>}
+          {primary&&<NodeAttachment key={primary.path} projectId={projectId} boardId={boardId} doc={primary} refresh={docVersions[primary.path]??0}/>}
+          {contentOnly&&<span className="sticker-info">{primary?.title||node.title}</span>}
+          {docCount > 1 && !contentOnly && (
             <div className="node-badge" title={`${docCount} 篇文档`}>
               <svg width="12" height="12" viewBox="0 0 16 16" aria-hidden="true">
                 <path d="M4 2h5l3 3v9H4z" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinejoin="round" />
@@ -206,10 +220,11 @@ export const NodeCard = memo(function NodeCard({
         </>
       )}
 
-      {selected&&!editing&&(['nw','ne','sw','se'] as const).map(corner=><span key={corner} className={`node-resize-handle corner-${corner}`} role="button" aria-label={`调整节点尺寸 ${corner}`} onPointerDown={e=>onResizeStart(e,node.id,corner)} onClick={e=>e.stopPropagation()}/>)}
+      </div>
+      {selected&&!editing&&!measuring&&!hideHandles&&(['nw','ne','sw','se'] as const).map(corner=><span key={corner} className={`node-resize-handle corner-${corner}`} role="button" aria-label={`调整节点尺寸 ${corner}`} onPointerDown={e=>onResizeStart(e,node.id,corner)} onClick={e=>e.stopPropagation()}/>)}
       {/* 连线手柄（选中/悬停时出现，按下即拉线）：节点右侧中点，单个 */}
-      {showAnchors && !editing && (
-        <div className="node-anchors" aria-hidden="true">
+      {!editing&&!measuring&&!hideHandles && (
+        <div className="node-anchors" aria-hidden={!showAnchors}>
           <span
             className="node-anchor anchor-right"
             style={{ left: '100%', top: '50%' }}

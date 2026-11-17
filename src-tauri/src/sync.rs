@@ -283,7 +283,7 @@ fn capture_at(root: &Path, project_id: String, board_id: String, key: String, ti
     let target=safe_path(root,&format!("{base}/{doc_path}"))?;
     if target.exists()&&fs::read(&target).map_err(err)?!=markdown.as_bytes(){return Err("原捕获文档已有编辑，已保留原文件；请使用新文档保存。".into());}
     board.nodes.push(storage::BoardNode { extra: Default::default(), id: node_id.clone(), title: title.trim().into(), summary: Some(format!("来自对话：{conversation_id}")), x,y,w:240.0,color:None, docs: vec![storage::DocRef { path:doc_path.clone(),title:title.trim().into(),bytes:Some(markdown.len() as u64) }],created_at:now.clone(),updated_at:now.clone() });
-    if let Some(parent) = parent_id { board.edges.push(storage::BoardEdge { id:format!("capture_{key}"),from:parent,to:node_id.clone(),directed:true,label:Some("对话笔记".into()),created_at:now.clone() }); }
+    if let Some(parent) = parent_id { board.edges.push(storage::BoardEdge { id:format!("capture_{key}"),from:parent,to:node_id.clone(),directed:true,label:Some("对话笔记".into()),created_at:now.clone(), extra: Default::default(), }); }
     board.updated_at = now.clone();
     captures.push(json!({"id":format!("capture_{key}"),"conversation_id":conversation_id,"source_answer_id":null,"document_path":doc_path,"node_id":node_id,"message_ids_json":serde_json::to_string(&message_ids).map_err(err)?,"selection_key":selection_key,"created_at":now}));
     let mut files = BTreeMap::new();

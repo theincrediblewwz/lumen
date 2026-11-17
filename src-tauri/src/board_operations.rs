@@ -544,7 +544,7 @@ fn apply_full_at(
                         directed: true,
                         label: None,
                         created_at: now.clone(),
-                    });
+                     extra: Default::default(), });
                 }
             }
             Operation::AppendDocument {
@@ -577,7 +577,7 @@ fn apply_full_at(
                         directed: true,
                         label: Some(label.clone()),
                         created_at: now.clone(),
-                    });
+                     extra: Default::default(), });
                 }
             }
         }

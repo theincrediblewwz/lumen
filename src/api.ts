@@ -35,6 +35,8 @@ export type BoardNode = {
   h?: number;
   sticker?: boolean;
   imageAspect?: number;
+  flowOwnerId?: string;
+  flow?: { nodeIds: string[] };
   color?: string | null;
   docs: DocRef[];
   created_at: string;
@@ -47,6 +49,7 @@ export type BoardEdge = {
   to: string;
   directed: boolean;
   label?: string | null;
+  route?: { kind: 'straight' | 'bent'; control?: { x: number; y: number } };
   created_at: string;
 };
 
@@ -199,7 +202,7 @@ export async function pickMarkdownFiles(): Promise<string[]> {
   const picked = await open({
     multiple: true,
     title: '选择节点文档',
-    filters: [{ name: 'Markdown、PDF 与图文 ZIP', extensions: ['md', 'markdown','pdf','zip'] }],
+    filters: [{ name: 'Markdown、PDF、图片与图文 ZIP', extensions: ['md','markdown','pdf','zip','png','jpg','jpeg','gif','webp'] }],
   });
   if (picked == null) return [];
   return Array.isArray(picked) ? picked : [picked];

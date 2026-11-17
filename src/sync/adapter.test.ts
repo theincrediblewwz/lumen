@@ -152,3 +152,17 @@ describe('desktop portable adapter',()=>{
     expect(next.changes).toEqual([]);expect(next.entities[entityKey(position)]).toEqual(position);
   });
 });
+
+it('preserves flow ownership, ordering, image geometry, mixed resource order and board fonts through synchronization',async()=>{
+  const snapshot=fixture();const board=JSON.parse(new TextDecoder().decode(new Uint8Array(snapshot.files['p1/b1/board.json'])));
+  board.appearance={fontFamily:'serif',fontSize:20,previewFontFamily:'mono',previewFontSize:18};
+  board.nodes[0]={...board.nodes[0],h:370,flow:{nodeIds:['flow_child']}};
+  board.nodes.push({...board.nodes[0],id:'flow_child',flow:undefined,flowOwnerId:board.nodes[0].id,h:80,sticker:true,imageAspect:3});
+  board.edges=[{id:'flow-edge',from:board.nodes[0].id,to:'flow_child',directed:true,created_at:time,route:{kind:'bent',control:{x:350,y:750}}}];
+  snapshot.files['p1/b1/board.json']=fileBytes(board);const first=await captureDesktop(snapshot);const files=projectDesktop(first.entities,first.blobs);
+  const restored=JSON.parse(new TextDecoder().decode(new Uint8Array(files['p1/b1/board.json'])));
+  expect(restored.appearance).toEqual(board.appearance);expect(restored.nodes.find((n:{id:string})=>n.id===board.nodes[0].id).flow).toEqual(board.nodes[0].flow);
+  const child=restored.nodes.find((n:{id:string})=>n.id==='flow_child');expect(child.flowOwnerId).toBe(board.nodes[0].id);expect(child.sticker).toBe(true);expect(child.imageAspect).toBe(3);expect(child.h).toBe(80);
+  expect(restored.edges[0].route).toEqual(board.edges[0].route);
+  const again=await captureDesktop({revision:'new',files,ledger:{version:1,state:createSyncState('library','desktop'),...first}});expect(again.changes).toEqual([]);
+});

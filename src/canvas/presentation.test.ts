@@ -23,5 +23,5 @@ describe('canvas presentation',()=>{
   const r=resizedBox(b,'nw',200,200);expect(r.w).toBe(120);expect(r.h).toBe(64);expect(r.x+r.w).toBe(b.x+b.w);expect(r.y+r.h).toBe(b.y+b.h);
  });
  it('places images at their true ratio and keeps that ratio from every resize corner',()=>{const size=imageDisplaySize(1600,900);expect(size.w/size.h).toBeCloseTo(16/9);for(const corner of ['nw','ne','sw','se']){const box=resizedImageBox({x:100,y:200,...size},corner,120,40);expect(box.w/box.h).toBeCloseTo(16/9);}expect(imageDisplaySize(1,1)).toEqual({w:160,h:160});});
- it('validates stored board font values',()=>{expect(boardAppearance({fontSize:Infinity})).toEqual({fontFamily:'system',fontSize:15});expect(boardAppearance({fontSize:400,fontFamily:'serif'}).fontSize).toBe(32);});
+ it('validates stored board font values',()=>{expect(boardAppearance({fontSize:Infinity})).toEqual({fontFamily:'system',fontSize:15,previewFontFamily:'system',previewFontSize:15});expect(boardAppearance({fontSize:400,fontFamily:'serif'}).fontSize).toBe(32);});
 });

@@ -431,3 +431,61 @@ fn actual_android_apk_export_opens_and_reexports_all_rich_originals() {
     assert_ne!(copied.id,board.id);assert_eq!(copied.nodes.len(),6);
     fs::remove_dir_all(root).unwrap();
 }
+
+#[test]
+fn actual_answer_export_zip_and_linear_flow_survive_save_copy_and_rollback() {
+    let (root,p,b)=setup();
+    let src=root.join("Answer-export-0.1.13.zip");
+    let original=include_bytes!("../../scripts/fixtures/answer-export-0.1.13.zip");
+    fs::write(&src,original).unwrap();
+    let reference=crate::workspace_editing::import_at(&root,&p,&b,&src).unwrap();
+    let payload=read_payload(&root,&p,&b,&reference.path).unwrap();
+    let entries=unzip(original).unwrap();
+    assert_eq!(payload.markdown.as_bytes(),entries["answer.md"]);
+    let meta=payload.attachment.unwrap();
+    assert_eq!(verified_asset(&root,&p,&b,&meta.original).unwrap(),original);
+    assert_eq!(verified_asset(&root,&p,&b,meta.images.values().next().unwrap()).unwrap(),entries["images/image-001.png"]);
+    let mut board=storage::load_board(&root,&p,&b).unwrap();
+    board.nodes[0].extra.insert("flow".into(),json!({"nodeIds":["step_a","step_b"]}));
+    for id in ["step_a","step_b"] {
+        let mut child=board.nodes[0].clone();child.id=id.into();child.title=id.into();child.extra.clear();
+        child.extra.insert("flowOwnerId".into(),json!("n1"));child.docs=vec![reference.clone()];board.nodes.push(child);
+    }
+    board.edges.push(serde_json::from_value(json!({"id":"flow_edge","from":"step_a","to":"step_b","directed":true,"created_at":"now","route":{"kind":"bent","control":{"x":321,"y":456}}})).unwrap());
+    crate::workspace_editing::save_board(&root,&board).unwrap();
+    let saved=storage::load_board(&root,&p,&b).unwrap();
+    assert_eq!(saved.nodes[0].extra["flow"],board.nodes[0].extra["flow"]);
+    assert_eq!(saved.edges[0].extra["route"],board.edges[0].extra["route"]);
+    let raw=fs::read(storage::board_file(&root,&p,&b)).unwrap();
+    let copy=portable_documents::import_at(&root,&p,&portable_documents::export_at(&root,&p,&b).unwrap()).unwrap();
+    let owner=copy.nodes.iter().find(|n|n.title=="n1").unwrap();
+    let a=copy.nodes.iter().find(|n|n.title=="step_a").unwrap();let c=copy.nodes.iter().find(|n|n.title=="step_b").unwrap();
+    assert_ne!(owner.id,"n1");assert_ne!(a.id,"step_a");
+    assert_eq!(owner.extra["flow"]["nodeIds"],json!([a.id,c.id]));
+    assert_eq!(a.extra["flowOwnerId"],json!(owner.id));
+    assert_eq!(copy.edges[0].from,a.id);assert_eq!(copy.edges[0].to,c.id);
+    assert_eq!(copy.edges[0].extra["route"],saved.edges[0].extra["route"]);
+    assert_eq!(fs::read(storage::board_file(&root,&p,&b)).unwrap(),raw);
+    let (name,backup)=board_operations::backup_at(&root,&p,&b,"流程调整前").unwrap();
+    let dir=storage::board_dir(&root,&p,&b).join(".ai-backups");fs::create_dir_all(&dir).unwrap();fs::write(dir.join(&name),backup).unwrap();
+    board.nodes.truncate(1);board.nodes[0].extra.clear();board.edges.clear();storage::save_board(&root,&board).unwrap();
+    board_operations::restore_at(&root,&p,&b,&name,&sync::board_revision(&root,&p,&b).unwrap(),20).unwrap();
+    let restored=storage::load_board(&root,&p,&b).unwrap();assert_eq!(restored.nodes.len(),3);
+    assert_eq!(restored.nodes[0].extra["flow"],saved.nodes[0].extra["flow"]);
+    assert_eq!(restored.edges[0].extra["route"],saved.edges[0].extra["route"]);
+    assert_eq!(read_payload(&root,&p,&b,&reference.path).unwrap().markdown.as_bytes(),entries["answer.md"]);
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn pasted_multiline_titles_always_create_readable_cross_platform_markdown_without_changing_body() {
+    let (root,p,b)=setup();
+    let body="# 完整原文\n\n保留全部空白与公式 $\\nu$。\n\n**全文原样。**\n";
+    for title in ["完整原文\n\n原生流程","\0\r\n*?<>|\\:/","CON","LPT1","...","😀".repeat(200).as_str()] {
+        let reference=storage::write_doc(&root,&p,&b,title,body).unwrap();
+        assert!(reference.path.len()<255);assert!(!reference.path.chars().any(|c|c.is_control()));
+        assert_eq!(read_payload(&root,&p,&b,&reference.path).unwrap().markdown,body);
+        assert_eq!(fs::read(doc_path(&root,&p,&b,&reference.path).unwrap()).unwrap(),body.as_bytes());
+    }
+    fs::remove_dir_all(root).unwrap();
+}

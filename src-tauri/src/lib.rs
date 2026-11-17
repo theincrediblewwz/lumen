@@ -136,6 +136,7 @@ pub fn run() {
             documents::attachment_source,
             documents::attachment_attach,
             workspace_editing::document_update,
+            workspace_editing::document_import,
             workspace_editing::image_document,
             documents::document_payload,
             documents::document_asset_read,

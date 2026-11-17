@@ -392,7 +392,7 @@ fn apply_at(
                 directed: true,
                 label: None,
                 created_at: now.clone(),
-            });
+             extra: Default::default(), });
         }
         refs.insert(node.reference.clone(), (id.clone(), depth));
         created.push(id);

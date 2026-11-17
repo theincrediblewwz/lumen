@@ -25,9 +25,9 @@ export function DocPreview({
   boardId,
   guessMath,
   onOpen,
-  onRemove, onEdit,
+  onRemove, onEdit, onFirst,
 }: {
-  onEdit?:()=>void;
+  onEdit?:()=>void; onFirst?:()=>void;
   refresh?:number;
   doc: DocRef;
   projectId: string;
@@ -75,6 +75,7 @@ export function DocPreview({
     <div className="doc-card" title={`${doc.path}\n点击打开阅读`}>
       { /\.(?:md|markdown)$/i.test(doc.path) && <button type="button" className="doc-card-export" aria-label={`导出 Markdown：${doc.title}`} title={attachment?.kind==='pdf'?'导出 PDF 原件':attachment?'导出 Markdown 与图片包':'导出 Markdown'} onClick={()=>void (attachment?exportDocument(projectId,boardId,doc.path,doc.title):exportMarkdown(projectId,boardId,doc.path,doc.title)).then(p=>p&&setExportStatus(`已导出：${p}`)).catch(e=>setExportStatus(String(e)))}><Download size={13}/></button>}
       {onEdit&&attachment?.kind!=='pdf'&&<button type="button" className="doc-card-edit" title="编辑Markdown" aria-label={`编辑Markdown：${doc.title}`} onClick={onEdit}>编辑</button>}
+      {onFirst&&<button className="doc-card-primary" title="将此资源排在首位，在白板预览" aria-label={`在白板预览：${doc.title}`} onClick={onFirst}>置于首位</button>}
       {exportStatus&&<span className="doc-export-status" role="status">{exportStatus}</span>}
       <button type="button" className="doc-card-remove" title="移除此文档" onClick={onRemove}>
         <svg width="12" height="12" viewBox="0 0 16 16" aria-hidden="true">

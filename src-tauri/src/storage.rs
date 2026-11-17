@@ -106,6 +106,8 @@ pub struct BoardEdge {
     #[serde(default)]
     pub label: Option<String>,
     pub created_at: String,
+    #[serde(default, flatten)]
+    pub extra: std::collections::BTreeMap<String, serde_json::Value>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -531,11 +533,17 @@ pub fn write_doc(
     let bid = safe_id(board_id)?;
     let stem = title.trim();
     let stem = if stem.is_empty() { "未命名" } else { stem };
-    // 文件名安全化：去掉分隔符
-    let safe_stem: String = stem
+    // A pasted title can contain line breaks, TeX and characters invalid on
+    // another platform. Keep the full body, but always return a readable path.
+    let mut safe_stem: String = stem
         .chars()
-        .map(|c| if c == '/' || c == '\\' || c == ':' { '_' } else { c })
+        .take(48)
+        .map(|c| if c.is_control() || "/\\:*?\"<>|".contains(c) { '_' } else { c })
         .collect();
+    safe_stem=safe_stem.trim_matches([' ','.']).to_owned();
+    if safe_stem.is_empty(){safe_stem="未命名".into();}
+    let base=safe_stem.split('.').next().unwrap_or("").to_ascii_uppercase();
+    if matches!(base.as_str(),"CON"|"PRN"|"AUX"|"NUL") || (base.len()==4 && (base.starts_with("COM")||base.starts_with("LPT")) && matches!(base.as_bytes()[3],b'1'..=b'9')) {safe_stem=format!("note_{safe_stem}");}
 
     let dir = docs_dir(root, pid, bid);
     fs::create_dir_all(&dir).map_err(|e| format!("创建 docs 目录失败: {e}"))?;

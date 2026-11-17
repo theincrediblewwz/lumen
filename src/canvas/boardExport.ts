@@ -6,6 +6,7 @@
  */
 
 import type { BoardFile, BoardNode, BoardEdge } from '../api';
+import {flowNodes,topLevelNodes} from './composition';
 
 interface TreeNode {
   node: BoardNode;
@@ -33,6 +34,11 @@ export function buildForest(nodes: BoardNode[], edges: BoardEdge[]): TreeNode[] 
       uAdj.get(e.from)!.push(e.to);
       uAdj.get(e.to)!.push(e.from);
     }
+  }
+
+  for(const owner of topLevelNodes(nodes)){
+    const first=owner.flow?flowNodes(owner,nodes)[0]:undefined;
+    if(first&&!childrenIds.get(owner.id)!.includes(first.id)){childrenIds.get(owner.id)!.push(first.id);inDeg.set(first.id,(inDeg.get(first.id)??0)+1);}
   }
 
   const visited = new Set<string>();
@@ -185,7 +191,7 @@ export function exportSvg(
   const edge = opts.edge ?? '#b4bfba';
   const accent = opts.accent ?? '#2e5a4e';
 
-  const nodes = board.nodes;
+  const nodes = topLevelNodes(board.nodes);
   if (nodes.length === 0) {
     return `<svg xmlns="http://www.w3.org/2000/svg" width="400" height="200"><rect width="400" height="200" fill="${bg}"/><text x="200" y="100" text-anchor="middle" fill="${text}" font-family="sans-serif">空白板</text></svg>`;
   }

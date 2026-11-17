@@ -300,6 +300,10 @@ fn remap(value: &mut Value, ids: &BTreeMap<String, String>) {
                         continue;
                     }
                 }
+                if key == "nodeIds" {
+                    if let Some(rows) = row.as_array_mut() { for value in rows { if let Some(new) = value.as_str().and_then(|id| ids.get(id)) { *value = json!(new); } } }
+                    continue;
+                }
                 if matches!(key.as_str(), "message_ids_json" | "basis_json") {
                     let mut list: Vec<String> =
                         serde_json::from_str(row.as_str().unwrap_or("[]")).unwrap_or_default();
@@ -465,11 +469,13 @@ pub fn import_at(root: &Path, p: &str, bytes: &[u8]) -> Result<storage::BoardFil
     }
     for node in &mut board.nodes {
         node.id = ids[&node.id].clone();
+        let mut extra = json!(node.extra); remap(&mut extra, &ids); node.extra = serde_json::from_value(extra).map_err(err)?;
     }
     for edge in &mut board.edges {
         edge.id = ids[&edge.id].clone();
         edge.from = ids[&edge.from].clone();
         edge.to = ids[&edge.to].clone();
+        let mut extra = json!(edge.extra); remap(&mut extra, &ids); edge.extra = serde_json::from_value(extra).map_err(err)?;
     }
     let mut writes = BTreeMap::new();
     for (path, data) in files {

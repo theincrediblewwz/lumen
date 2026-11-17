@@ -135,3 +135,21 @@ export function straightPath(from: Pt, to: Pt): string {
 export function boxContains(b: Box, p: Pt): boolean {
   return p.x >= b.x && p.x <= b.x + b.w && p.y >= b.y && p.y <= b.y + b.h;
 }
+
+/** Rounded, freely positioned elbow; endpoints always approach the correct card side. */
+export function bentGeometry(a:Box,b:Box,control:Pt,scale=1):EdgeGeometry {
+  const start=borderPoint(a,control),end=borderPoint(b,control),r=Math.min(10*scale,Math.hypot(control.x-start.x,control.y-start.y)/3,Math.hypot(end.x-control.x,end.y-control.y)/3);
+  const beforeLength=Math.hypot(control.x-start.x,control.y-start.y)||1,afterLength=Math.hypot(end.x-control.x,end.y-control.y)||1;
+  const before={x:control.x+(start.x-control.x)*r/beforeLength,y:control.y+(start.y-control.y)*r/beforeLength},after={x:control.x+(end.x-control.x)*r/afterLength,y:control.y+(end.y-control.y)*r/afterLength};
+  return {start,end,mid:control,d:`M ${start.x} ${start.y} L ${before.x} ${before.y} Q ${control.x} ${control.y} ${after.x} ${after.y} L ${end.x} ${end.y}`};
+}
+export function distanceToSegment(p:Pt,a:Pt,b:Pt):number {
+  const dx=b.x-a.x,dy=b.y-a.y,length=dx*dx+dy*dy,t=length?Math.max(0,Math.min(1,((p.x-a.x)*dx+(p.y-a.y)*dy)/length)):0;
+  return Math.hypot(p.x-a.x-t*dx,p.y-a.y-t*dy);
+}
+export function segmentHitsBox(a:Pt,b:Pt,box:Box,margin=0):boolean {
+  let low=0,high=1;const dx=b.x-a.x,dy=b.y-a.y;
+  for(const [p,q]of [[-dx,a.x-box.x+margin],[dx,box.x+box.w+margin-a.x],[-dy,a.y-box.y+margin],[dy,box.y+box.h+margin-a.y]]){
+    if(p===0){if(q<0)return false;continue;}const r=q/p;if(p<0)low=Math.max(low,r);else high=Math.min(high,r);if(low>high)return false;
+  }return true;
+}

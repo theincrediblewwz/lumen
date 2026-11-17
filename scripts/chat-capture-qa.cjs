@@ -19,7 +19,7 @@ async function select(id){const message=page.locator(`[data-message-id="${id}"]`
  checks.push('selecting only a question captures its complete answer with table/code/math/source text intact; success exposes an Open saved note action');
  await click(page.getByRole('button',{name:'打开已保存笔记',exact:true}));await page.waitForFunction(()=>window.__fixtureWindowOptions.some(w=>w.url.includes('reader=1')));
  const reader=await page.evaluate(()=>window.__fixtureWindowOptions.find(w=>w.url.includes('reader=1')).url);
- await page.goto(fixture('reader','&'+reader.split('?')[1]));await page.locator('.reader-content h1').waitFor();
+ await page.goto(fixture('reader','&'+reader.split('?')[1]));await page.locator('.reader-content h1').waitFor();await page.waitForFunction(()=>document.querySelectorAll('.reader-content .katex').length>=2);
  assert.ok((await page.locator('.reader-content').innerText()).includes('这是一条已保存的合成回答'));assert.equal(await page.locator('.reader-content a[href^="lumen://conversation/"]').count(),1);assert.equal(await page.locator('.reader-content table').count(),1);assert.ok(await page.locator('.reader-content .katex').count()>=2);assert.equal(await page.locator('.reader-content .katex-error').count(),0);assert.equal(await page.locator('.reader-content pre code').innerText(),'const x_i = 2;\n');await shot('capture-02-reader-complete-answer');
  checks.push('Open saved note reads the generated document and renders question/answer/table/code/formulas plus a real source link');
  await click(page.locator('.reader-content a[href^="lumen://conversation/"]'));await page.waitForFunction(()=>window.__fixtureWindowOptions.some(w=>w.url.includes('ai=1')));

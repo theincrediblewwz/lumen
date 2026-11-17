@@ -30,6 +30,7 @@ function GrowArea({
   onCommit: (v: string) => void;
 }) {
   const ref = useRef<HTMLTextAreaElement>(null);
+  const [draft,setDraft]=useState(value);
   const grow = () => {
     const el = ref.current;
     if (!el) return;
@@ -39,16 +40,17 @@ function GrowArea({
   useEffect(() => {
     grow();
   }, [value]);
+  useEffect(()=>{if(document.activeElement!==ref.current)setDraft(value);},[value]);
   return (
     <textarea
       ref={ref}
       className={className}
-      value={value}
-      onChange={e=>onCommit(e.target.value)}
+      value={draft}
+      onChange={e=>{setDraft(e.target.value);onCommit(e.target.value);}}
       placeholder={placeholder}
       rows={1}
       onInput={grow}
-      onBlur={(e) => onCommit(e.target.value)}
+      onBlur={(e) => {onCommit(e.target.value);setDraft(value);}}
       onKeyDown={(e) => {
         if (e.key === 'Escape') (e.target as HTMLTextAreaElement).blur();
       }}
@@ -72,12 +74,12 @@ export function NodePanel({
   onOpenDoc,
   onImportDocs,
   onRemoveDoc,
-  onEditMarkdown, onSettings,
+  onEditMarkdown, onOpenFlow, onPromoteDoc,
   projectId,
   boardId,
   guessMath = false,
 }: {
-  onEditMarkdown:()=>void;onSettings:()=>void;
+  onEditMarkdown:()=>void;onOpenFlow:()=>void;onPromoteDoc:(id:string,path:string)=>void;
   docVersions?:Record<string,number>;
   node: BoardNode;
   onCommit: (id: string, patch: { title?: string; summary?: string }) => void;
@@ -293,10 +295,10 @@ export function NodePanel({
       <div className="np-body">
         <div className="np-top">
         <button type="button" className="btn np-ask" onClick={()=>void openAiWindow({projectId,boardId,boardName:node.title,nodeId:node.id}).catch(e=>setActionStatus(String(e)))}><MessageCircle size={16} strokeWidth={1.7}/> 与 AI 对话</button>
-        <button type="button" className="btn np-settings" onClick={onSettings}>白板设置</button>
         {actionStatus && <p className="np-empty" role="status">{actionStatus}</p>}
         <label className="np-label">概括标题</label>
         <GrowArea
+          key={node.id}
           className="np-title"
           value={node.title}
           placeholder="用十几个字概括这个问题…"
@@ -307,6 +309,7 @@ export function NodePanel({
         <button type="button" className="np-markdown-open" onClick={onEditMarkdown}><span aria-hidden="true">✎</span> Markdown 编辑器 <span aria-hidden="true">↗</span></button>
 
 
+        {!node.flowOwnerId&&<section className="np-flow-attachment"><span className="np-label">子白板 · 线性流程</span><button className="btn" onClick={onOpenFlow}>{node.flow?`展开子流程 · ${node.flow.nodeIds.length} 个步骤`:'创建子流程'}</button></section>}
         <label className="np-label">颜色标记</label>
         <div className="np-swatches">
           {COLOR_SWATCHES.map((s) => {
@@ -351,7 +354,7 @@ export function NodePanel({
             {node.docs.filter(d=>!isQuestionDoc(d.path)).map((d) => (
               <DocPreview
                 key={d.path}
-                doc={d} refresh={docVersions[d.path]??0}
+                doc={d} refresh={docVersions[d.path]??0} onFirst={()=>onPromoteDoc(node.id,d.path)}
                 projectId={projectId}
                 boardId={boardId}
                 guessMath={guessMath}

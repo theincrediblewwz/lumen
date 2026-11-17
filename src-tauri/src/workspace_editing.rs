@@ -102,6 +102,24 @@ pub fn image_document(project_id:String,board_id:String,src_path:Option<String>,
     sync::transaction(&root,files)?;Ok(prepared.reference)
 }
 
+/// Prepare the exporter's original ZIP/Markdown as an immutable mounted resource.
+#[tauri::command]
+pub fn document_import(project_id:String,board_id:String,src_path:String,expected_scope:String)->Result<storage::DocRef,String>{
+    let _guard=sync::IO_LOCK.lock().map_err(|e|e.to_string())?;let root=commands::root()?;
+    board_operations::ensure_scope(&root,&expected_scope)?;
+    import_at(&root,&project_id,&board_id,Path::new(&src_path))
+}
+pub fn import_at(root:&Path,p:&str,b:&str,source:&Path)->Result<storage::DocRef,String>{
+    storage::load_board(root,p,b)?;
+    let prepared=documents::prepare(source,"","",0)?;let mut files=BTreeMap::new();
+    for(path,bytes)in prepared.files{
+        let target=documents::doc_path(root,p,b,&path)?;
+        if target.exists(){if fs::read(target).map_err(|e|e.to_string())?!=bytes{return Err("已有资源校验失败，未覆盖原件".into());}}
+        else{files.insert(format!("{p}/{b}/{path}"),bytes);}
+    }
+    sync::transaction(root,files)?;Ok(prepared.reference)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

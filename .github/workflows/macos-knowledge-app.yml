@@ -82,6 +82,7 @@ jobs:
           node scripts/faithful-import-qa.cjs
           node scripts/rich-documents-qa.cjs
           node scripts/canvas-authoring-qa.cjs
+          node scripts/flow-composition-qa.cjs
 
       - name: Install universal Mac Rust targets
         run: rustup toolchain install 1.95.0 --profile minimal --target aarch64-apple-darwin,x86_64-apple-darwin
