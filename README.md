@@ -7,9 +7,9 @@
 
 [下载 Mac 0.1.15](https://github.com/theincrediblewwz/lumen/releases/tag/mac-v0.1.15) · [白板编辑与保存](./docs/CANVAS_AUTHORING.md) · [导入与恢复](./docs/LONG_MARKDOWN_AND_FAITHFUL_IMPORT.md)
 
-0.1.15 增加原比例纯图片贴图、收藏置顶、每板字体、四角缩放与连线吸附；Markdown 通过面板单一入口打开专用编辑窗口，上方只保留两行工具。内容自动保存，Cmd/Ctrl+S 可立即保存；缩放最低 0.1%，远景逐级合并为热力区域。详见[使用与保存说明](./docs/CANVAS_AUTHORING.md)。
+**0.1.16 源码已合入 main，Mac预发行正在验收。** 新增节点内线性流程、框内右侧编号和右下悬浮追加、局部可见步骤直接选择、流畅拖动换位；画布/面板粘贴、多图文资源与首位预览、Answer Export ZIP；内容自适应、关系公式与三点提示、可拖动直弯连线。详见[子流程与内容组合](./docs/FLOW_COMPOSITION.md)。0.1.15的收藏、独立Markdown编辑器、自动保存与分级热力图继续保留。
 
-桌面源码 **0.1.15**，技术栈 Tauri 2 + React 18 + TypeScript + Vite。最新更新包括长 Markdown 顺序分批分析、上游临时满载自动重试，以及两种对话导入方式：
+桌面源码 **0.1.16**，技术栈 Tauri 2 + React 18 + TypeScript + Vite。最新更新包括长 Markdown 顺序分批分析、上游临时满载自动重试，以及两种对话导入方式：
 
 - **AI 重构图谱**：按主题重新组织问题树，各批结果在本机合并。
 - **忠实逐轮图谱**：每条 AI 回答保留为一个节点；新 AI 只生成概括标题、简短导读和建议层级，原回答由本机逐字保留。支持分享对话、明确问答标题和“第 N 条回答”导出；长回答分片分析后仍保留为同一节点。

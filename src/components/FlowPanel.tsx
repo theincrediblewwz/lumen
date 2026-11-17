@@ -13,9 +13,22 @@ export function FlowPanel({owner,nodes,projectId,boardId,selected,ownerBox,onClo
 }) {
   const [edit,setEdit]=useState(false),[menu,setMenu]=useState<ContextMenuState|null>(null),[,refresh]=useState(0);
   const panel=useRef<HTMLElement>(null),list=useRef<HTMLDivElement>(null),scroller=useRef<HTMLDivElement>(null),drag=useRef<Drag>(),frame=useRef(0);
+  const settling=useRef<Map<string,number>>();
   const [bounds,setBounds]=useState<Box>();
   const updateBounds=()=>{const el=panel.current;if(!el)return;const r=el.getBoundingClientRect(),parent=el.closest('.board-canvas-live')!.getBoundingClientRect();setBounds(old=>old&&old.x===r.x-parent.x&&old.y===r.y-parent.y&&old.w===r.width&&old.h===r.height?old:{x:r.x-parent.x,y:r.y-parent.y,w:r.width,h:r.height});};
   useLayoutEffect(()=>{updateBounds();const observer=new ResizeObserver(updateBounds);if(panel.current)observer.observe(panel.current);window.addEventListener('resize',updateBounds);return()=>{observer.disconnect();window.removeEventListener('resize',updateBounds);};},[]);
+  useLayoutEffect(()=>{
+    const before=settling.current;if(!before)return;settling.current=undefined;
+    list.current?.querySelectorAll<HTMLElement>('[data-flow-step]').forEach(el=>{
+      const delta=(before.get(el.dataset.flowStep!)??el.getBoundingClientRect().top)-el.getBoundingClientRect().top;
+      const restore=()=>{el.style.transition='';};
+      if(Math.abs(delta)<.5||!el.animate){restore();return;}
+      // Animate from the last visible position to the new layout, rather than
+      // applying the preview transform a second time after DOM reordering.
+      const animation=el.animate([{transform:`translateY(${delta}px)`},{transform:'translateY(0)'}],{duration:180,easing:'cubic-bezier(.2,.7,.2,1)'});
+      void animation.finished.then(restore,restore);
+    });
+  },[nodes]);
   useEffect(()=>{const cancel=()=>{drag.current=undefined;cancelAnimationFrame(frame.current);refresh(n=>n+1);};window.addEventListener('blur',cancel);return()=>{cancelAnimationFrame(frame.current);window.removeEventListener('blur',cancel);};},[]);
   const tick=()=>{
     const d=drag.current,s=scroller.current;if(!d||!s)return;
@@ -46,7 +59,13 @@ export function FlowPanel({owner,nodes,projectId,boardId,selected,ownerBox,onClo
     }
     drag.current=undefined;cancelAnimationFrame(frame.current);
     if(panel.current?.hasPointerCapture(event.pointerId))panel.current.releasePointerCapture(event.pointerId);
-    if(event.type==='pointerup'){if(d.moved)onReorder(moveFlowStep(d.order,d.id,d.index));else onSelect(d.id);}refresh(n=>n+1);
+    if(event.type==='pointerup'){
+      if(d.moved){
+        settling.current=new Map(Array.from(list.current?.querySelectorAll<HTMLElement>('[data-flow-step]')??[]).map(el=>[el.dataset.flowStep!,el.getBoundingClientRect().top]));
+        list.current?.querySelectorAll<HTMLElement>('[data-flow-step]').forEach(el=>{el.style.transition='none';});
+        onReorder(moveFlowStep(d.order,d.id,d.index));
+      }else onSelect(d.id);
+    }refresh(n=>n+1);
   };
   const select=(id:string)=>onSelect(id);
   const corners=(b:Box)=>[{x:b.x,y:b.y},{x:b.x+b.w,y:b.y},{x:b.x,y:b.y+b.h},{x:b.x+b.w,y:b.y+b.h}];

@@ -2623,7 +2623,7 @@ html.motion-off .edge-line { animation: none; }
 .flow-panel header span {font-size:10px;color:var(--text-secondary);}
 .flow-panel header>.btn {font-size:11px;padding:6px 9px;}
 .flow-close {border:0;background:none;color:var(--text-secondary);font-size:22px;cursor:pointer;}
-.flow-scroll {flex:1;min-height:0;overflow:auto;padding:22px 24px 86px;background-image:radial-gradient(var(--border-color) .8px,transparent .8px);background-size:18px 18px;}
+.flow-scroll {overflow-anchor:none;flex:1;min-height:0;overflow:auto;padding:22px 24px 86px;background-image:radial-gradient(var(--border-color) .8px,transparent .8px);background-size:18px 18px;}
 .flow-list {display:flex;flex-direction:column;gap:44px;min-width:100%;}
 .flow-step {position:relative;transition:transform 180ms cubic-bezier(.2,.7,.2,1);touch-action:none;}
 .flow-step>.node-card {position:relative;left:0!important;top:0!important;width:100%!important;}
