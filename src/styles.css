@@ -2540,7 +2540,7 @@ html.motion-off .edge-line { animation: none; }
 .board-appearance input {width:100%;accent-color:var(--accent);}
 .board-appearance output {margin-left:auto;font-variant-numeric:tabular-nums;}
 @media(max-width:700px){.document-editor-modal{inset:56px 8px 8px;}.document-editor-modal .md-editor-body{grid-template-columns:1fr;}.md-editor-preview{max-height:35vh;}.board-save-state{right:14px;top:50px;}}
-.node-card {font-size:var(--board-font-size,15px);}
+.node-card {font-size:var(--board-font-size,15px);min-width:0;max-width:none;}
 .node-title.markdown-live {font-size:var(--board-font-size,15px);}
 .node-question.markdown-live {font-size:calc(var(--board-font-size,15px)*.86);}
 .board-canvas .markdown-live {font-family:inherit;}
