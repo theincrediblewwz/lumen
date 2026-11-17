@@ -5,9 +5,9 @@
 
 ## 当前版本
 
-[下载 Mac 0.1.17](https://github.com/theincrediblewwz/lumen/releases/tag/mac-v0.1.17) · [白板编辑与保存](./docs/CANVAS_AUTHORING.md) · [导入与恢复](./docs/LONG_MARKDOWN_AND_FAITHFUL_IMPORT.md)
+[下载 Mac 0.1.18](https://github.com/theincrediblewwz/lumen/releases/tag/mac-v0.1.18) · [白板编辑与保存](./docs/CANVAS_AUTHORING.md) · [导入与恢复](./docs/LONG_MARKDOWN_AND_FAITHFUL_IMPORT.md)
 
-**0.1.18 图片柔光与每板缩放设置候选。** 图片与文字共用缩小柔光，白板设置新增双指缩放灵敏度滑条；完整Mac构建通过后更新下载。
+**0.1.18 图片柔光与每板缩放设置已完成构建和验收。** 图片与文字共用阴影和缩小柔光，白板设置新增0.25–3倍双指缩放灵敏度滑条，各板分别自动保存。
 
 **0.1.16 已完成构建和验收。** 新增节点内线性流程、框内右侧编号和右下悬浮追加、局部可见步骤直接选择、流畅拖动换位；画布/面板粘贴、多图文资源与首位预览、Answer Export ZIP；内容自适应、关系公式与三点提示、可拖动直弯连线。详见[子流程与内容组合](./docs/FLOW_COMPOSITION.md)。0.1.15的收藏、独立Markdown编辑器、自动保存与分级热力图继续保留。
 
