@@ -28,6 +28,9 @@ fs.mkdirSync(out, { recursive: true });
     await page.getByText(name, { exact: true }).click();
     await page.getByRole('button', { name: '收起侧栏', exact: true }).click();
     await page.locator('.board-canvas-live').waitFor();
+    // The sidebar animates its width; wait for the actual canvas origin to settle.
+    // Otherwise the recorded client point and the event handler use different origins.
+    await page.waitForFunction(() => document.querySelector('.sidebar.is-collapsed')?.getBoundingClientRect().width === 0);
   };
   const wheel = async (deltaY, boardId = 'board') => {
     const before = (await state()).boards[boardId].viewport;
