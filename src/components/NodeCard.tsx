@@ -129,7 +129,11 @@ export const NodeCard = memo(function NodeCard({
     const report = () => {
       const content=contentRef.current,style=getComputedStyle(el),padX=parseFloat(style.paddingLeft)+parseFloat(style.paddingRight)+parseFloat(style.borderLeftWidth)+parseFloat(style.borderRightWidth),padY=parseFloat(style.paddingTop)+parseFloat(style.paddingBottom)+parseFloat(style.borderTopWidth)+parseFloat(style.borderBottomWidth);
       const mathWidth=Math.max(0,...Array.from(content?.querySelectorAll<HTMLElement>('.katex-html')??[]).map(n=>n.offsetWidth));
-      const min={w:pureImage?0:Math.max(120,mathWidth+padX),h:pureImage?0:Math.max(64,(content?.scrollHeight??0)+padY)};
+      // A full-width image deliberately occupies the card's bottom padding.
+      // scrollHeight counts that overlap again; don't add a second blank strip.
+      const trailingMargin=content?.lastElementChild?parseFloat(getComputedStyle(content.lastElementChild).marginBottom):0;
+      const contentHeight=Math.max(content?.offsetHeight??0,(content?.scrollHeight??0)+Math.min(0,trailingMargin));
+      const min={w:pureImage?0:Math.max(120,mathWidth+padX),h:pureImage?0:Math.max(64,contentHeight+padY)};
       setMinimum(old=>Math.abs(old.w-min.w)<1&&Math.abs(old.h-min.h)<1?old:min);
       onMeasure(node.id,el.offsetWidth,el.offsetHeight,min.w,min.h);
     };
