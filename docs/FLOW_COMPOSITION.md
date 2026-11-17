@@ -1,6 +1,6 @@
 # 子流程与内容组合（0.1.16）
 
-Mac预发行正在验收；发布后以Release附件的版本、摘要和BUILD-INFO为准。
+[下载Mac0.1.16预发行](https://github.com/theincrediblewwz/lumen/releases/tag/mac-v0.1.16)。版本、源码来源、SHA-256和验证边界见Release附件BUILD-INFO与校验和。
 
 ## 0.1.16：节点内部流程与资源
 
@@ -21,3 +21,5 @@ Mac预发行正在验收；发布后以Release附件的版本、摘要和BUILD-I
 ---
 
 已有资料不会批量迁移。升级前保留旧App和资料副本；副本导入重映射流程标识，原始Markdown/图片/ZIP保留。更旧App可能不会按子流程显示新增字段，回退前先保留最新资料副本。
+
+验证：468前端、112 Mac原生通过/2项既有忽略、21套WebKit/220组，以及隔离原生的多行粘贴、首位资源与退出重开。[公共CI44078255623](https://github.com/theincrediblewwz/lumen/actions/runs/44078255623)和[完整Mac44078271497](https://github.com/theincrediblewwz/lumen/actions/runs/44078271497)均成功。发行App沿用已验证构建，194份运行和构建输入与公开源码逐项相同，来源在BUILD-INFO中明确。

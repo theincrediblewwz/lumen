@@ -5,9 +5,9 @@
 
 ## 当前版本
 
-[下载 Mac 0.1.15](https://github.com/theincrediblewwz/lumen/releases/tag/mac-v0.1.15) · [白板编辑与保存](./docs/CANVAS_AUTHORING.md) · [导入与恢复](./docs/LONG_MARKDOWN_AND_FAITHFUL_IMPORT.md)
+[下载 Mac 0.1.16](https://github.com/theincrediblewwz/lumen/releases/tag/mac-v0.1.16) · [白板编辑与保存](./docs/CANVAS_AUTHORING.md) · [导入与恢复](./docs/LONG_MARKDOWN_AND_FAITHFUL_IMPORT.md)
 
-**0.1.16 源码已合入 main，Mac预发行正在验收。** 新增节点内线性流程、框内右侧编号和右下悬浮追加、局部可见步骤直接选择、流畅拖动换位；画布/面板粘贴、多图文资源与首位预览、Answer Export ZIP；内容自适应、关系公式与三点提示、可拖动直弯连线。详见[子流程与内容组合](./docs/FLOW_COMPOSITION.md)。0.1.15的收藏、独立Markdown编辑器、自动保存与分级热力图继续保留。
+**0.1.16 已完成构建和验收。** 新增节点内线性流程、框内右侧编号和右下悬浮追加、局部可见步骤直接选择、流畅拖动换位；画布/面板粘贴、多图文资源与首位预览、Answer Export ZIP；内容自适应、关系公式与三点提示、可拖动直弯连线。详见[子流程与内容组合](./docs/FLOW_COMPOSITION.md)。0.1.15的收藏、独立Markdown编辑器、自动保存与分级热力图继续保留。
 
 桌面源码 **0.1.16**，技术栈 Tauri 2 + React 18 + TypeScript + Vite。最新更新包括长 Markdown 顺序分批分析、上游临时满载自动重试，以及两种对话导入方式：
 
