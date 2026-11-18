@@ -55,11 +55,15 @@ const evidence = path.resolve(process.env.LSQ_UI_EVIDENCE || 'mac-ui-evidence');
       const image = surface.querySelector('img');
       const base = surface.getBoundingClientRect();
       const art = image.getBoundingClientRect();
+      const front = getComputedStyle(surface, '::after');
       return { clipped: getComputedStyle(surface).clipPath !== 'none',
-        unbroken: base.top === art.top && base.width === art.width && base.height === art.height };
+        unbroken: base.top === art.top && base.width === art.width && base.height === art.height,
+        shadedFront: front.content !== 'none' && front.boxShadow !== 'none' && parseFloat(front.top) > 0 };
     });
-    assert.deepEqual(silhouette, { clipped: true, unbroken: true });
+    assert.deepEqual(silhouette, { clipped: true, unbroken: true, shadedFront: true });
     assert.equal(await tile('另一项目').locator('img').count(), 0);
+    await page.mouse.move(551, 313);
+    await tile('桌面夹').screenshot({ path: path.join(evidence, 'project-covers-depth.png'), animations: 'disabled' });
     await page.screenshot({ path: path.join(evidence, 'project-covers-folder.png'), animations: 'disabled' });
 
     await tile('桌面夹').click();
@@ -107,7 +111,7 @@ const evidence = path.resolve(process.env.LSQ_UI_EVIDENCE || 'mac-ui-evidence');
     await tile('合成学习白板').click();
     await page.locator('.board-canvas-live').waitFor();
     assert.deepEqual(errors, []);
-    console.log('Project and board covers: 38 offline images, six styles, complete folder clipping, keyboard menu, cancel, retry, reload, scrolling, reset, and board navigation passed.');
+    console.log('Project and board covers: 38 offline images, six styles, continuous clipping with a shaded front, keyboard menu, cancel, retry, reload, scrolling, reset, and board navigation passed.');
   } finally {
     await browser.close();
   }

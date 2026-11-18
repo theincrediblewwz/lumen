@@ -9,6 +9,20 @@
   clip-path: path('M 0 13 Q 0 3 10 3 H 39 Q 49 3 52 15 H 99 Q 108 15 108 24 V 61 Q 108 70 99 70 H 9 Q 0 70 0 61 Z');
 }
 
+/* The front lip shades the tab while the artwork underneath stays continuous. */
+.project-folder-surface::after {
+  content: '';
+  position: absolute;
+  z-index: 1;
+  inset: 15px 0 0;
+  border: 1px solid rgb(255 255 255 / 0.22);
+  border-top-color: rgb(255 255 255 / 0.42);
+  border-radius: 9px;
+  background: linear-gradient(172deg, rgb(255 255 255 / 0.18), rgb(255 255 255 / 0.02) 46%, transparent 68%);
+  box-shadow: 0 -2px 5px rgb(14 23 24 / 0.34), inset 0 1px 0 rgb(255 255 255 / 0.2), inset 0 -2px 4px rgb(14 23 24 / 0.12);
+  pointer-events: none;
+}
+
 .project-cover-image,
 .project-cover-skin {
   position: absolute;
