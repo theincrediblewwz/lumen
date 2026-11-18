@@ -399,14 +399,32 @@
   pointer-events: none;
 }
 
-.project-name-dialog {
-  width: min(410px, calc(100vw - 32px));
-  padding: 20px;
+.settings-card.project-name-dialog {
+  width: 420px;
+  padding: 22px 24px 24px;
+  gap: 16px;
+  overflow-y: auto;
+  background: var(--bg-node);
+  border: 1px solid var(--border-color);
+  box-shadow: var(--shadow-node-hover);
 }
 
-.project-name-dialog h2 { margin: 0 0 14px; font-size: 17px; }
-.project-name-dialog .input { width: 100%; }
-.project-name-dialog .action-confirm-buttons { margin-top: 16px; }
+.project-name-dialog h2 {
+  margin: 0;
+  font-size: 19px;
+  font-weight: 680;
+  line-height: 1.35;
+}
+.project-name-dialog .input {
+  width: 100%;
+  min-width: 0;
+  padding: 9px 12px;
+  font-size: 15px;
+  line-height: 1.45;
+}
+.project-name-dialog .action-confirm-buttons { margin: 0; }
+.project-name-dialog .action-confirm-buttons > button { min-width: 68px; }
+.project-name-dialog .error-text { margin: 0; overflow-wrap: anywhere; }
 
 @media (max-width: 550px) {
   .titlebar-logo { gap: 0; }

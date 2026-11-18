@@ -32,10 +32,28 @@ const evidence = path.resolve(process.env.LSQ_UI_EVIDENCE || 'mac-ui-evidence');
     await page.mouse.move(from.x, from.y); await page.mouse.down();
     await page.mouse.move(to.x, to.y, { steps: 12 }); await page.mouse.up();
   };
+  const checkNameDialog = async (dialog, screenshot) => {
+    await dialog.waitFor();
+    const { background, insets } = await dialog.evaluate(form => {
+      const box = form.getBoundingClientRect();
+      const insets = [...form.querySelectorAll('h2, input, button')].map(element => {
+        const child = element.getBoundingClientRect();
+        return Math.min(child.left - box.left, box.right - child.right,
+          child.top - box.top, box.bottom - child.bottom);
+      });
+      return { background: getComputedStyle(form).backgroundColor, insets };
+    });
+    assert.ok(background !== 'transparent' && background !== 'rgba(0, 0, 0, 0)');
+    assert.equal(insets.length, 4);
+    assert.ok(insets.every(inset => inset >= 16), `Naming dialog insets: ${insets}`);
+    if (screenshot) await dialog.screenshot({ path: path.join(evidence, screenshot), animations: 'disabled' });
+  };
   const newItem = async (kind, title, root = false) => {
     await page.getByRole('button', { name: root ? '新建项目' : '新建', exact: true }).click();
     if (!root) await menuItem(kind === 'project' ? '新建项目' : '新建白板').click();
-    const input = page.getByRole('textbox', { name: '名称', exact: true });
+    const dialog = page.getByRole('dialog', { name: kind === 'project' ? '新建项目' : '新建白板', exact: true });
+    await checkNameDialog(dialog, root ? 'project-name-create.png' : undefined);
+    const input = dialog.getByRole('textbox', { name: '名称', exact: true });
     await input.fill(title); await input.press('Enter');
     await (kind === 'project' ? folder(title) : board(title)).waitFor();
   };
@@ -185,10 +203,15 @@ const evidence = path.resolve(process.env.LSQ_UI_EVIDENCE || 'mac-ui-evidence');
       }
       await design.getByRole('button', { name: /显示全部/ }).click();
       await design.screenshot({ path: path.join(evidence, 'project-canvas-720-' + theme + '.png'), animations: 'disabled' });
+      await design.getByRole('button', { name: '讨论脉络', exact: true }).click({ button: 'right' });
+      await design.getByRole('menuitem', { name: '重命名', exact: true }).click();
+      const rename = design.getByRole('dialog', { name: '重命名', exact: true });
+      await checkNameDialog(rename, `project-name-720-${theme}.png`);
+      await rename.getByRole('button', { name: '取消', exact: true }).click();
     }
     await design.close();
     assert.deepEqual(errors, []);
-    check('the project canvas and controls fit 720×480 in three themes; the reference layout renders at its native size');
+    check('the project canvas and naming dialog fit 720×480 in three themes; heading, input and buttons clear the dialog corners');
     fs.writeFileSync(path.join(evidence, 'project-canvas-qa.json'), JSON.stringify({ checks, errors, realProviderCalls: 0 }, null, 2));
   } catch (error) {
     await page.screenshot({ path: path.join(evidence, 'project-canvas-failure.png') }).catch(() => {});
