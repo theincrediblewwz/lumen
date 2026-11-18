@@ -5,7 +5,7 @@
 
 ## 当前版本
 
-[下载 Mac 0.1.19](https://github.com/theincrediblewwz/lumen/releases/tag/mac-v0.1.19) · [白板编辑与保存](./docs/CANVAS_AUTHORING.md) · [导入与恢复](./docs/LONG_MARKDOWN_AND_FAITHFUL_IMPORT.md)
+[下载 Mac 0.2.0](https://github.com/theincrediblewwz/lumen/releases/tag/mac-v0.2.0) · [白板编辑与保存](./docs/CANVAS_AUTHORING.md) · [导入与恢复](./docs/LONG_MARKDOWN_AND_FAITHFUL_IMPORT.md)
 
 **0.2.0 项目画布预览。** 首页及各级项目都使用画布。自由摆放项目和白板，沿路径返回，或从文件夹右侧拖出有方向的项目关系。详见[项目画布](./docs/PROJECT_CANVAS.md)。
 
