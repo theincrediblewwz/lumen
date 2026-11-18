@@ -1,13 +1,14 @@
-import { Check, GitFork, Plus, Star, X } from 'lucide-react';
+import { Check, Plus, Star, X } from 'lucide-react';
 import { useEffect, useId, useRef, useState, type MouseEvent, type PointerEvent } from 'react';
 import type { Viewport } from '../api';
 import { fitToBounds, IDENTITY_VIEWPORT, screenToWorld, worldToScreen, zoomByFactor, type Vec2 } from '../canvas/CanvasEngine';
 import { bentGeometry, borderPoint, edgeGeometry, straightPath, type Box } from '../canvas/geometry';
-import { coverPreset } from '../projectCanvas/covers';
+import { coverPreset } from '../projectCanvas/coverPresets';
 import { readProjectView, saveProjectView, TILE_HEIGHT, TILE_WIDTH, type CatalogTile, type ProjectRelation } from '../projectCanvas/layout';
 import type { CatalogTag } from '../projectCanvas/tags';
 import { EdgeLabel } from './EdgeLabel';
 import { TagDots } from './CatalogTags';
+import { ProjectTileArtwork } from './ProjectTileArtwork';
 import '../projectCanvas/projectCanvas.css';
 
 type Drag = {
@@ -348,7 +349,6 @@ export function ProjectCanvas({ scope, folderId, folderName, tiles, relations, t
           const point = tilePosition(tile);
           const folder = tile.kind === 'project';
           const cover = coverPreset(tile.coverId);
-          const artwork = cover && <img className="project-cover-image" src={cover.url} alt="" draggable={false} loading="lazy" decoding="async" />;
           return (
             <div
               key={`${tile.kind}:${tile.row.id}`}
@@ -365,9 +365,7 @@ export function ProjectCanvas({ scope, folderId, folderName, tiles, relations, t
                 onKeyDown={event => { if (event.key === 'ContextMenu' || (event.shiftKey && event.key === 'F10')) event.currentTarget.dispatchEvent(new window.MouseEvent('contextmenu', { bubbles: true })); }}
               >
                 <span className="project-tile-visual" aria-hidden="true" data-drop-project={folder ? tile.row.id : undefined}>
-                  {folder ? <span className="project-folder-icon">{artwork}</span> : <span className="project-board-icon">
-                    {artwork ?? <GitFork size={43} strokeWidth={1.35} />}
-                  </span>}
+                  <ProjectTileArtwork kind={tile.kind} cover={cover} />
                 </span>
                 <span className="project-tile-title">{tile.row.name}</span>
                 <TagDots tags={tags.filter(tag => tile.tagIds.includes(tag.id))} />

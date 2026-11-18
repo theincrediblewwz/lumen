@@ -87,10 +87,14 @@
   font-weight: 630;
 }
 
-.project-canvas {
+.project-canvas,
+.cover-picker {
   --project-green: #3e9c56;
   --project-mint: #dff5e4;
   --project-border: #95cda0;
+}
+
+.project-canvas {
   min-width: 0;
   overflow: hidden;
   touch-action: none;
@@ -102,7 +106,8 @@
   .project-canvas { overflow: clip; }
 }
 
-:root[data-theme="dark"] .project-canvas {
+:root[data-theme="dark"] .project-canvas,
+:root[data-theme="dark"] .cover-picker {
   --project-green: #8ad69b;
   --project-mint: #244433;
   --project-border: #548b63;
@@ -266,30 +271,7 @@
   box-shadow: 0 3px 6px rgb(20 62 35 / 0.10);
 }
 
-.project-board-icon svg { transform: rotate(180deg); }
-
-.project-cover-image {
-  display: block;
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-  pointer-events: none;
-}
-
-.project-folder-icon .project-cover-image {
-  position: absolute;
-  z-index: 1;
-  inset: 16px 1px 1px;
-  width: calc(100% - 2px);
-  height: calc(100% - 17px);
-  border-radius: 8px;
-}
-
-.project-board-icon .project-cover-image {
-  position: absolute;
-  inset: 0;
-  border-radius: 7px;
-}
+.project-board-icon > svg { transform: rotate(180deg); }
 
 .project-tile-open:hover .project-folder-icon,
 .project-tile.is-drop-project .project-folder-icon,

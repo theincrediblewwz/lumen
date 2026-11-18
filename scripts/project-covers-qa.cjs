@@ -35,7 +35,8 @@ const evidence = path.resolve(process.env.LSQ_UI_EVIDENCE || 'mac-ui-evidence');
   try {
     await page.goto(`${base}/scripts/knowledge-ui-fixture.html?mode=main&platform=macos&projectCanvasQA`);
     await choose('桌面夹', true);
-    assert.equal(await dialog.getByRole('radio').count(), 39);
+    assert.equal(await dialog.getByRole('radio').count(), 45);
+    assert.equal(await dialog.locator('[data-cover-style]').count(), 6);
     assert.equal(await cover('默认封面').isChecked(), true);
     assert.equal(await apply.isDisabled(), true);
     await pick('芦苇晨雾');
@@ -50,6 +51,14 @@ const evidence = path.resolve(process.env.LSQ_UI_EVIDENCE || 'mac-ui-evidence');
     await pick('芦苇晨雾');
     await save();
     assert.match(await current('桌面夹'), /reed-morning-mist/);
+    const silhouette = await tile('桌面夹').locator('.project-folder-surface').evaluate(surface => {
+      const image = surface.querySelector('img');
+      const base = surface.getBoundingClientRect();
+      const art = image.getBoundingClientRect();
+      return { clipped: getComputedStyle(surface).clipPath !== 'none',
+        unbroken: base.top === art.top && base.width === art.width && base.height === art.height };
+    });
+    assert.deepEqual(silhouette, { clipped: true, unbroken: true });
     assert.equal(await tile('另一项目').locator('img').count(), 0);
     await page.screenshot({ path: path.join(evidence, 'project-covers-folder.png'), animations: 'disabled' });
 
@@ -70,10 +79,17 @@ const evidence = path.resolve(process.env.LSQ_UI_EVIDENCE || 'mac-ui-evidence');
     assert.match(await current('桌面夹'), /reed-morning-mist/);
     await tile('桌面夹').click();
     assert.match(await current('合成学习白板'), /aurora-lake/);
+    await choose('合成学习白板');
+    await pick('暖棕皮革');
+    await save();
+    await tile('合成学习白板').locator('[data-cover-style="saddle-leather"]').waitFor();
+    await page.reload();
+    await tile('桌面夹').click();
+    await tile('合成学习白板').locator('[data-cover-style="saddle-leather"]').waitFor();
     await page.setViewportSize({ width: 720, height: 480 });
     await page.evaluate(() => { document.documentElement.dataset.theme = 'dark'; });
     await choose('合成学习白板');
-    assert.equal(await cover('极光冰湖').isChecked(), true);
+    assert.equal(await cover('暖棕皮革').isChecked(), true);
     await pick('巨杉晨光');
     assert.equal(await cover('巨杉晨光').isChecked(), true);
     await page.waitForFunction(() => [...document.querySelectorAll('.cover-option')].at(-1)?.querySelector('img')?.naturalWidth === 720);
@@ -91,7 +107,7 @@ const evidence = path.resolve(process.env.LSQ_UI_EVIDENCE || 'mac-ui-evidence');
     await tile('合成学习白板').click();
     await page.locator('.board-canvas-live').waitFor();
     assert.deepEqual(errors, []);
-    console.log('Project and board covers: 38 offline images, keyboard menu, cancel, write failure and retry, reload, narrow-window scrolling, reset, and board navigation passed.');
+    console.log('Project and board covers: 38 offline images, six styles, complete folder clipping, keyboard menu, cancel, retry, reload, scrolling, reset, and board navigation passed.');
   } finally {
     await browser.close();
   }

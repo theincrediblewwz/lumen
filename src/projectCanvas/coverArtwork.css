@@ -1,0 +1,84 @@
+.project-folder-icon.has-cover::before,
+.project-folder-icon.has-cover::after { content: none; }
+
+.project-folder-surface {
+  position: absolute;
+  inset: 0;
+  background: var(--project-mint);
+  clip-path: polygon(0 5%, 45% 5%, 49% 21%, 100% 21%, 100% 100%, 0 100%);
+  clip-path: path('M 0 13 Q 0 3 10 3 H 39 Q 49 3 52 15 H 99 Q 108 15 108 24 V 61 Q 108 70 99 70 H 9 Q 0 70 0 61 Z');
+}
+
+.project-cover-image,
+.project-cover-skin {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+}
+.project-cover-image { display: block; object-fit: cover; }
+
+.project-board-icon > .project-cover-image,
+.project-board-icon > .project-cover-skin { border-radius: 7px; }
+
+.project-tile.is-drop-project .project-folder-icon.has-cover,
+.project-tile.is-connection-target .project-folder-icon.has-cover {
+  filter: drop-shadow(0 0 2px var(--project-green)) drop-shadow(0 4px 8px rgb(27 100 45 / 0.24));
+}
+
+.project-cover-skin {
+  display: grid;
+  place-items: center;
+  background: var(--skin-material);
+  color: var(--skin-ink);
+}
+.project-cover-skin::after {
+  content: '';
+  position: absolute;
+  inset: 7px;
+  border: 1px var(--skin-stitch, solid) var(--skin-rule);
+  border-radius: 5px;
+  pointer-events: none;
+}
+.project-folder-surface .project-cover-skin::after { top: 21px; }
+.project-folder-surface .project-cover-skin > svg { transform: translateY(7px); }
+
+[data-cover-style='celadon-line'] {
+  --skin-material: linear-gradient(128deg, #e5f2e6, #b9dbcb);
+  --skin-ink: #365e53;
+  --skin-rule: rgb(53 113 92 / 0.24);
+}
+[data-cover-style='ivory-grid'] {
+  --skin-material: linear-gradient(90deg, rgb(123 108 83 / 0.14) 1px, transparent 1px) center / 9px 9px,
+    linear-gradient(rgb(123 108 83 / 0.14) 1px, transparent 1px) center / 9px 9px, #f7f0de;
+  --skin-ink: #645540;
+  --skin-rule: rgb(129 111 81 / 0.27);
+}
+[data-cover-style='saddle-leather'],
+[data-cover-style='graphite-leather'] {
+  --skin-material: repeating-linear-gradient(41deg, rgb(255 233 196 / 0.055) 0 1px, transparent 1px 3px),
+    repeating-linear-gradient(118deg, rgb(0 0 0 / 0.055) 0 1px, transparent 1px 4px), var(--skin-leather);
+  --skin-stitch: dashed;
+}
+[data-cover-style='saddle-leather'] {
+  --skin-leather: linear-gradient(127deg, #a6613b, #653822);
+  --skin-ink: #f4d7a8;
+  --skin-rule: rgb(255 218 159 / 0.64);
+}
+[data-cover-style='graphite-leather'] {
+  --skin-leather: linear-gradient(130deg, #565962, #262930);
+  --skin-ink: #e2e1e5;
+  --skin-rule: rgb(212 217 224 / 0.48);
+}
+[data-cover-style='sand-linen'] {
+  --skin-material: repeating-linear-gradient(90deg, rgb(111 88 56 / 0.10) 0 1px, transparent 1px 3px),
+    repeating-linear-gradient(rgb(255 252 234 / 0.22) 0 1px, transparent 1px 3px), #e2cfae;
+  --skin-ink: #655139;
+  --skin-rule: rgb(118 90 54 / 0.29);
+}
+[data-cover-style='indigo-gilt'] {
+  --skin-material: linear-gradient(140deg, #414e76, #202b4c);
+  --skin-ink: #eacf91;
+  --skin-rule: rgb(228 202 138 / 0.61);
+}

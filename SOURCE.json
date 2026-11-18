@@ -1,5 +1,5 @@
 {
-  "source_commit": "9ece7aa7a802d401d71eb76e8893e8c7f1eb166a",
+  "source_commit": "98c32a5f0415dce18677b19e7a312161c913040a",
   "export_date": "2026-11-19",
   "versions": {
     "desktop": "0.2.2",
@@ -37,5 +37,5 @@
     "contracts/historyandknowledge/knowledge-document-v1.schema.json",
     "contracts/historyandknowledge/SOURCE.json"
   ],
-  "desktop_build_source_commit": "9ece7aa7a802d401d71eb76e8893e8c7f1eb166a"
+  "desktop_build_source_commit": "98c32a5f0415dce18677b19e7a312161c913040a"
 }

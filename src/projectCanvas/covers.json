@@ -1,4 +1,10 @@
 [
+  {"id": "celadon-line", "name": "青瓷线稿", "style": true},
+  {"id": "ivory-grid", "name": "米白细格", "style": true},
+  {"id": "saddle-leather", "name": "暖棕皮革", "style": true},
+  {"id": "graphite-leather", "name": "石墨皮革", "style": true},
+  {"id": "sand-linen", "name": "浅沙亚麻", "style": true},
+  {"id": "indigo-gilt", "name": "靛蓝描金", "style": true},
   {"id": "misty-mountains", "name": "雾山"},
   {"id": "pine-morning-mist", "name": "松林晨岚"},
   {"id": "paper-grass-slope", "name": "风过草坡"},

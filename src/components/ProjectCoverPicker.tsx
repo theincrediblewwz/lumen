@@ -1,6 +1,8 @@
-import { Check, Folder, GitFork, X } from 'lucide-react';
+import { Check, X } from 'lucide-react';
 import { useEffect, useId, useRef, useState } from 'react';
-import { coverPreset, COVER_PRESETS, type CoverTarget } from '../projectCanvas/covers';
+import { coverPreset, COVER_PRESETS } from '../projectCanvas/coverPresets';
+import type { CoverTarget } from '../projectCanvas/covers';
+import { ProjectTileArtwork } from './ProjectTileArtwork';
 import '../projectCanvas/coverPicker.css';
 
 export function ProjectCoverPicker({ name, kind, current, onClose, onSave }: {
@@ -59,8 +61,6 @@ export function ProjectCoverPicker({ name, kind, current, onClose, onSave }: {
     }
   }
 
-  const DefaultArtwork = kind === 'project' ? Folder : GitFork;
-
   return <div className="settings-overlay cover-picker-overlay" onMouseDown={event => {
     if (event.target === event.currentTarget) close();
   }}>
@@ -90,8 +90,8 @@ export function ProjectCoverPicker({ name, kind, current, onClose, onSave }: {
                 }} />
               <span className="cover-option-card">
                 <span className="cover-option-art" aria-hidden="true">
-                  {cover ? <img src={cover.url} alt="" width={720} height={405} loading="lazy" decoding="async" draggable={false} />
-                    : <DefaultArtwork size={33} strokeWidth={1.4} />}
+                  {cover?.kind === 'photo' ? <img src={cover.url} alt="" width={720} height={405} loading="lazy" decoding="async" draggable={false} />
+                    : <span className="cover-option-skin"><ProjectTileArtwork kind={kind} cover={cover ?? undefined} /></span>}
                   {checked && <span className="cover-option-check"><Check size={15} strokeWidth={2.5} /></span>}
                 </span>
                 <span className="cover-option-label">{cover?.name ?? '默认封面'}</span>
