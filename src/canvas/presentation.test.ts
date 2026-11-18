@@ -4,6 +4,10 @@ import {CanvasEngine} from './CanvasEngine';
 import type {BoardNode} from '../api';
 const node=(id:string,x:number,y:number):BoardNode=>({id,x,y,w:240,h:96,title:id,docs:[],created_at:'',updated_at:''});
 describe('canvas presentation',()=>{
+ it('retains subflow presence when overview cells merge and conserves all nodes',()=>{
+  const nodes=[node('normal',0,0),{...node('flow-a',100,100),color:'#3b82c4',flow:{nodeIds:['a']}},{...node('flow-b',1500,1500),color:'#e0503a',flow:{nodeIds:[]}}];
+  for(const level of [1,4,9]){const cells=aggregateHeat(nodes,level);expect(cells.reduce((sum,c)=>sum+c.count,0)).toBe(3);expect(cells.reduce((sum,c)=>sum+c.flowCount,0)).toBe(2);expect(cells.some(c=>c.flowCount>0&&!!c.flowColor)).toBe(true);}
+ });
  it('conserves every node while coarser spatial levels merge into fewer regions',()=>{
   const nodes=Array.from({length:10000},(_,i)=>node(String(i),(i%100)*280,Math.floor(i/100)*140));
   let previous=Infinity;

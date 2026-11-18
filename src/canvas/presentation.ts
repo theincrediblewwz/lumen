@@ -20,7 +20,7 @@ export function boardAppearance(value?: Partial<BoardAppearance>): Required<Boar
 export function heatLevel(zoom: number): number {
   return zoom >= DETAIL_ZOOM ? 0 : Math.max(1, Math.ceil(Math.log2(DETAIL_ZOOM / Math.max(MIN_BOARD_ZOOM, zoom))));
 }
-export type HeatCell = { id: string; count: number; x: number; y: number; w: number; h: number; color: string | null };
+export type HeatCell = { id: string; count: number; x: number; y: number; w: number; h: number; color: string | null; flowCount:number; flowColor:string|null };
 /** A graph-anchored grid stays stable while panning; each coarser level merges four cells. */
 export function aggregateHeat(nodes: BoardNode[], level: number, sizes: Record<string, {w:number;h:number}> = {}): HeatCell[] {
   const cellSize = 256 * 2 ** level, cells = new Map<string, HeatCell>();
@@ -28,12 +28,12 @@ export function aggregateHeat(nodes: BoardNode[], level: number, sizes: Record<s
   for(const n of nodes){originX=Math.min(originX,n.x+(n.w||240)/2);originY=Math.min(originY,n.y+(n.h??sizes[n.id]?.h??96)/2);}
   originX=Math.floor(originX/256)*256;originY=Math.floor(originY/256)*256;
   for (const n of nodes) {
-    const w = n.w || 240, h = n.h ?? sizes[n.id]?.h ?? 96;
+    const w = sizes[n.id]?.w ?? (n.w || 240), h = sizes[n.id]?.h ?? n.h ?? 96;
     const id = `${Math.floor((n.x + w / 2 - originX) / cellSize)},${Math.floor((n.y + h / 2 - originY) / cellSize)}`;
     const cell = cells.get(id);
-    if (!cell) cells.set(id, {id, count:1, x:n.x, y:n.y, w, h, color:n.color ?? null});
+    if (!cell) cells.set(id, {id, count:1, x:n.x, y:n.y, w, h, color:n.color ?? null,flowCount:n.flow?1:0,flowColor:n.flow?n.color??null:null});
     else { const right = Math.max(cell.x + cell.w, n.x + w), bottom = Math.max(cell.y + cell.h, n.y + h);
-      cell.x = Math.min(cell.x, n.x); cell.y = Math.min(cell.y, n.y); cell.w = right-cell.x; cell.h=bottom-cell.y; cell.count++; }
+      cell.x = Math.min(cell.x, n.x); cell.y = Math.min(cell.y, n.y); cell.w = right-cell.x; cell.h=bottom-cell.y; cell.count++;if(n.flow){cell.flowCount++;cell.flowColor??=n.color??null;} }
   }
   return [...cells.values()];
 }

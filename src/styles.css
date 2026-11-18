@@ -2661,3 +2661,33 @@ html.motion-off .edge-line { animation: none; }
 
 .board-settings-fab {z-index:45;}
 .node-card .node-anchor {background:rgba(127,127,127,.001);}
+
+/* Material pages keep the source intact and the node compact. */
+.node-preview {position:relative;min-width:0;}
+.node-card:not(.is-sticker) .node-preview.is-image {margin:4px -14px -12px;width:calc(100% + 28px);}
+.node-card:not(.is-sticker) .node-preview .node-primary-image {margin:0;width:100%;}
+.node-card.is-sticker .node-preview {height:100%;width:100%;}
+.node-card .node-page-viewport {position:relative;overflow:hidden!important;min-width:0;}
+.node-page-columns {column-count:1;column-gap:24px;column-fill:auto;overflow:visible;transform-origin:0 0;}
+.node-page-columns .math-block,.node-page-columns .katex-display,.node-page-columns img,.node-page-columns tr {break-inside:avoid;}
+.node-page-columns pre {white-space:pre-wrap;overflow-wrap:anywhere;}
+.node-page-columns table {max-width:100%;table-layout:fixed;overflow-wrap:anywhere;}
+.node-preview-next {position:absolute;right:8px;bottom:8px;z-index:7;width:29px;height:29px;display:flex;align-items:center;justify-content:center;border:1px solid var(--border-color);border-radius:50%;background:var(--bg-node);color:var(--accent);box-shadow:var(--shadow-node-hover);padding:0;cursor:pointer;}
+.node-preview-next:hover,.node-preview-next:focus-visible {border-color:var(--accent);outline:2px solid color-mix(in srgb,var(--accent) 30%,transparent);}
+.node-pdf-page canvas {display:block;width:100%;height:auto;}
+.flow-step>.node-card.is-sticker {height:auto!important;min-height:0!important;}
+.flow-step>.node-card.is-sticker .node-card-content,.flow-step>.node-card.is-sticker .node-primary-image,.flow-step>.node-card.is-sticker .node-preview {height:auto;}
+.flow-step>.node-card.is-sticker .sticker-image {height:auto;}
+.flow-panel.is-preview-collapsed .flow-step>.node-card {height:auto!important;min-height:0!important;}
+.flow-resize-e {position:absolute;z-index:12;right:0;top:10px;bottom:10px;width:10px;cursor:ew-resize;touch-action:none;border-radius:5px;}
+.flow-resize-e:hover,.flow-resize-e:focus-visible {background:color-mix(in srgb,var(--flow-color) 20%,transparent);outline:none;}
+.flow-resize-e::after {content:'';position:absolute;right:3px;top:40%;height:20%;width:2px;border-radius:2px;background:var(--flow-color);opacity:.45;}
+.node-panel {z-index:40;}
+
+/* A second, bright perimeter distinguishes nested flows at every zoom level. */
+.node-card.has-flow::after,.heat-cell.has-flow::after {content:'';position:absolute;inset:-3px;border-radius:inherit;border:var(--flow-border-width,2px) solid var(--flow-glow,#45ffb2);box-shadow:0 0 5px 1px var(--flow-glow,#45ffb2),0 0 var(--flow-glow-blur,14px) 3px color-mix(in srgb,var(--flow-glow,#45ffb2) 80%,transparent);pointer-events:none;animation:flow-breathe 3.2s ease-in-out infinite;z-index:2;}
+.heat-cell.has-flow {overflow:visible;}
+@keyframes flow-breathe {0%,100% {opacity:.55;}50% {opacity:1;}}
+@media(prefers-reduced-motion:reduce){.node-card.has-flow::after,.heat-cell.has-flow::after {animation:none;opacity:.85;}}
+.node-page-columns {display:flow-root;}
+@supports(overflow:clip){.board-canvas-live {overflow:clip;}}

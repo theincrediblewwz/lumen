@@ -1,9 +1,9 @@
-import { memo, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { memo, useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import type { BoardNode } from '../api';
 import { MarkdownView } from './MarkdownView';
-import { NodeAttachment } from './NodeAttachment';
+import { NodePreview, type PreviewPresentation } from './NodePreview';
 import { contentDocs, imageOnly, nodeHeading } from '../canvas/composition';
-import { isQuestionDoc } from '../canvas/presentation';
+import { flowHighlight, materialImageSize } from '../canvas/preview';
 
 /** 自适应高度的文本域：随内容增减行数（修复长标题只显示尾部的问题） */
 function AutoTextarea({
@@ -94,9 +94,9 @@ export const NodeCard = memo(function NodeCard({
   onExitEdit,
   onMeasure,
   onHoverChange,
-  onResizeStart, projectId, boardId, docVersions={}, measuring=false, hideHandles=false,
+  onResizeStart, projectId, boardId, docVersions={}, measuring=false, hideHandles=false, previewCollapsed=false,
 }: {
-  projectId:string; boardId:string; docVersions?:Record<string,number>; measuring?:boolean; hideHandles?:boolean;
+  projectId:string; boardId:string; docVersions?:Record<string,number>; measuring?:boolean; hideHandles?:boolean; previewCollapsed?:boolean;
   onResizeStart:(e:React.PointerEvent,id:string,corner:string)=>void;
   node: BoardNode;
   selected: boolean;
@@ -117,10 +117,17 @@ export const NodeCard = memo(function NodeCard({
   onMeasure: (id: string, w: number, h: number, minimumW?:number, minimumH?:number) => void;
   onHoverChange: (hovering: boolean, clientX: number, clientY: number) => void;
 }) {
-  const docCount = node.docs.filter(d=>!isQuestionDoc(d.path)).length;
   const cardRef = useRef<HTMLDivElement>(null), contentRef=useRef<HTMLDivElement>(null);
   const [minimum,setMinimum]=useState({w:120,h:64});
-  const heading=nodeHeading(node), primary=contentDocs(node)[0], pureImage=imageOnly(node), contentOnly=!heading.trim()&&!node.summary?.trim()&&!!primary;
+  const [presentation,setPresentation]=useState<(PreviewPresentation&{baseWidth:number;baseHeight?:number})>();
+  const nodeDimensions=useRef({w:node.w,h:node.h});nodeDimensions.current={w:node.w,h:node.h};
+  const onPresentation=useCallback((value:PreviewPresentation)=>setPresentation(old=>old?.resourceKey===value.resourceKey&&old.image===value.image&&old.navigated===value.navigated&&old.title===value.title&&old.dimensions?.width===value.dimensions?.width&&old.dimensions?.height===value.dimensions?.height?old:{...value,baseWidth:nodeDimensions.current.w,baseHeight:nodeDimensions.current.h}),[]);
+  const heading=nodeHeading(node), docs=contentDocs(node), primary=docs[0];
+  const pureImage=!previewCollapsed&&!heading.trim()&&(presentation?.image??(!node.summary&&imageOnly(node)));
+  const contentOnly=!heading.trim()&&(!node.summary?.trim()||!!presentation)&&!!primary;
+  const automaticView=presentation?.navigated&&presentation.baseWidth===node.w&&presentation.baseHeight===node.h;
+  const automatic=automaticView&&presentation?.image&&presentation.dimensions?materialImageSize(presentation.dimensions.width,presentation.dimensions.height):undefined;
+  const width=automatic?.w??node.w,aspect=presentation?.image&&presentation.dimensions?presentation.dimensions.width/presentation.dimensions.height:node.imageAspect||node.w/(node.h||node.w);
 
   // 测量真实布局尺寸（世界单位，不受 transform 缩放影响：offsetWidth/Height）
   useLayoutEffect(() => {
@@ -141,7 +148,7 @@ export const NodeCard = memo(function NodeCard({
     const ro = new ResizeObserver(report);
     ro.observe(el);if(contentRef.current)ro.observe(contentRef.current);
     return () => ro.disconnect();
-  }, [node.id, node.title, node.summary, node.docs, editing, onMeasure, pureImage]);
+  }, [node.id, node.title, node.summary, node.docs, editing, onMeasure, pureImage, previewCollapsed]);
 
   return (
     <div
@@ -151,13 +158,14 @@ export const NodeCard = memo(function NodeCard({
       style={{
         left: node.x,
         top: node.y,
-        width: node.w,
-        height: pureImage ? (node.h??node.w/(node.imageAspect||1)) : undefined,
-        minWidth: minimum.w,
-        minHeight: pureImage?0:Math.max(measuring?0:node.h??0,minimum.h),
+        width,
+        height: pureImage ? width/aspect : undefined,
+        minWidth: previewCollapsed?0:minimum.w,
+        minHeight: pureImage||previewCollapsed?0:Math.max(measuring||automaticView?0:node.h??0,minimum.h),
         // 节点自定义颜色：既作左侧色条，又作为该卡片的强调色（选中框/锚点/光晕）。
         // 未设色时回退到主题强调色 var(--accent)。
         ['--node-accent' as string]: node.color || 'var(--accent)',
+        ['--flow-glow' as string]: flowHighlight(node.color),
         borderLeftColor: node.color || undefined,
       }}
       onPointerDown={(e) => onPointerDown(e, node.id)}
@@ -209,18 +217,9 @@ export const NodeCard = memo(function NodeCard({
         </div>
       ) : (
         <>
-          {heading.trim()&&<MarkdownView className="node-title" inline value={heading}/>}
-          {node.summary&&<MarkdownView className="node-question" value={node.summary}/>}
-          {primary&&<NodeAttachment key={primary.path} projectId={projectId} boardId={boardId} doc={primary} refresh={docVersions[primary.path]??0}/>}
-          {contentOnly&&<span className="sticker-info">{primary?.title||node.title}</span>}
-          {docCount > 1 && !contentOnly && (
-            <div className="node-badge" title={`${docCount} 篇文档`}>
-              <svg width="12" height="12" viewBox="0 0 16 16" aria-hidden="true">
-                <path d="M4 2h5l3 3v9H4z" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinejoin="round" />
-              </svg>
-              {docCount}
-            </div>
-          )}
+          {(heading.trim()||previewCollapsed)&&<MarkdownView className="node-title" inline value={heading.trim()?heading:primary?.title||'流程步骤'}/>}
+          {!previewCollapsed&&<NodePreview summary={node.summary} docs={docs} projectId={projectId} boardId={boardId} docVersions={docVersions} onPresentation={onPresentation} viewKey={`${projectId}/${boardId}/${node.id}/${hideHandles&&!measuring?'flow':'board'}`}/>}
+          {contentOnly&&!previewCollapsed&&<span className="sticker-info">{presentation?.title||primary?.title||node.title}</span>}
         </>
       )}
 

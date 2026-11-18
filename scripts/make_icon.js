@@ -10,7 +10,7 @@ import zlib from 'node:zlib';
 import fs from 'node:fs';
 
 const SIZE = 1024;
-const INK = [46, 90, 78]; // 墨绿 #2E5A4E（与 styles.css 的 --accent 一致）
+const INK = [7, 193, 96]; // 明亮绿 #07C160；保留脉络的白色分叉图形
 const PAPER = [255, 255, 255];
 
 /* ───────── PNG 编码 ───────── */

@@ -35,6 +35,7 @@ import { EdgeLabel } from './EdgeLabel';
 import { FlowPanel } from './FlowPanel';
 import { imageDoc, imageOnly, clipboardText, nonemptyNode, flowNodes, orderFlow, topLevelNodes } from '../canvas/composition';
 import { measureNodes } from '../canvas/measureNodes';
+import { flowHighlight } from '../canvas/preview';
 import { ContextMenu, type ContextMenuState } from './ContextMenu';
 
 /** 白板图状态：节点 + 连线由同一个历史栈驱动，撤销/重做覆盖两者 */
@@ -373,14 +374,14 @@ export function BoardCanvas({
     } else {
       let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
       for (const n of g.nodes) {
-        const s = {w:Math.max(n.w||240,sizesRef.current[n.id]?.w??0),h:Math.max(n.h??0,sizesRef.current[n.id]?.h??96)};
+        const s = {w:sizesRef.current[n.id]?.w??(n.w||240),h:sizesRef.current[n.id]?.h??n.h??96};
         minX = Math.min(minX, n.x);
         minY = Math.min(minY, n.y);
         maxX = Math.max(maxX, n.x + s.w);
         maxY = Math.max(maxY, n.y + s.h);
       }
       // Fit is linear in graph size and includes custom node/image dimensions.
-      const boxes=new Map(g.nodes.map(n=>[n.id,{x:n.x,y:n.y,w:Math.max(n.w||240,sizesRef.current[n.id]?.w??0),h:Math.max(n.h??0,sizesRef.current[n.id]?.h??96)}]));
+      const boxes=new Map(g.nodes.map(n=>[n.id,{x:n.x,y:n.y,w:sizesRef.current[n.id]?.w??(n.w||240),h:sizesRef.current[n.id]?.h??n.h??96}]));
       const detailedFit=Math.min((r.width-96)/Math.max(1,maxX-minX),(r.height-96)/Math.max(1,maxY-minY))>=0.35;
       if(detailedFit&&g.nodes.length*g.edges.length<=200000){
         const routes=routeBoardEdges(boxes,g.edges,edgeStyle);
@@ -566,7 +567,7 @@ export function BoardCanvas({
     | null
     | { kind: 'pan'; startX: number; startY: number; vx: number; vy: number; moved: boolean }
     | { kind: 'node'; id: string; pointerId:number;startX:number;startY:number;zoom:number; moved: boolean; baseline: Graph; positions:Map<string,{x:number;y:number}>;group:boolean }
-    | { kind: 'resize'; id:string; pointerId:number; startX:number;startY:number;zoom:number;corner:string;box:Box;baseline:Graph }
+    | { kind: 'resize'; id:string; pointerId:number; startX:number;startY:number;zoom:number;corner:string;box:Box;baseline:Graph;image:boolean }
     | { kind: 'connect'; fromId: string }
   >(null);
   const blankClickTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -587,7 +588,7 @@ export function BoardCanvas({
   const boxOf = useCallback(
     (n: BoardNode): Box => {
       const s = sizesRef.current[n.id];
-      return { x: n.x, y: n.y, w:Math.max(n.w??DEFAULT_NODE_W,s?.w??0),h:Math.max(n.h??0,s?.h??FALLBACK_NODE_H) };
+      return { x: n.x, y: n.y, w:s?.w??n.w??DEFAULT_NODE_W,h:s?.h??n.h??FALLBACK_NODE_H };
     },
     [],
   );
@@ -647,11 +648,11 @@ export function BoardCanvas({
     if(e.button!==0||mutationsBlocked()||drag.current)return;e.preventDefault();e.stopPropagation();if(blankClickTimer.current)clearTimeout(blankClickTimer.current);
     const node=graphRef.current.nodes.find(n=>n.id===id);if(!node)return;
     setSelected(id);suppressClick.current=true;
-    drag.current={kind:'resize',id,corner,pointerId:e.pointerId,startX:e.clientX,startY:e.clientY,zoom:engine.viewport.zoom,box:boxOf(node),baseline:historyRef.current.present};
+    drag.current={kind:'resize',id,corner,pointerId:e.pointerId,startX:e.clientX,startY:e.clientY,zoom:engine.viewport.zoom,box:boxOf(node),baseline:historyRef.current.present,image:!!e.currentTarget.closest('.node-card')?.classList.contains('is-sticker')};
     wrapRef.current?.setPointerCapture(e.pointerId);setDraggingNodes(true);
   };
   const previewResize=(d:Extract<NonNullable<typeof drag.current>,{kind:'resize'}>,e:{clientX:number;clientY:number})=>{
-    const resizeNode=graphRef.current.nodes.find(n=>n.id===d.id),isImage=resizeNode?imageOnly(resizeNode):false;
+    const isImage=d.image;
     let box=(isImage?resizedImageBox:resizedBox)(d.box,d.corner,(e.clientX-d.startX)/d.zoom,(e.clientY-d.startY)/d.zoom);
     if(!isImage){const min=minimumRef.current[d.id]??{w:120,h:64},w=Math.max(box.w,min.w),h=Math.max(box.h,min.h);box={x:d.corner.includes('w')?d.box.x+d.box.w-w:box.x,y:d.corner.includes('n')?d.box.y+d.box.h-h:box.y,w,h};}
     const graph={...historyRef.current.present,nodes:historyRef.current.present.nodes.map(n=>n.id===d.id?{...n,...box}:n)};
@@ -1113,6 +1114,8 @@ export function BoardCanvas({
     ['--glow-blur' as string]: `${(20 * intensity) / zoom}px`,
     ['--glow-spread' as string]: `${(3.5 * intensity) / zoom}px`,
     ['--glow-alpha' as string]: `${0.12 + 0.6 * intensity}`,
+    ['--flow-border-width' as string]: `${2 / zoom}px`,
+    ['--flow-glow-blur' as string]: `${14 / zoom}px`,
   } as React.CSSProperties;
 
   /* ── 连线几何 ──
@@ -1130,8 +1133,8 @@ export function BoardCanvas({
   const screenBoxOf = useCallback(
     (n: BoardNode): Box => {
       const s = sizesRef.current[n.id];
-      const w = Math.max(n.w??DEFAULT_NODE_W,s?.w??0);
-      const h = Math.max(n.h??0,s?.h??FALLBACK_NODE_H);
+      const w = s?.w??n.w??DEFAULT_NODE_W;
+      const h = s?.h??n.h??FALLBACK_NODE_H;
       const tl = engine.toScreen({ x: n.x, y: n.y });
       const z = engine.viewport.zoom;
       return { x: tl.x, y: tl.y, w: w * z, h: h * z };
@@ -1172,7 +1175,7 @@ export function BoardCanvas({
   useEffect(()=>{
     if(!flowOwnerId||!canvasSize.width)return;const owner=graphRef.current.nodes.find(n=>n.id===flowOwnerId);if(!owner)return;
     const left=Math.min(520,Math.max(310,canvasSize.width*.43))+16,right=canvasSize.width-332;
-    const at=engine.toScreen({x:owner.x+Math.max(owner.w,sizesRef.current[owner.id]?.w??0)/2,y:owner.y+(sizesRef.current[owner.id]?.h??owner.h??96)/2});
+    const at=engine.toScreen({x:owner.x+(sizesRef.current[owner.id]?.w??owner.w)/2,y:owner.y+(sizesRef.current[owner.id]?.h??owner.h??96)/2});
     engine.setViewport({...engine.viewport,x:engine.viewport.x+(left+right)/2-at.x,y:engine.viewport.y+Math.max(120,Math.min(canvasSize.height-120,at.y))-at.y});
     rerender();onChange(graphRef.current.nodes,graphRef.current.edges,engine.viewport);
   },[flowOwnerId,canvasSize.width,canvasSize.height]);
@@ -1229,6 +1232,7 @@ export function BoardCanvas({
       ref={wrapRef}
       className={`board-canvas board-canvas-live${connect ? ' is-connecting' : ''}`}
       onWheel={onWheel}
+      onScroll={e=>{if(e.target===e.currentTarget){e.currentTarget.scrollLeft=0;e.currentTarget.scrollTop=0;}}}
       onPointerDown={onCanvasPointerDown}
       onPointerMove={onPointerMove}
       onPointerUp={onPointerUp}
@@ -1274,7 +1278,7 @@ export function BoardCanvas({
           置于节点层之下（DOM 顺序在前 + CSS 定位），指针默认穿透、仅命中区可点。 */}
       <button className="canvas-zoom-label" title="点击恢复100% · 滚轮或快捷键缩放" aria-label={`当前缩放 ${zoom<0.01?(zoom*100).toFixed(1):Math.round(zoom*100)}%，点击重置为100%`} onPointerDown={e=>e.stopPropagation()} onClick={zoomReset}>{zoom<0.01?(zoom*100).toFixed(1):Math.round(zoom*100)}%</button>
       {heatMode&&<div className="heat-layer" aria-label={`热力概览，共${mainNodes.length}个节点`} data-level={level}>{renderedHeat.map(c=>{
-        const at=engine.toScreen(c);return <button type="button" key={c.id} className="heat-cell" data-count={c.count} title={`${c.count}个节点 · 点击逐级展开`} aria-label={`展开${c.count}个节点的热力区域`} style={{left:at.x,top:at.y,width:Math.max(8,c.w*zoom),height:Math.max(8,c.h*zoom),opacity:Math.min(.95,.45+Math.log2(c.count+1)*.08),['--heat-color' as string]:c.color||'var(--accent)'}} onPointerDown={e=>e.stopPropagation()} onDoubleClick={e=>e.stopPropagation()} onClick={e=>{e.stopPropagation();const r=rect();engine.zoomAtPoint({x:r.width/2,y:r.height/2},Math.min(1,zoom*2));const z=engine.viewport.zoom;engine.setViewport({zoom:z,x:r.width/2-(c.x+c.w/2)*z,y:r.height/2-(c.y+c.h/2)*z});rerender();onChange(nodes,edges,engine.viewport);}}>{c.count>1?c.count:''}</button>;
+        const at=engine.toScreen(c);return <button type="button" key={c.id} className={`heat-cell${c.flowCount?' has-flow':''}`} data-count={c.count} data-flow-count={c.flowCount} title={`${c.count}个节点${c.flowCount?` · ${c.flowCount}个含子流程`:''} · 点击逐级展开`} aria-label={`展开${c.count}个节点的热力区域${c.flowCount?'，包含子流程':''}`} style={{left:at.x,top:at.y,width:Math.max(8,c.w*zoom),height:Math.max(8,c.h*zoom),opacity:c.flowCount?1:Math.min(.95,.45+Math.log2(c.count+1)*.08),['--heat-color' as string]:c.color||'var(--accent)',['--flow-glow' as string]:flowHighlight(c.flowColor)}} onPointerDown={e=>e.stopPropagation()} onDoubleClick={e=>e.stopPropagation()} onClick={e=>{e.stopPropagation();const r=rect();engine.zoomAtPoint({x:r.width/2,y:r.height/2},Math.min(1,zoom*2));const z=engine.viewport.zoom;engine.setViewport({zoom:z,x:r.width/2-(c.x+c.w/2)*z,y:r.height/2-(c.y+c.h/2)*z});rerender();onChange(nodes,edges,engine.viewport);}}>{c.count>1?c.count:''}</button>;
       })}</div>}
       <svg className="edge-layer">
         <defs>
