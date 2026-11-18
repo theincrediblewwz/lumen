@@ -5,7 +5,7 @@
 
 ## 当前版本
 
-[下载 Mac 0.2.0](https://github.com/theincrediblewwz/lumen/releases/tag/mac-v0.2.0) · [白板编辑与保存](./docs/CANVAS_AUTHORING.md) · [导入与恢复](./docs/LONG_MARKDOWN_AND_FAITHFUL_IMPORT.md)
+[下载 Mac 0.2.1](https://github.com/theincrediblewwz/lumen/releases/tag/mac-v0.2.1) · [白板编辑与保存](./docs/CANVAS_AUTHORING.md) · [导入与恢复](./docs/LONG_MARKDOWN_AND_FAITHFUL_IMPORT.md)
 
 **0.2.1 项目连线名称与标签。** 单击项目箭头即可填写名称和公式。文件夹、白板和节点可使用颜色和自定义标签，并通过眼睛筛选。[项目画布指南](./docs/PROJECT_CANVAS.md)。
 
