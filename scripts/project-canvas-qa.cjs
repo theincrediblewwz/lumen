@@ -88,7 +88,7 @@ const evidence = path.resolve(process.env.LSQ_UI_EVIDENCE || 'mac-ui-evidence');
     const reverse = arrow('另一项目', '桌面夹');
     await reverse.waitFor();
     assert.notEqual(await rootArrow.getAttribute('d'), await reverse.getAttribute('d'));
-    await reverse.press('Enter'); await menuItem('删除连线').click();
+    await reverse.press('Shift+F10'); await menuItem('删除连线').click();
     await reverse.waitFor({ state: 'detached' });
     assert.equal(await rootArrow.count(), 1);
     check('keyboard menus can create the reverse arrow and remove just that direction');

@@ -1,14 +1,16 @@
 import type { BoardMeta, ProjectMeta, Viewport } from '../api';
 import { clampZoom, IDENTITY_VIEWPORT, type Vec2 } from '../canvas/CanvasEngine';
 import { pinnedFirst } from '../favorites';
+import { assignedTags, type TagStore } from './tags';
 
-export type ProjectRelation = { from: string; to: string };
+export type ProjectRelation = { from: string; to: string; label?: string };
 
 export type ProjectLayout = {
   version: 1;
   projects: Record<string, { parentId: string | null; position?: Vec2 }>;
   boards: Record<string, Record<string, Vec2>>;
   relations?: ProjectRelation[];
+  tags?: TagStore;
 };
 
 export type ProjectLayoutSnapshot = { layout: ProjectLayout; scope: string };
@@ -20,7 +22,7 @@ export const TILE_HEIGHT = 116;
 export type CatalogTile = (
   | { kind: 'project'; row: ProjectMeta }
   | { kind: 'board'; row: BoardMeta }
-) & { position: Vec2; favorite: boolean };
+) & { position: Vec2; favorite: boolean; tagIds: string[] };
 
 function own<T>(rows: Record<string, T>, key: string): T | undefined {
   return Object.prototype.hasOwnProperty.call(rows, key) ? rows[key] : undefined;
@@ -57,10 +59,12 @@ export function catalogTiles(
     ...folders.map(row => ({
       kind: 'project' as const, row, position: own(layout.projects, row.id)?.position,
       favorite: favorites.projects.includes(row.id),
+      tagIds: assignedTags(layout.tags, { kind: 'project', id: row.id }),
     })),
     ...pinnedFirst(folderId ? boards : [], favorites.boards).map(row => ({
       kind: 'board' as const, row, position: own(boardPositions, row.id),
       favorite: favorites.boards.includes(row.id),
+      tagIds: assignedTags(layout.tags, { kind: 'board', projectId: folderId!, id: row.id }),
     })),
   ].sort((a, b) => Number(b.favorite) - Number(a.favorite));
   // The initial loose grid is stable across window sizes. Reserve the cells

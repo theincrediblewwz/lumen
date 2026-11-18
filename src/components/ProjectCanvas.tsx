@@ -1,9 +1,12 @@
-import { GitFork, Plus, Star } from 'lucide-react';
+import { Check, GitFork, Plus, Star, X } from 'lucide-react';
 import { useEffect, useId, useRef, useState, type MouseEvent, type PointerEvent } from 'react';
 import type { Viewport } from '../api';
-import { fitToBounds, IDENTITY_VIEWPORT, screenToWorld, zoomByFactor, type Vec2 } from '../canvas/CanvasEngine';
-import { borderPoint, edgeGeometry, straightPath, type Box } from '../canvas/geometry';
+import { fitToBounds, IDENTITY_VIEWPORT, screenToWorld, worldToScreen, zoomByFactor, type Vec2 } from '../canvas/CanvasEngine';
+import { bentGeometry, borderPoint, edgeGeometry, straightPath, type Box } from '../canvas/geometry';
 import { readProjectView, saveProjectView, TILE_HEIGHT, TILE_WIDTH, type CatalogTile, type ProjectRelation } from '../projectCanvas/layout';
+import type { CatalogTag } from '../projectCanvas/tags';
+import { EdgeLabel } from './EdgeLabel';
+import { TagDots } from './CatalogTags';
 import '../projectCanvas/projectCanvas.css';
 
 type Drag = {
@@ -23,10 +26,13 @@ type Props = {
   folderName?: string;
   tiles: CatalogTile[];
   relations?: ProjectRelation[];
+  tags: CatalogTag[];
+  filtering: boolean;
   disabled: boolean;
   onOpen: (tile: CatalogTile) => void;
   onPlace: (tile: CatalogTile, point: Vec2, target?: string) => Promise<void>;
   onConnect: (relation: ProjectRelation) => void;
+  onLabel: (relation: ProjectRelation, label: string) => Promise<void>;
   onRelationMenu: (event: MouseEvent, relation: ProjectRelation) => void;
   onFavorite: (tile: CatalogTile) => void;
   onMenu: (event: MouseEvent, tile?: CatalogTile) => void;
@@ -38,7 +44,65 @@ function folderBox(position: Vec2): Box {
   return { x: position.x + 22, y: position.y + 10, w: 110, h: 71 };
 }
 
-export function ProjectCanvas({ scope, folderId, folderName, tiles, relations, disabled, onOpen, onPlace, onConnect, onRelationMenu, onFavorite, onMenu, onAdd }: Props) {
+function namedGeometry(from: Box, to: Box, label?: string) {
+  const curve = edgeGeometry(from, to);
+  if (!label) return curve;
+  const { x, y } = curve.mid;
+  const halfWidth = Math.min(180, Array.from(label).length * 4.8);
+  const coversFolder = (box: Box) => x + halfWidth > box.x && x - halfWidth < box.x + box.w
+    && y + 11 > box.y && y - 11 < box.y + box.h;
+  if (!coversFolder(from) && !coversFolder(to)) return curve;
+  if (Math.abs(from.x - to.x) >= Math.abs(from.y - to.y)) {
+    const outsideY = from.x <= to.x ? Math.min(from.y, to.y) - 22 : Math.max(from.y, to.y) + from.h + 25;
+    return bentGeometry(from, to, { x, y: outsideY });
+  }
+  const outsideX = from.y <= to.y ? Math.max(from.x, to.x) + from.w + halfWidth + 10 : Math.min(from.x, to.x) - halfWidth - 10;
+  return bentGeometry(from, to, { x: outsideX, y });
+}
+
+function RelationName({ relation, point, width, height, onClose, onSave }: {
+  relation: ProjectRelation; point: Vec2; width: number; height: number;
+  onClose: () => void; onSave: (label: string) => Promise<void>;
+}) {
+  const [name, setName] = useState(relation.label ?? '');
+  const [error, setError] = useState('');
+  const [saving, setSaving] = useState(false);
+  const pending = useRef(false);
+  const input = useRef<HTMLInputElement>(null);
+  useEffect(() => { input.current?.select(); }, []);
+  const x = Math.min(Math.max(point.x, 158), Math.max(158, width - 158));
+  const y = Math.min(Math.max(point.y, 23), Math.max(23, height - 55));
+  async function save() {
+    if (pending.current) return;
+    pending.current = true;
+    setSaving(true);
+    setError('');
+    try {
+      await onSave(name);
+      onClose();
+    } catch (error) {
+      setError(String(error).replace(/^Error:\s*/, ''));
+    } finally {
+      pending.current = false;
+      setSaving(false);
+    }
+  }
+  return <form className="project-relation-editor" style={{ left: x, top: y }} onPointerDown={event => event.stopPropagation()}
+    onSubmit={event => { event.preventDefault(); void save(); }} onKeyDown={event => {
+      if (event.nativeEvent.isComposing) return;
+      if (event.key === 'Escape' && !pending.current) { event.stopPropagation(); onClose(); }
+    }}>
+    <div>
+      <input ref={input} autoFocus className="input" aria-label="项目连线名称" placeholder="连线名称，支持公式"
+        value={name} maxLength={240} disabled={saving} onChange={event => setName(event.target.value)} />
+      <button type="submit" aria-label="保存连线名称" disabled={saving}><Check size={16} /></button>
+      <button type="button" aria-label="取消编辑连线名称" disabled={saving} onClick={onClose}><X size={16} /></button>
+    </div>
+    {error && <p className="catalog-tag-error" role="alert">{error}</p>}
+  </form>;
+}
+
+export function ProjectCanvas({ scope, folderId, folderName, tiles, relations, tags, filtering, disabled, onOpen, onPlace, onConnect, onLabel, onRelationMenu, onFavorite, onMenu, onAdd }: Props) {
   const element = useRef<HTMLElement>(null);
   const [viewport, setViewport] = useState(() => readProjectView(scope, folderId));
   const view = useRef(viewport);
@@ -48,6 +112,7 @@ export function ProjectCanvas({ scope, folderId, folderName, tiles, relations, d
   const marker = useId();
   const [dragged, setDragged] = useState<{ id?: string; kind?: CatalogTile['kind']; position?: Vec2; target?: string }>();
   const [connection, setConnection] = useState<{ from: string; point: Vec2; target?: string }>();
+  const [editingName, setEditingName] = useState<string>();
 
   function tilePosition(tile: CatalogTile) {
     return dragged?.id === tile.row.id && dragged.kind === tile.kind
@@ -58,6 +123,14 @@ export function ProjectCanvas({ scope, folderId, folderName, tiles, relations, d
   const folders = new Map(tiles.filter(tile => tile.kind === 'project').map(tile => [
     tile.row.id, { name: tile.row.name, box: folderBox(tilePosition(tile)) },
   ]));
+  const laidRelations = (relations ?? []).flatMap(relation => {
+    const from = folders.get(relation.from), to = folders.get(relation.to);
+    return from && to ? [{
+      relation, key: `${relation.from}:${relation.to}`,
+      name: `${from.name} → ${to.name}`, geometry: namedGeometry(from.box, to.box, relation.label),
+    }] : [];
+  });
+  const named = laidRelations.find(edge => edge.key === editingName);
 
   function setView(next: Viewport) {
     view.current = next;
@@ -242,26 +315,28 @@ export function ProjectCanvas({ scope, folderId, folderName, tiles, relations, d
               <path d="M 1 1 L 9 5 L 1 9 Z" fill="currentColor" />
             </marker>
           </defs>
-          {relations?.map(relation => {
-            const from = folders.get(relation.from), to = folders.get(relation.to);
-            if (!from || !to) return null;
-            const { d } = edgeGeometry(from.box, to.box);
-            const label = `${from.name} → ${to.name}`;
+          {laidRelations.map(({ key, relation, geometry: { d }, name }) => {
             return (
-              <g key={`${relation.from}:${relation.to}`} className="project-relation" data-from={relation.from} data-to={relation.to}>
+              <g key={key} className="project-relation" data-from={relation.from} data-to={relation.to}>
                 <path className="project-relation-line" d={d} markerEnd={`url(#${marker})`} aria-hidden="true" />
                 <path
                   className="project-relation-hit" d={d} role="button" tabIndex={disabled ? -1 : 0}
-                  aria-label={label} aria-disabled={disabled}
-                  onClick={event => { if (!disabled) onRelationMenu(event, relation); }}
+                  aria-label={name} aria-disabled={disabled}
+                  onClick={event => {
+                    if (!disabled) { event.stopPropagation(); setEditingName(key); }
+                  }}
                   onContextMenu={event => { if (!disabled) onRelationMenu(event, relation); }}
                   onKeyDown={event => {
-                    if (!disabled && ['Enter', ' ', 'ContextMenu'].includes(event.key)) {
+                    if (disabled) return;
+                    if (event.key === 'Enter' || event.key === ' ') {
+                      event.preventDefault(); setEditingName(key);
+                    }
+                    if (event.key === 'ContextMenu' || (event.shiftKey && event.key === 'F10')) {
                       event.preventDefault();
                       event.currentTarget.dispatchEvent(new window.MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
                     }
                   }}
-                ><title>{label}</title></path>
+                ><title>{name}</title></path>
               </g>
             );
           })}
@@ -290,6 +365,7 @@ export function ProjectCanvas({ scope, folderId, folderName, tiles, relations, d
                   {folder ? <span className="project-folder-icon" /> : <span className="project-board-icon"><GitFork size={43} strokeWidth={1.35} /></span>}
                 </span>
                 <span className="project-tile-title">{tile.row.name}</span>
+                <TagDots tags={tags.filter(tag => tile.tagIds.includes(tag.id))} />
               </button>
               {folder && <button
                 type="button" disabled={disabled} className="project-connect-port" data-connect-project={tile.row.id}
@@ -305,7 +381,20 @@ export function ProjectCanvas({ scope, folderId, folderName, tiles, relations, d
           );
         })}
       </div>
-      {!tiles.length && <p className="project-canvas-empty">{folderId ? '此项目为空' : '新建一个项目开始'}</p>}
+      <div className="edge-label-layer project-relation-names">
+        {laidRelations.map(({ key, relation, geometry }) => {
+          if (!relation.label || key === editingName) return null;
+          const { x, y } = worldToScreen(viewport, geometry.mid);
+          const edit = () => { if (!disabled) setEditingName(key); };
+          return <div key={key} onContextMenu={event => { if (!disabled) onRelationMenu(event, relation); }}>
+            <EdgeLabel label={relation.label} x={x} y={y} zoom={viewport.zoom} onSelect={edit} onEdit={edit} />
+          </div>;
+        })}
+        {named && <RelationName key={named.key} relation={named.relation} point={worldToScreen(viewport, named.geometry.mid)}
+          width={element.current?.clientWidth ?? 720} height={element.current?.clientHeight ?? 480}
+          onSave={label => onLabel(named.relation, label)} onClose={() => setEditingName(undefined)} />}
+      </div>
+      {!tiles.length && <p className="project-canvas-empty">{filtering ? '当前没有匹配标签的内容' : folderId ? '此项目为空' : '新建一个项目开始'}</p>}
       <button className="project-canvas-fit" type="button" title="显示全部" aria-label={`显示全部 · 当前缩放 ${Math.round(viewport.zoom * 100)}%`} onClick={fit}>
         {Math.round(viewport.zoom * 100)}%
       </button>

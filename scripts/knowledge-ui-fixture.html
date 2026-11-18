@@ -41,7 +41,28 @@ if(captureState&&!captureState.chats){chats.conversations[0].id='c_capture_123';
 if(captureState){if(captureState.chats)chats=captureState.chats;for(let i=0;i<fixtureBoards.length;i++)if(captureState.boards[fixtureBoards[i].id])fixtureBoards[i]=captureState.boards[fixtureBoards[i].id];}
 if(captureState)for(const saved of Object.values(captureState.boards))if(!fixtureBoards.some(b=>b.id===saved.id))fixtureBoards.push(saved);
 let fixtureLayout = { version: 1, projects: {}, boards: {} };
-const keepNavigation = fixtureParams.has('navigationQA') || fixtureParams.has('projectCanvasQA');
+const keepNavigation = fixtureParams.has('navigationQA') || fixtureParams.has('projectCanvasQA') || fixtureParams.has('catalogTagsQA');
+if (fixtureParams.has('catalogTagsQA')) {
+  fixtureProjects[0].name = '理论';
+  fixtureProjects[1].name = '论文';
+  fixtureBoards[0].name = '研究白板';
+  fixtureBoards[1].name = '备用白板';
+  const node = (id, title, x, y, extra = {}) => ({ id, title, x, y, w: 235, docs: [], created_at: now, updated_at: now, ...extra });
+  fixtureBoards[0].nodes = [
+    node('blue', '旧蓝色标记', 110, 126, { color: '#3b82c4' }),
+    node('review', '核心公式', 435, 126),
+    node('plain', '未标记笔记', 435, 335),
+    node('flow', '推导流程', 110, 335, { flow: { nodeIds: ['step_one', 'step_two'] } }),
+    node('step_one', '列出定义', 0, 0, { flowOwnerId: 'flow' }),
+    node('step_two', '验证等式', 0, 0, { flowOwnerId: 'flow' }),
+  ];
+  fixtureBoards[0].edges = [
+    { id: 'blue_review', from: 'blue', to: 'review', directed: true, created_at: now },
+    { id: 'review_plain', from: 'review', to: 'plain', directed: true, created_at: now },
+    { id: 'flow_steps', from: 'step_one', to: 'step_two', directed: true, created_at: now },
+  ];
+  fixtureLayout.relations = [{ from: 'project', to: 'project-other' }];
+}
 if (fixtureParams.has('catalogDesignQA')) {
   fixtureProjects[0].name = '研究笔记';
   fixtureProjects.push({ id: 'notes', name: '阅读笔记', created_at: now }, { id: 'materials', name: '资料整理', created_at: now });
@@ -161,6 +182,28 @@ window.__TAURI_INTERNALS__={metadata:{currentWindow:{label:'main'},currentWebvie
   if(command==='knowledge_import_read'&&fixtureParams.has('knowledgeDesignQA'))return structuredClone(library);
   if(command==='board_package_export'&&fixtureParams.has('navigationQA')){window.__fixtureExports.push(structuredClone(args));return;}
   if (command === 'project_canvas_read') return { scope: fixtureCanvasScope(), layout: structuredClone(fixtureLayout) };
+  if (command === 'project_canvas_label') {
+    if (args.expectedScope !== fixtureCanvasScope()) throw Error('资料库已变化');
+    if (window.__fixtureNavigationFailure) throw Error('合成磁盘写入失败');
+    const relation = fixtureLayout.relations?.find(edge => edge.from === args.from && edge.to === args.to);
+    if (!relation) throw Error('项目连线已移除');
+    if (args.label.trim()) relation.label = args.label.trim();
+    else delete relation.label;
+    saveNavigation();
+    return structuredClone(fixtureLayout);
+  }
+  if (command === 'project_canvas_tags') {
+    if (args.expectedScope !== fixtureCanvasScope()) throw Error('资料库已变化');
+    if (window.__fixtureNavigationFailure) throw Error('合成磁盘写入失败');
+    const target = args.target;
+    const key = target.kind === 'project' ? target.id : target.kind === 'board' ? target.projectId+'/'+target.id : target.projectId+'/'+target.boardId+'/'+target.id;
+    const tags = fixtureLayout.tags ??= { definitions: {}, assignments: {} };
+    Object.assign(tags.definitions, args.newTags);
+    if (args.assigned.length) tags.assignments[key] = [...new Set(args.assigned)].sort();
+    else delete tags.assignments[key];
+    saveNavigation();
+    return structuredClone(fixtureLayout);
+  }
   if (command === 'project_canvas_relate') {
     if (args.expectedScope !== fixtureCanvasScope()) throw Error('资料库已变化');
     if (window.__fixtureNavigationFailure) throw Error('合成磁盘写入失败');
@@ -168,8 +211,10 @@ window.__TAURI_INTERNALS__={metadata:{currentWindow:{label:'main'},currentWebvie
       (fixtureLayout.projects[row.id]?.parentId ?? null) === args.projectId
     ).map(row => row.id));
     if (args.from === args.to || !siblings.has(args.from) || !siblings.has(args.to)) throw Error('请选择同一画布上的两个项目');
-    const keep = (fixtureLayout.relations ?? []).filter(edge => edge.from !== args.from || edge.to !== args.to);
-    fixtureLayout.relations = args.present ? [...keep, { from: args.from, to: args.to }] : keep;
+    const previous = fixtureLayout.relations ?? [];
+    const exists = previous.some(edge => edge.from === args.from && edge.to === args.to);
+    fixtureLayout.relations = args.present ? (exists ? previous : [...previous, { from: args.from, to: args.to }]) :
+      previous.filter(edge => edge.from !== args.from || edge.to !== args.to);
     saveNavigation();
     return structuredClone(fixtureLayout);
   }

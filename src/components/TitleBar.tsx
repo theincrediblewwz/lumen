@@ -19,6 +19,7 @@ export function TitleBar({
   onToggleIndex,
   indexCollapsed,
   path,
+  filter,
 }: {
   platform: string; // 'macos' | 'windows' | 'linux' | ...
   brand: string;
@@ -28,6 +29,7 @@ export function TitleBar({
   onToggleIndex?: () => void;
   indexCollapsed?: boolean;
   path?: ReactNode;
+  filter?: ReactNode;
 }) {
   const isMac = platform === 'macos';
   const showWinControls = Boolean(platform) && !isMac; // 平台确认后再显示自绘按钮
@@ -62,6 +64,7 @@ export function TitleBar({
       )}
       {path}
       <div className="titlebar-actions">
+        {filter}
         {onToggleIndex && (
           <button type="button" className="titlebar-btn titlebar-menu"
             aria-label={indexCollapsed ? '展开知识索引' : '收起知识索引'}

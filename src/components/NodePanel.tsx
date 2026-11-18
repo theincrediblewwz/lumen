@@ -5,16 +5,13 @@ import { MessageCircle } from 'lucide-react';
 import { openAiWindow } from '../ai/aiWindow';
 import { MarkdownView } from './MarkdownView';
 import { isQuestionDoc } from '../canvas/presentation';
+import { TagDots } from './CatalogTags';
+import { SYSTEM_TAGS, type CatalogTag } from '../projectCanvas/tags';
 
 /** 可选的节点颜色标记（左边框色条），null = 默认（用主题强调色） */
 const COLOR_SWATCHES: { id: string | null; label: string; color: string }[] = [
   { id: null, label: '默认', color: 'var(--accent)' },
-  { id: '#e0503a', label: '红', color: '#e0503a' },
-  { id: '#e08a2b', label: '橙', color: '#e08a2b' },
-  { id: '#d4b106', label: '黄', color: '#d4b106' },
-  { id: '#3a9d5d', label: '绿', color: '#3a9d5d' },
-  { id: '#3b82c4', label: '蓝', color: '#3b82c4' },
-  { id: '#8b5cf6', label: '紫', color: '#8b5cf6' },
+  ...SYSTEM_TAGS.map(tag => ({ id: tag.color, label: tag.name.slice(0, 1), color: tag.color })),
 ];
 
 /** 自适应高度文本域（面板内编辑用） */
@@ -66,7 +63,7 @@ function GrowArea({
  * - 删除节点
  */
 export function NodePanel({
-  node, docVersions={},
+  node, docVersions={}, tags, onEditTags,
   onCommit,
   onColor,
   onDelete,
@@ -82,6 +79,8 @@ export function NodePanel({
   onEditMarkdown:()=>void;onOpenFlow:()=>void;onPromoteDoc:(id:string,path:string)=>void;
   docVersions?:Record<string,number>;
   node: BoardNode;
+  tags: CatalogTag[];
+  onEditTags: () => void;
   onCommit: (id: string, patch: { title?: string; summary?: string }) => void;
   onColor: (id: string, color: string | null) => void;
   onDelete: (id: string) => void;
@@ -310,7 +309,12 @@ export function NodePanel({
 
 
         {!node.flowOwnerId&&<section className="np-flow-attachment"><span className="np-label">子白板 · 线性流程</span><button className="btn" onClick={onOpenFlow}>{node.flow?`展开子流程 · ${node.flow.nodeIds.length} 个步骤`:'创建子流程'}</button></section>}
-        <label className="np-label">颜色标记</label>
+        <div className="np-color-heading">
+          <span className="np-label">颜色标记</span>
+          <button className="node-tag-edit" type="button" onClick={onEditTags}>
+            编辑标签 <TagDots tags={tags} />
+          </button>
+        </div>
         <div className="np-swatches">
           {COLOR_SWATCHES.map((s) => {
             const active = (node.color ?? null) === s.id;

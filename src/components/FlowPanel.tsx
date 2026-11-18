@@ -8,9 +8,11 @@ import { MarkdownView } from './MarkdownView';
 import { ContextMenu, type ContextMenuState } from './ContextMenu';
 
 type Drag = { id:string; pointer:number; start:number; current:number; scroll:number; order:string[]; boxes:Map<string,{y:number;h:number}>; index:number; offset:number; moved:boolean };
-export function FlowPanel({owner,nodes,projectId,boardId,selected,ownerBox,onClose,onSelect,onAdd,onReorder,onRemove,docVersions}: {
+export function FlowPanel({owner,nodes,projectId,boardId,selected,ownerBox,onClose,onSelect,onAdd,onReorder,onRemove,docVersions,filtering,onEditTags}: {
   owner:BoardNode;nodes:BoardNode[];projectId:string;boardId:string;selected:string|null;ownerBox:Box;
   onClose:()=>void;onSelect:(id:string)=>void;onAdd:(after?:string)=>void;onReorder:(ids:string[])=>void;onRemove:(id:string)=>void;docVersions:Record<string,number>;
+  filtering: boolean;
+  onEditTags: (node: BoardNode) => void;
 }) {
   const [edit,setEdit]=useState(false),[collapsed,setCollapsed]=useState(false),[width,setWidth]=useState<number>(),[available,setAvailable]=useState(window.innerWidth),[menu,setMenu]=useState<ContextMenuState|null>(null),[,refresh]=useState(0);
   const panel=useRef<HTMLElement>(null),list=useRef<HTMLDivElement>(null),scroller=useRef<HTMLDivElement>(null),drag=useRef<Drag>(),frame=useRef(0);
@@ -87,14 +89,25 @@ export function FlowPanel({owner,nodes,projectId,boardId,selected,ownerBox,onClo
       <header><div><span>子白板 · 线性流程</span><strong><MarkdownView value={owner.title||'流程'} inline/></strong></div><button className="btn flow-preview-toggle" aria-label={collapsed?'展开全部步骤预览':'收起全部步骤预览'} title={collapsed?'显示各步骤的分页素材预览':'只显示步骤标题和编号，不影响母白板'} aria-pressed={collapsed} onClick={()=>setCollapsed(v=>!v)}>{collapsed?'展开预览':'收起预览'}</button><button className="btn" title="编辑时可拖动步骤换位，右键可在下方插入" aria-pressed={edit} onClick={()=>setEdit(v=>!v)}>{edit?'完成编辑':'编辑'}</button><button className="flow-close" aria-label="收起子白板" onClick={onClose}>×</button></header>
       <div className="flow-resize-e" role="separator" aria-orientation="vertical" aria-label="调整子白板宽度" tabIndex={0} aria-valuenow={Math.round(bounds?.w??520)} onPointerDown={e=>{if(e.button!==0)return;e.preventDefault();e.stopPropagation();resize.current={pointer:e.pointerId,start:e.clientX,width:panel.current!.getBoundingClientRect().width,target:e.currentTarget};e.currentTarget.setPointerCapture(e.pointerId);}} onKeyDown={e=>{if(['ArrowLeft','ArrowRight'].includes(e.key)){e.preventDefault();e.stopPropagation();setWidth(flowPanelWidth((bounds?.w??520)+(e.key==='ArrowRight'?32:-32),available));}}}/>
       <div ref={scroller} className="flow-scroll" tabIndex={0} aria-label="流程步骤">
-        {!nodes.length&&<p className="flow-empty">{edit?'添加第一个步骤，技术细节将在这里依次展开。':'这个流程还没有步骤，点击右上角编辑。'}</p>}
+        {!nodes.length&&<p className="flow-empty">{filtering?'当前没有匹配标签的步骤':edit?'添加第一个步骤，技术细节将在这里依次展开。':'这个流程还没有步骤，点击右上角编辑。'}</p>}
         <div ref={list} className="flow-list">{nodes.map((node,index)=>{
           const d=drag.current,from=d?.order.indexOf(d.id)??-1,at=d?.order.indexOf(node.id)??-1,amount=d?(d.boxes.get(d.id)?.h??0)+44:0;
           const offset=d?.id===node.id?d.offset:d&&at>from&&at<=d.index?-amount:d&&at<from&&at>=d.index?amount:0;
           return <div key={node.id} data-flow-step={node.id} className={`flow-step${d?.id===node.id?' is-dragging':''}`} style={{transform:`translateY(${offset}px)`}}>
-            <span className="flow-step-number">{index+1}</span>
-            <NodeCard node={{...node,x:0,y:0}} projectId={projectId} boardId={boardId} docVersions={docVersions} previewCollapsed={collapsed} hideHandles selected={selected===node.id} editing={false} showAnchors={false} onPointerDown={e=>start(e,node.id)} onAnchorPointerDown={()=>{}} onResizeStart={()=>{}} onOpen={()=>select(node.id)} onStartEdit={()=>select(node.id)} onContextMenu={e=>{e.preventDefault();e.stopPropagation();setMenu({x:e.clientX,y:e.clientY,items:edit?[{type:'item',label:'在此步骤下方插入',onClick:()=>onAdd(node.id)},{type:'item',label:'移除此步骤',danger:true,onClick:()=>onRemove(node.id)}]:[{type:'item',label:'编辑流程',onClick:()=>setEdit(true)}]});}} onCommit={()=>{}} onEditCancel={()=>{}} onExitEdit={()=>{}} onMeasure={()=>{}} onHoverChange={()=>{}}/>
-            {index<nodes.length-1&&<span className="flow-arrow" aria-hidden="true">↓</span>}
+            <span className="flow-step-number">{filtering ? (owner.flow?.nodeIds.indexOf(node.id) ?? index) + 1 : index + 1}</span>
+            <NodeCard node={{...node,x:0,y:0}} projectId={projectId} boardId={boardId} docVersions={docVersions} previewCollapsed={collapsed} hideHandles selected={selected===node.id} editing={false} showAnchors={false} onPointerDown={e=>start(e,node.id)} onAnchorPointerDown={()=>{}} onResizeStart={()=>{}} onOpen={()=>select(node.id)} onStartEdit={()=>select(node.id)} onContextMenu={e=>{
+              e.preventDefault();
+              e.stopPropagation();
+              setMenu({x:e.clientX,y:e.clientY,items:[
+                {type:'item',label:'编辑标签…',onClick:()=>onEditTags(node)},
+                ...(edit ? [
+                  {type:'item' as const,label:'在此步骤下方插入',onClick:()=>onAdd(node.id)},
+                  {type:'item' as const,label:'移除此步骤',danger:true,onClick:()=>onRemove(node.id)},
+                ] : [{type:'item' as const,label:'编辑流程',onClick:()=>setEdit(true)}]),
+              ]});
+            }} onCommit={()=>{}} onEditCancel={()=>{}} onExitEdit={()=>{}} onMeasure={()=>{}} onHoverChange={()=>{}}/>
+            {index<nodes.length-1 && (!filtering || owner.flow?.nodeIds[owner.flow.nodeIds.indexOf(node.id) + 1] === nodes[index+1].id)
+              && <span className="flow-arrow" aria-hidden="true">↓</span>}
           </div>;
         })}</div>
       </div>

@@ -1,9 +1,9 @@
 use super::*;
 
-struct Library(std::path::PathBuf);
+pub(super) struct Library(pub(super) std::path::PathBuf);
 
 impl Library {
-    fn new() -> Self {
+    pub(super) fn new() -> Self {
         let path = std::env::temp_dir().join(storage::new_id("project_canvas_test"));
         storage::ensure_storage(&path).unwrap();
         Self(path)
@@ -126,6 +126,14 @@ fn corrupt_layout_is_reported_without_overwriting_the_existing_file() {
 
 #[test]
 fn directed_relations_are_idempotent_and_keep_their_endpoints_when_folders_move() {
+    let relate = |root: &Path, parent: Option<&str>, from, to, present| {
+        let change = if present {
+            RelationChange::Add
+        } else {
+            RelationChange::Remove
+        };
+        change_relation(root, parent, from, to, change)
+    };
     let library = Library::new();
     let root = &library.0;
     let theory = storage::create_project(root, "理论").unwrap();
@@ -134,9 +142,10 @@ fn directed_relations_are_idempotent_and_keep_their_endpoints_when_folders_move(
     let edge = Relation {
         from: theory.id.clone(),
         to: paper.id.clone(),
+        label: None,
     };
     let added = relate(root, None, theory.id.clone(), paper.id.clone(), true).unwrap();
-    assert_eq!(added.relations, BTreeSet::from([edge.clone()]));
+    assert_eq!(added.relations, vec![edge.clone()]);
     assert_eq!(
         relate(root, None, theory.id.clone(), paper.id.clone(), true).unwrap(),
         added
@@ -146,11 +155,23 @@ fn directed_relations_are_idempotent_and_keep_their_endpoints_when_folders_move(
     assert!(relate(root, None, theory.id.clone(), "missing".into(), true).is_err());
     assert_eq!(fs::read(root.join(FILE)).unwrap(), bytes);
 
+    let label = r"应用到这篇论文 $\nu^2$";
+    let named = change_relation(
+        root,
+        None,
+        theory.id.clone(),
+        paper.id.clone(),
+        RelationChange::Label(relation_label(label).unwrap()),
+    )
+    .unwrap();
+    assert_eq!(named.relations[0].label.as_deref(), Some(label));
+    assert!(relation_label(&"a".repeat(241)).is_err());
+    assert!(relation_label("两\n行").is_err());
     let moved = move_project(root, &paper.id, None, Some(folder.id.clone())).unwrap();
-    assert_eq!(moved.relations, added.relations);
+    assert_eq!(moved.relations, named.relations);
     assert!(relate(root, None, theory.id.clone(), paper.id.clone(), false).is_err());
     let theory_moved = move_project(root, &theory.id, None, Some(folder.id.clone())).unwrap();
-    assert_eq!(theory_moved.relations, added.relations);
+    assert_eq!(theory_moved.relations, named.relations);
     let updated = relate(
         root,
         Some(&folder.id),
@@ -168,7 +189,7 @@ fn directed_relations_are_idempotent_and_keep_their_endpoints_when_folders_move(
         false,
     )
     .unwrap();
-    assert_eq!(removed.relations, BTreeSet::from([edge]));
+    assert_eq!(removed.relations, named.relations);
     assert_eq!(
         read(root, &storage::read_index(root).unwrap()).unwrap(),
         removed

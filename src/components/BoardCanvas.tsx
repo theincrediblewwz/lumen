@@ -37,6 +37,7 @@ import { imageDoc, imageOnly, clipboardText, nonemptyNode, flowNodes, orderFlow,
 import { measureNodes } from '../canvas/measureNodes';
 import { flowHighlight } from '../canvas/preview';
 import { ContextMenu, type ContextMenuState } from './ContextMenu';
+import { assignedTags, colorTag, type CatalogTag, type TagStore } from '../projectCanvas/tags';
 
 /** 白板图状态：节点 + 连线由同一个历史栈驱动，撤销/重做覆盖两者 */
 type Graph = { nodes: BoardNode[]; edges: BoardEdge[] };
@@ -66,6 +67,7 @@ export function BoardCanvas({
   edgeStyle = 'curved',
   guessMath = false,
   focusNode = null,
+  tags, tagStore, tagFilter, onEditTags,
   onBlankClick,
 }: {
   onFlush:()=>Promise<void>; saveState:'saved'|'dirty'|'saving'|'error';
@@ -75,6 +77,10 @@ export function BoardCanvas({
   guessMath?: boolean;
   /** AI 引用跳转目标（M5-6）：居中并闪烁高亮该节点。nonce 变化即重新触发。 */
   focusNode?: { id: string; nonce: number } | null;
+  tags: CatalogTag[];
+  tagStore?: TagStore;
+  tagFilter: ReadonlySet<string>;
+  onEditTags: (node: BoardNode) => void;
   onBlankClick?: () => void;
 }) {
   const wrapRef = useRef<HTMLDivElement>(null);
@@ -96,8 +102,25 @@ export function BoardCanvas({
   );
   const nodes = history.present.nodes;
   const edges = history.present.edges;
-  const mainNodes=useMemo(()=>topLevelNodes(nodes),[nodes]);
+  const matches = useMemo(() => {
+    if (!tagFilter.size) return null;
+    const matched = new Set<string>();
+    const entrances = new Set<string>();
+    for (const node of nodes) {
+      const legacy = colorTag(node.color);
+      const labels = assignedTags(tagStore, { kind: 'node', projectId: board.projectId, boardId: board.id, id: node.id });
+      if (labels.some(id => tagFilter.has(id)) || (legacy && tagFilter.has(legacy))) {
+        matched.add(node.id);
+        if (node.flowOwnerId) entrances.add(node.flowOwnerId);
+      }
+    }
+    return { matched, entrances };
+  }, [nodes, tagFilter, tagStore, board.projectId, board.id]);
+  const mainNodes = useMemo(() => topLevelNodes(nodes).filter(node =>
+    !matches || matches.matched.has(node.id) || matches.entrances.has(node.id)), [nodes, matches]);
   const mainIds=useMemo(()=>new Set(mainNodes.map(n=>n.id)),[mainNodes]);
+  const mainIdsRef = useRef(mainIds);
+  mainIdsRef.current = mainIds;
   const mainEdges=useMemo(()=>edges.filter(e=>mainIds.has(e.from)&&mainIds.has(e.to)),[edges,mainIds]);
   const historyRef = useRef(history);
   historyRef.current = history;
@@ -131,6 +154,14 @@ export function BoardCanvas({
   const panelIdRef = useRef<string | null>(null);
   panelIdRef.current = panelId;
   const [hoverNode, setHoverNode] = useState<string | null>(null);
+  useEffect(() => {
+    if (!matches) return;
+    const visible = (id: string) => matches.matched.has(id) || matches.entrances.has(id);
+    if (selected && !visible(selected)) setSelected(null);
+    if (panelId && !visible(panelId)) setPanelId(null);
+    if (flowOwnerId && !visible(flowOwnerId)) setFlowOwnerId(null);
+    if (hoverNode && !visible(hoverNode)) setHoverNode(null);
+  }, [matches, selected, panelId, flowOwnerId, hoverNode]);
   /** OS 文件拖放（拖 .md 到节点）悬停命中的节点 id；null 表示未悬停在任何节点上 */
   const [dropTargetId, setDropTargetId] = useState<string | null>(null);
   /** 正在处理拖入导入（防重入 + 显示忙碌） */
@@ -227,6 +258,7 @@ export function BoardCanvas({
     if(front?.closest('.flow-panel'))return null;
     const world = engineRef.current.toWorld({ x: clientX - r.left, y: clientY - r.top });
     for (const nn of topLevelNodes(graphRef.current.nodes)) {
+      if (!mainIdsRef.current.has(nn.id)) continue;
       const s = sizesRef.current[nn.id];
       const box = { x: nn.x, y: nn.y, w: Math.max(nn.w??DEFAULT_NODE_W,s?.w??0), h:Math.max(nn.h??0,s?.h??FALLBACK_NODE_H) };
       if (boxContains(box, world)) return nn.id;
@@ -366,7 +398,7 @@ export function BoardCanvas({
   /** 适配全部内容到屏幕（zoom-to-fit）。 */
   const fitAll = useCallback(() => {
     if(drag.current?.kind==='node'||drag.current?.kind==='resize')return;
-    const whole=graphRef.current,shown=topLevelNodes(whole.nodes),ids=new Set(shown.map(n=>n.id));
+    const whole=graphRef.current,ids=mainIdsRef.current,shown=whole.nodes.filter(node=>ids.has(node.id));
     const g={nodes:shown,edges:whole.edges.filter(e=>ids.has(e.from)&&ids.has(e.to))};
     const r = rect();
     if (g.nodes.length === 0) {
@@ -676,7 +708,7 @@ export function BoardCanvas({
     const onMove = (ev: PointerEvent) => {
       const r = rect();
       const world = engine.toWorld({ x: ev.clientX - r.left, y: ev.clientY - r.top });
-      const hoverId=snapConnection(world,topLevelNodes(graphRef.current.nodes),id,boxOf,engine.viewport.zoom);
+      const hoverId=snapConnection(world,graphRef.current.nodes.filter(node=>mainIdsRef.current.has(node.id)),id,boxOf,engine.viewport.zoom);
       setConnect({ fromId: id, to: world, hoverId });
     };
 
@@ -686,7 +718,7 @@ export function BoardCanvas({
       // 用落点重新命中，避免依赖异步 state
       const r = rect();
       const world = engine.toWorld({ x: ev.clientX - r.left, y: ev.clientY - r.top });
-      const target=snapConnection(world,topLevelNodes(graphRef.current.nodes),id,boxOf,engine.viewport.zoom);
+      const target=snapConnection(world,graphRef.current.nodes.filter(node=>mainIdsRef.current.has(node.id)),id,boxOf,engine.viewport.zoom);
       setConnect(null);
       if (target && target !== id) {
         const curEdges = graphRef.current.edges;
@@ -808,6 +840,10 @@ export function BoardCanvas({
       x: e.clientX,
       y: e.clientY,
       items: [
+        { type: 'item', label: '编辑标签…', onClick: () => {
+          const node = graphRef.current.nodes.find(node => node.id === id);
+          if (node) onEditTags(node);
+        } },
         {type:'item',label:'移动本节点及全部下级',onClick:()=>{setMoveRoot(id);setMoveIds(descendantIds(graphRef.current.nodes,graphRef.current.edges,id));setPanelId(null);setEditingId(null);clearTip();}},
         {type:'separator'},
         { type: 'item', label: '删除节点', danger: true, onClick: () => removeNode(id) },
@@ -1336,6 +1372,7 @@ export function BoardCanvas({
           <NodeCard
             key={n.id}
             node={n} projectId={board.projectId} boardId={board.id} onResizeStart={onResizeStart} docVersions={docVersions}
+            previewCollapsed={Boolean(matches && !matches.matched.has(n.id))}
             selected={selected === n.id||!!moveRoot&&moveIds.has(n.id)}
             flash={flashId === n.id}
             editing={editingId === n.id}
@@ -1355,6 +1392,8 @@ export function BoardCanvas({
           />
         ))}
       </div>
+
+      {matches && !mainNodes.length && <p className="board-filter-empty" role="status">当前没有匹配标签的节点</p>}
 
       {/* 连线标签内联编辑（屏幕坐标浮层） */}
       {editingEdge && (() => {
@@ -1402,11 +1441,16 @@ export function BoardCanvas({
       {/* 节点内容面板（选中节点后停靠右侧） */}
       {panelId && (() => {
         const pn = nodes.find((n) => n.id === panelId);
-        return pn ? (
+        if (!pn || (matches && !matches.matched.has(pn.id) && !matches.entrances.has(pn.id))) return null;
+        const labels = assignedTags(tagStore, { kind: 'node', projectId: board.projectId, boardId: board.id, id: pn.id });
+        const legacy = colorTag(pn.color);
+        return (
           <NodePanel
             node={pn} docVersions={docVersions}
             onCommit={commitNode}
             onColor={setNodeColor}
+            tags={tags.filter(tag => tag.id === legacy || labels.includes(tag.id))}
+            onEditTags={() => onEditTags(pn)}
             onDelete={removeNode}
             onClose={() => setPanelId(null)}
             onOpenDoc={openDoc}
@@ -1417,10 +1461,29 @@ export function BoardCanvas({
             boardId={board.id}
             guessMath={guessMath}
           />
-        ) : null;
+        );
       })()}
 
-      {flowOwnerId&&nodeById[flowOwnerId]?.flow&&<FlowPanel key={flowOwnerId} owner={nodeById[flowOwnerId]} nodes={flowNodes(nodeById[flowOwnerId],nodes)} projectId={board.projectId} boardId={board.id} selected={panelId} ownerBox={screenBoxOf(nodeById[flowOwnerId])} docVersions={docVersions} onClose={()=>setFlowOwnerId(null)} onSelect={id=>{setPanelId(id);setSelected(id);pasteTarget.current=id;}} onAdd={after=>addFlowStep(flowOwnerId,after)} onReorder={order=>{const g=graphRef.current;apply(orderFlow(g.nodes,g.edges,flowOwnerId,order,newEdgeId));}} onRemove={removeNode}/>}
+      {flowOwnerId && nodeById[flowOwnerId]?.flow && mainIds.has(flowOwnerId) && (() => {
+        const owner = nodeById[flowOwnerId];
+        const steps = flowNodes(owner, nodes);
+        return <FlowPanel key={flowOwnerId} owner={owner} nodes={matches ? steps.filter(node => matches.matched.has(node.id)) : steps}
+          filtering={!!matches} projectId={board.projectId} boardId={board.id} selected={panelId} ownerBox={screenBoxOf(owner)}
+          docVersions={docVersions} onClose={() => setFlowOwnerId(null)}
+          onSelect={id => { setPanelId(id); setSelected(id); pasteTarget.current = id; }}
+          onAdd={after => addFlowStep(flowOwnerId, after)} onEditTags={onEditTags}
+          onReorder={order => {
+            const g = graphRef.current;
+            const currentOwner = g.nodes.find(node => node.id === flowOwnerId);
+            if (!currentOwner) return;
+            const changed = new Set(order);
+            let next = 0;
+            // Reorder visible steps in their original slots, keeping filtered steps in the flow.
+            const all = flowNodes(currentOwner, g.nodes)
+              .map(node => changed.has(node.id) ? order[next++] : node.id);
+            apply(orderFlow(g.nodes, g.edges, flowOwnerId, all, newEdgeId));
+          }} onRemove={removeNode} />;
+      })()}
       {appearanceOpen&&<BoardAppearancePanel name={board.name} value={board.appearance} onClose={()=>setAppearanceOpen(false)} onChange={v=>onChange(graphRef.current.nodes,graphRef.current.edges,engine.viewport,v)}/>}
       {documentEditor&&(()=>{
         const node=nodes.find(n=>n.id===documentEditor.nodeId);if(!node)return null;

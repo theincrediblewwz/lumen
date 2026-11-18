@@ -30,8 +30,20 @@ fn project_package_keeps_its_nested_subtree_positions_and_materials() {
     let mut raw: Value = serde_json::from_slice(&fs::read(&layout_path).unwrap()).unwrap();
     raw["projects"][&child.id]["position"] = json!({ "x":135.5, "y":-42.0 });
     raw["boards"][&grandchild.id][&board.id] = json!({ "x":70, "y":320 });
-    let complete_edge = json!({ "from": &grandchild.id, "to": &sibling.id });
+    let complete_edge =
+        json!({ "from": &grandchild.id, "to": &sibling.id, "label": r"用于论文 $\nu$" });
     raw["relations"] = json!([complete_edge.clone(), { "from": &child.id, "to": &other.id }]);
+    let board_key = format!("{}/{}", grandchild.id, board.id);
+    raw["tags"] = json!({
+        "definitions": {
+            "tag_review": {"name":"复核","color":"#31804d"},
+            "tag_excluded": {"name":"其他项目","color":"#2384aa"},
+        },
+        "assignments": {
+            (&board_key): ["tag_review", "color_green"],
+            (&other.id): ["tag_excluded"],
+        }
+    });
     let original_layout = serde_json::to_vec(&raw).unwrap();
     fs::write(&layout_path, &original_layout).unwrap();
     let restores = root.with_extension("canvas-restores");
@@ -58,6 +70,14 @@ fn project_package_keeps_its_nested_subtree_positions_and_materials() {
         Some(320.0)
     );
     assert_eq!(restored_layout["relations"], json!([complete_edge]));
+    assert_eq!(
+        restored_layout["tags"]["definitions"],
+        json!({"tag_review":{"name":"复核","color":"#31804d"}})
+    );
+    assert_eq!(
+        restored_layout["tags"]["assignments"][&board_key],
+        json!(["color_green", "tag_review"])
+    );
     let relative = PathBuf::from(grandchild.id).join(board.id).join(doc.path);
     assert_eq!(
         fs::read(destination.join(&relative)).unwrap(),

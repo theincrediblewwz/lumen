@@ -341,6 +341,9 @@ fn collect(
     }
     if safety::checked_path(root, project_canvas::FILE)?.exists() {
         layout.retain_boards(&owners);
+        if project.is_some() {
+            layout.tags.retain_used_definitions();
+        }
         files.insert(project_canvas::FILE.into(), Source::Bytes(layout.bytes()?));
     }
     let path = safety::checked_path(root, "knowledge/library.json")?;

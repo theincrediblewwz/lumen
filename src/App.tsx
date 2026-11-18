@@ -4,6 +4,7 @@ import { ContextMenu, type ContextMenuState } from './components/ContextMenu';
 import { TitleBar } from './components/TitleBar';
 import { ProjectCanvas } from './components/ProjectCanvas';
 import { ProjectPath } from './components/ProjectPath';
+import { TagEditor, TagFilter } from './components/CatalogTags';
 import { ConfirmAction } from './components/ConfirmAction';
 import { BoardCanvas } from './components/BoardCanvas';
 import { ReaderOverlay } from './components/ReaderOverlay';
@@ -27,7 +28,8 @@ import {exportLibraryPackage,restoreLibraryPackage,applyLibraryPreferences} from
 
 import { loadFavorites, saveFavorites } from './favorites';
 import type { BoardAppearance } from './canvas/presentation';
-import { catalogTiles, EMPTY_PROJECT_LAYOUT, parentProject, projectPath, type CatalogTile, type ProjectRelation } from './projectCanvas/layout';
+import { catalogTiles, EMPTY_PROJECT_LAYOUT, parentProject, projectPath, type CatalogTile, type ProjectLayout, type ProjectRelation } from './projectCanvas/layout';
+import { allTags, assignedTags, colorTag, NO_TAGS, tagKey, type TagDefinition, type TagTarget } from './projectCanvas/tags';
 
 type Phase = 'loading' | 'setup' | 'ready';
 
@@ -73,6 +75,8 @@ export default function App() {
   const [projects, setProjects] = useState<ProjectMeta[]>([]);
   const [layout, setLayout] = useState(EMPTY_PROJECT_LAYOUT);
   const [canvasScope, setCanvasScope] = useState('');
+  const [tagFilters, setTagFilters] = useState<Record<string, string[]>>({});
+  const [tagEdit, setTagEdit] = useState<{ target: TagTarget; name: string; colorMark?: string }>();
   const [boards, setBoards] = useState<BoardMeta[]>([]);
   const [activeProject, setActiveProject] = useState<ProjectMeta | null>(null);
   const [activeBoard, setActiveBoard] = useState<BoardFile | null>(null);
@@ -147,6 +151,11 @@ export default function App() {
   const mac = /darwin|mac/i.test(platform);
   const projectTrail = useMemo(() => projectPath(projects, layout, activeProject?.id ?? null), [projects, layout, activeProject?.id]);
   const tiles = useMemo(() => catalogTiles(projects, boards, layout, activeProject?.id ?? null, favorites), [projects, boards, layout, activeProject?.id, favorites]);
+  const tags = useMemo(() => allTags(layout.tags), [layout.tags]);
+  const filterKey = JSON.stringify([canvasScope || root, activeBoard ? 'board' : 'project', activeBoard?.id ?? activeProject?.id ?? null]);
+  const filterIds = tagFilters[filterKey] ?? NO_TAGS;
+  const tagFilter = useMemo(() => new Set(filterIds), [filterIds]);
+  const visibleTiles = useMemo(() => tagFilter.size ? tiles.filter(tile => tile.tagIds.some(id => tagFilter.has(id))) : tiles, [tiles, tagFilter]);
 
   const readCatalog = useCallback(async () => {
     const [rows, placement] = await Promise.all([
@@ -359,6 +368,7 @@ export default function App() {
         setProjects(catalog.rows); setLayout(catalog.layout); setCanvasScope(catalog.scope);
         activeProjectRef.current = folder; setActiveProject(folder); setBoards(nextBoards);
         activeBoardRef.current = nextBoard; setActiveBoard(nextBoard);
+        if (nodeId) setTagFilters(old => ({ ...old, [JSON.stringify([catalog.scope, 'board', boardId])]: [] }));
         setFocusNode(nodeId ? { id: nodeId, nonce: Date.now() } : null);
         void api.snapshotCreate(projectId, boardId, false).catch(() => {});
       })),
@@ -412,11 +422,11 @@ export default function App() {
     [flushBoards],
   );
 
-  const withBusy = async (fn: () => Promise<void>) => {
-    if(document.querySelector('.board-canvas-live[aria-busy="true"]')){setError('请先完成正在进行的画布操作。');return;}
-    if(document.querySelector('.document-editor-modal')){setError('请先保存并关闭Markdown编辑器，再切换白板或项目。');return;}
+  const withBusy = async (fn: () => Promise<void>, reportError: (message: string) => void = setError) => {
+    if(document.querySelector('.board-canvas-live[aria-busy="true"]')){reportError('请先完成正在进行的画布操作。');return;}
+    if(document.querySelector('.document-editor-modal')){reportError('请先保存并关闭Markdown编辑器，再切换白板或项目。');return;}
     if (busyRef.current) return;
-    if (syncLockRef.current) { setError('正在保存或同步，请稍后再试。'); return; }
+    if (syncLockRef.current) { reportError('正在保存或同步，请稍后再试。'); return; }
     busyRef.current = true;
     setBusy(true);
     setError(null);
@@ -425,7 +435,7 @@ export default function App() {
       await fn();
     } catch (e: unknown) {
       setArchiveStatus(null);
-      setError(String(e));
+      reportError(String(e));
     } finally {
       busyRef.current = false;
       setBusy(false);
@@ -548,6 +558,22 @@ export default function App() {
   const relateProjects = (relation: ProjectRelation, present: boolean) => void withBusy(async () => {
     if (!canvasScope) throw new Error('请先恢复项目画布，再编辑连线。');
     setLayout(await api.projectCanvasRelate(activeProject?.id ?? null, relation, present, canvasScope));
+  });
+
+  const saveCatalog = async (apply: () => Promise<ProjectLayout>) => {
+    let saved = false;
+    let error = '有一项保存尚未完成，请稍后再试。';
+    await withBusy(async () => {
+      if (!canvasScope) throw new Error('请先恢复项目画布，再保存此更改。');
+      setLayout(await apply());
+      saved = true;
+    }, message => { error = message; });
+    if (!saved) throw new Error(error.replace(/^Error:\s*/, ''));
+  };
+
+  const saveTagDraft = (target: TagTarget, assigned: string[], newTags: Record<string, TagDefinition>) => saveCatalog(async () => {
+    if (target.kind === 'node') await flushBoards();
+    return api.projectCanvasTags(target, assigned, newTags, canvasScope);
   });
 
   const removeProject = (p: ProjectMeta) => setDeletion({
@@ -717,6 +743,7 @@ export default function App() {
     openAt(e, [
       { type: 'item', label: '打开', onClick: () => navigateProject(p.id) },
       {type:'item',label:favorites.projects.includes(p.id)?'取消收藏置顶':'收藏并置顶',onClick:()=>toggleFavorite('projects',p.id)},
+      { type: 'item', label: '编辑标签…', onClick: () => setTagEdit({ target: { kind: 'project', id: p.id }, name: p.name }) },
       { type: 'group', label: '连到项目…', disabled: !linkTargets.length || !canvasScope, items: linkTargets },
       { type: 'group', label: '移到项目…', disabled: !destinations.length || !canvasScope, items: destinations },
       { type: 'item', label: '导出完整项目资料包…', onClick: () => exportLibrary(p) },
@@ -734,6 +761,9 @@ export default function App() {
     openAt(e, [
       { type: 'item', label: '打开', onClick: () => activeProject && openBoard(activeProject.id, b.id) },
       {type:'item',label:favorites.boards.includes(b.id)?'取消收藏置顶':'收藏并置顶',onClick:()=>toggleFavorite('boards',b.id)},
+      { type: 'item', label: '编辑标签…', onClick: () => {
+        if (activeProject) setTagEdit({ target: { kind: 'board', id: b.id, projectId: activeProject.id }, name: b.name });
+      } },
       { type:'item',label:'导入对话生成树…',onClick:()=>activeProject&&leaveKnowledge(()=>setImportTarget({projectId:activeProject.id,boardId:b.id,boardName:b.name})) },
       {
         type: 'item',
@@ -831,6 +861,8 @@ export default function App() {
         onMenu={appMenu}
         onHome={() => navigateProject(null)}
         onSettings={() => setSettingsOpen(true)}
+        filter={!knowledgeOpen && <TagFilter key={filterKey} tags={tags} active={tagFilter}
+          onChange={ids => setTagFilters(old => ({ ...old, [filterKey]: ids }))} />}
         onToggleIndex={knowledgeOpen ? () => setKnowledgeIndexCollapsed(value => !value) : undefined}
         indexCollapsed={knowledgeIndexCollapsed}
         path={<ProjectPath path={knowledgeOpen ? [] : projectTrail} board={knowledgeOpen ? '知识库' : activeBoard?.name} onNavigate={navigateProject} />}
@@ -846,6 +878,13 @@ export default function App() {
             onChange={onCanvasChange} onFlush={flushBoards} saveState={saveState}
             edgeStyle={settings.edgeStyle ?? 'curved'}
             guessMath={settings.guessMath}
+            tags={tags}
+            tagStore={layout.tags}
+            tagFilter={tagFilter}
+            onEditTags={node => setTagEdit({
+              target: { kind: 'node', id: node.id, boardId: activeBoard.id, projectId: activeBoard.projectId },
+              name: node.title, colorMark: colorTag(node.color),
+            })}
             focusNode={focusNode && activeBoard.nodes.some((n) => n.id === focusNode.id) ? focusNode : null}
           />
         ) : (
@@ -854,8 +893,10 @@ export default function App() {
             scope={canvasScope || root || ''}
             folderId={activeProject?.id ?? null}
             folderName={activeProject?.name}
-            tiles={tiles}
+            tiles={visibleTiles}
             relations={layout.relations}
+            tags={tags}
+            filtering={tagFilter.size > 0}
             disabled={busy || syncLocked || !!editing}
             onOpen={tile => {
               if (tile.kind === 'project') navigateProject(tile.row.id);
@@ -863,6 +904,7 @@ export default function App() {
             }}
             onPlace={placeTile}
             onConnect={relation => relateProjects(relation, true)}
+            onLabel={(relation, label) => saveCatalog(() => api.projectCanvasLabel(activeProject?.id ?? null, relation, label, canvasScope))}
             onRelationMenu={(event, relation) => openAt(event, [
               { type: 'item', label: '删除连线', danger: true, onClick: () => relateProjects(relation, false) },
             ], true)}
@@ -902,6 +944,10 @@ export default function App() {
         onRestored={(board) => {pendingBoards.current.delete(board.id);setActiveBoard(board);setBoardGeneration(n=>n+1);}}
       />
       <ShortcutsHelp open={helpOpen} platform={platform} onClose={() => setHelpOpen(false)} />
+      {tagEdit && <TagEditor key={tagKey(tagEdit.target)} title={tagEdit.name} tags={tags}
+        assigned={assignedTags(layout.tags, tagEdit.target)} colorMark={tagEdit.colorMark}
+        onClose={() => setTagEdit(undefined)}
+        onSave={(ids, newTags) => saveTagDraft(tagEdit.target, ids, newTags)} />}
       {settingsOpen && (
         <SettingsPanel settings={settings} platform={platform} storageRoot={root} storageBusy={busy || syncLocked || knowledgeEditing.current} onChooseStorage={chooseDir} onChange={patchSettings} onClose={() => setSettingsOpen(false)} />
       )}

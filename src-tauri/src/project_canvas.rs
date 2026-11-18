@@ -7,6 +7,8 @@ use std::{
     path::Path,
 };
 
+pub(crate) mod tags;
+
 pub(crate) const FILE: &str = "project-canvas.json";
 const MAX_FILE_BYTES: u64 = 16 * 1024 * 1024;
 
@@ -36,11 +38,13 @@ pub(crate) struct Placement {
     position: Option<Position>,
 }
 
-#[derive(Clone, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 struct Relation {
     from: String,
     to: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    label: Option<String>,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
@@ -51,8 +55,10 @@ pub struct Layout {
     projects: BTreeMap<String, Placement>,
     #[serde(default)]
     boards: BTreeMap<String, BTreeMap<String, Position>>,
-    #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
-    relations: BTreeSet<Relation>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    relations: Vec<Relation>,
+    #[serde(default, skip_serializing_if = "tags::TagStore::is_empty")]
+    pub(crate) tags: tags::TagStore,
 }
 
 impl Default for Layout {
@@ -61,7 +67,8 @@ impl Default for Layout {
             version: 1,
             projects: BTreeMap::new(),
             boards: BTreeMap::new(),
-            relations: BTreeSet::new(),
+            relations: Vec::new(),
+            tags: tags::TagStore::default(),
         }
     }
 }
@@ -95,6 +102,7 @@ impl Layout {
         self.boards.retain(|id, _| ids.contains(id));
         self.relations
             .retain(|edge| ids.contains(&edge.from) && ids.contains(&edge.to));
+        self.tags.retain_projects(ids);
         for placement in self.projects.values_mut() {
             if placement
                 .parent_id
@@ -111,6 +119,7 @@ impl Layout {
             positions.retain(|id, _| owners.get(id) == Some(owner));
             !positions.is_empty()
         });
+        self.tags.retain_boards(owners);
     }
 
     pub(crate) fn bytes(&self) -> Result<Vec<u8>, String> {
@@ -154,14 +163,16 @@ impl Layout {
                 point.check()?;
             }
         }
+        let mut pairs = BTreeSet::new();
         for edge in &self.relations {
             storage::safe_id(&edge.from)?;
             storage::safe_id(&edge.to)?;
-            if edge.from == edge.to {
-                return Err("项目连线不能指向自身".into());
+            if edge.from == edge.to || !pairs.insert((&edge.from, &edge.to)) {
+                return Err("项目连线的端点无效或重复".into());
             }
+            relation_label(edge.label.as_deref().unwrap_or(""))?;
         }
-        Ok(())
+        self.tags.validate()
     }
 }
 
@@ -258,12 +269,26 @@ fn move_project(
     Ok(layout)
 }
 
-fn relate(
+fn relation_label(value: &str) -> Result<Option<String>, String> {
+    let value = value.trim();
+    if value.chars().count() > 240 || value.chars().any(char::is_control) {
+        return Err("连线名称最多 240 个字符，请写在同一行".into());
+    }
+    Ok((!value.is_empty()).then(|| value.to_owned()))
+}
+
+enum RelationChange {
+    Add,
+    Remove,
+    Label(Option<String>),
+}
+
+fn change_relation(
     root: &Path,
     project: Option<&str>,
     from: String,
     to: String,
-    present: bool,
+    change: RelationChange,
 ) -> Result<Layout, String> {
     let index = storage::read_index(root)?;
     require_project(&index, &from)?;
@@ -272,15 +297,24 @@ fn relate(
     if from == to || layout.parent(&from) != project || layout.parent(&to) != project {
         return Err("请选择同一画布上的两个项目建立连线".into());
     }
-    let relation = Relation { from, to };
-    let changed = if present {
-        layout.relations.insert(relation)
-    } else {
-        layout.relations.remove(&relation)
-    };
-    if changed {
-        write(root, &layout)?;
+    let position = layout
+        .relations
+        .iter()
+        .position(|edge| edge.from == from && edge.to == to);
+    match (change, position) {
+        (RelationChange::Add, None) => layout.relations.push(Relation {
+            from,
+            to,
+            label: None,
+        }),
+        (RelationChange::Remove, Some(index)) => {
+            layout.relations.remove(index);
+        }
+        (RelationChange::Label(label), Some(index)) => layout.relations[index].label = label,
+        (RelationChange::Label(_), None) => return Err("项目连线已移除".into()),
+        _ => return Ok(layout),
     }
+    write(root, &layout)?;
     Ok(layout)
 }
 
@@ -415,7 +449,32 @@ pub fn project_canvas_relate(
     let _guard = sync::IO_LOCK.lock().map_err(|e| e.to_string())?;
     let root = commands::root()?;
     safety::ensure_scope(&root, &expected_scope)?;
-    relate(&root, project_id.as_deref(), from, to, present)
+    let change = if present {
+        RelationChange::Add
+    } else {
+        RelationChange::Remove
+    };
+    change_relation(&root, project_id.as_deref(), from, to, change)
+}
+
+#[tauri::command]
+pub fn project_canvas_label(
+    project_id: Option<String>,
+    from: String,
+    to: String,
+    label: String,
+    expected_scope: String,
+) -> Result<Layout, String> {
+    let _guard = sync::IO_LOCK.lock().map_err(|e| e.to_string())?;
+    let root = commands::root()?;
+    safety::ensure_scope(&root, &expected_scope)?;
+    change_relation(
+        &root,
+        project_id.as_deref(),
+        from,
+        to,
+        RelationChange::Label(relation_label(&label)?),
+    )
 }
 
 #[cfg(test)]
