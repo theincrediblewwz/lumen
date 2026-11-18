@@ -3,6 +3,7 @@ import { useEffect, useId, useRef, useState, type MouseEvent, type PointerEvent 
 import type { Viewport } from '../api';
 import { fitToBounds, IDENTITY_VIEWPORT, screenToWorld, worldToScreen, zoomByFactor, type Vec2 } from '../canvas/CanvasEngine';
 import { bentGeometry, borderPoint, edgeGeometry, straightPath, type Box } from '../canvas/geometry';
+import { coverPreset } from '../projectCanvas/covers';
 import { readProjectView, saveProjectView, TILE_HEIGHT, TILE_WIDTH, type CatalogTile, type ProjectRelation } from '../projectCanvas/layout';
 import type { CatalogTag } from '../projectCanvas/tags';
 import { EdgeLabel } from './EdgeLabel';
@@ -346,6 +347,8 @@ export function ProjectCanvas({ scope, folderId, folderName, tiles, relations, t
           const moving = dragged?.id === tile.row.id && dragged.kind === tile.kind;
           const point = tilePosition(tile);
           const folder = tile.kind === 'project';
+          const cover = coverPreset(tile.coverId);
+          const artwork = cover && <img className="project-cover-image" src={cover.url} alt="" draggable={false} loading="lazy" decoding="async" />;
           return (
             <div
               key={`${tile.kind}:${tile.row.id}`}
@@ -362,7 +365,9 @@ export function ProjectCanvas({ scope, folderId, folderName, tiles, relations, t
                 onKeyDown={event => { if (event.key === 'ContextMenu' || (event.shiftKey && event.key === 'F10')) event.currentTarget.dispatchEvent(new window.MouseEvent('contextmenu', { bubbles: true })); }}
               >
                 <span className="project-tile-visual" aria-hidden="true" data-drop-project={folder ? tile.row.id : undefined}>
-                  {folder ? <span className="project-folder-icon" /> : <span className="project-board-icon"><GitFork size={43} strokeWidth={1.35} /></span>}
+                  {folder ? <span className="project-folder-icon">{artwork}</span> : <span className="project-board-icon">
+                    {artwork ?? <GitFork size={43} strokeWidth={1.35} />}
+                  </span>}
                 </span>
                 <span className="project-tile-title">{tile.row.name}</span>
                 <TagDots tags={tags.filter(tag => tile.tagIds.includes(tag.id))} />

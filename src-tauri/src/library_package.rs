@@ -1,5 +1,6 @@
 //! Streaming content archives. Restore creates a new library; never merges into or replaces the live one.
 use crate::{board_operations as safety, commands, documents, knowledge, project_canvas, storage, sync};
+use crate::project_canvas::covers;
 use serde::de::{DeserializeSeed, IgnoredAny, MapAccess, SeqAccess, Visitor};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -13,6 +14,13 @@ use unicode_normalization::UnicodeNormalization;
 const SCHEMA: &str = "lumen.library-package/v1";
 const MANIFEST: &str = "lumen-library.json";
 const MAX_TOTAL: u64 = 1024 * 1024 * 1024 * 1024;
+const LIBRARY_FILES: [&str; 5] = [
+    "index.json",
+    "knowledge/library.json",
+    "reading-preferences.json",
+    project_canvas::FILE,
+    covers::FILE,
+];
 fn err(error: impl std::fmt::Display) -> String {
     error.to_string()
 }
@@ -346,6 +354,11 @@ fn collect(
         }
         files.insert(project_canvas::FILE.into(), Source::Bytes(layout.bytes()?));
     }
+    let mut selected_covers = covers::read(root)?;
+    covers::retain(&mut selected_covers, &project_ids, &owners);
+    if !selected_covers.is_empty() {
+        files.insert(covers::FILE.into(), Source::Bytes(covers::bytes(&selected_covers)?));
+    }
     let path = safety::checked_path(root, "knowledge/library.json")?;
     if path.exists() {
         if project.is_none() {
@@ -627,15 +640,14 @@ fn valid_library(root: &Path, files: &BTreeMap<String, Entry>) -> Result<(), Str
             boards.insert(item.id.clone(), serde_json::to_vec(&board).map_err(err)?);
         }
     }
+    let mut selected_covers = covers::read(root)?;
+    let cover_count = selected_covers.len();
+    covers::retain(&mut selected_covers, &seen, &owners);
+    if selected_covers.len() != cover_count {
+        return Err("资料包的封面记录不属于包内项目或白板".into());
+    }
     for path in files.keys() {
-        if [
-            "index.json",
-            "knowledge/library.json",
-            "reading-preferences.json",
-            project_canvas::FILE,
-        ]
-        .contains(&path.as_str())
-        {
+        if LIBRARY_FILES.contains(&path.as_str()) {
             continue;
         }
         let parts = path.split('/').collect::<Vec<_>>();
@@ -730,10 +742,8 @@ pub(crate) fn restore_at(source: &Path, parent: &Path) -> Result<Value, String> 
             return Err("解压内容超过1TiB处理预算".into());
         }
         let segments = key.split('/').collect::<Vec<_>>();
-        let allowed = key == "index.json"
-            || key == "knowledge/library.json"
-            || key == "reading-preferences.json"
-            || key == project_canvas::FILE
+        let library_file = LIBRARY_FILES.contains(&key);
+        let allowed = library_file
             || segments.len() == 2 && segments[1] == "project.json"
             || segments.len() >= 3 && segments[1] == ".conversation-imports"
             || segments.len() == 3
@@ -750,14 +760,7 @@ pub(crate) fn restore_at(source: &Path, parent: &Path) -> Result<Value, String> 
         if !allowed {
             return Err("资料包含连接配置或不支持的数据路径".into());
         }
-        if ![
-            "index.json",
-            "knowledge/library.json",
-            "reading-preferences.json",
-            project_canvas::FILE,
-        ]
-        .contains(&key)
-        {
+        if !library_file {
             storage::safe_id(segments[0])?;
         }
     }

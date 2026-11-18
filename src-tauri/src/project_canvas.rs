@@ -7,6 +7,7 @@ use std::{
     path::Path,
 };
 
+pub(crate) mod covers;
 pub(crate) mod tags;
 
 pub(crate) const FILE: &str = "project-canvas.json";
@@ -204,6 +205,21 @@ fn require_project(index: &storage::IndexFile, id: &str) -> Result<(), String> {
     }
 }
 
+fn require_board(
+    root: &Path,
+    index: &storage::IndexFile,
+    project: &str,
+    id: &str,
+) -> Result<(), String> {
+    require_project(index, project)?;
+    storage::safe_id(id)?;
+    if storage::read_project(root, project)?.boards.iter().any(|board| board.id == id) {
+        Ok(())
+    } else {
+        Err("白板已不在此项目中".into())
+    }
+}
+
 pub(crate) fn create_child(
     root: &Path,
     name: &str,
@@ -345,15 +361,7 @@ fn place(
         }
         TileKind::Board => {
             let owner = project.ok_or("首页只能放项目")?;
-            require_project(&index, owner)?;
-            storage::safe_id(id)?;
-            if !storage::read_project(root, owner)?
-                .boards
-                .iter()
-                .any(|b| b.id == id)
-            {
-                return Err("白板已不在此项目中".into());
-            }
+            require_board(root, &index, owner, id)?;
             layout
                 .boards
                 .entry(owner.into())
@@ -408,7 +416,11 @@ pub fn project_canvas_read() -> Result<serde_json::Value, String> {
     let _guard = sync::IO_LOCK.lock().map_err(|e| e.to_string())?;
     let root = commands::root()?;
     let layout = read(&root, &storage::read_index(&root)?)?;
-    Ok(serde_json::json!({ "layout": layout, "scope": safety::scope(&root)? }))
+    let scope = safety::scope(&root)?;
+    Ok(match covers::read(&root) {
+        Ok(covers) => serde_json::json!({ "layout": layout, "scope": scope, "covers": covers }),
+        Err(error) => serde_json::json!({ "layout": layout, "scope": scope, "coverError": error }),
+    })
 }
 
 #[tauri::command]

@@ -1,6 +1,7 @@
 import { invoke } from '@tauri-apps/api/core';
 import { open } from '@tauri-apps/plugin-dialog';
 import type { ProjectLayout, ProjectLayoutSnapshot, ProjectRelation } from './projectCanvas/layout';
+import type { CoverStore, CoverTarget } from './projectCanvas/covers';
 import type { TagDefinition, TagTarget } from './projectCanvas/tags';
 
 /* ── 与 src-tauri/src/storage.rs 的数据模型一一对应 ── */
@@ -125,6 +126,8 @@ export const api = {
     invoke<ProjectLayout>('project_canvas_label', { projectId, from: relation.from, to: relation.to, label, expectedScope }),
   projectCanvasTags: (target: TagTarget, assigned: string[], newTags: Record<string, TagDefinition>, expectedScope: string) =>
     invoke<ProjectLayout>('project_canvas_tags', { target, assigned, newTags, expectedScope }),
+  projectCanvasCover: (target: CoverTarget, coverId: string | null, expectedCoverId: string | null, expectedScope: string) =>
+    invoke<CoverStore>('project_canvas_cover', { target, coverId, expectedCoverId, expectedScope }),
 
   boardsList: (projectId: string) => invoke<BoardMeta[]>('boards_list', { projectId }),
   boardCreate: (projectId: string, name: string) =>

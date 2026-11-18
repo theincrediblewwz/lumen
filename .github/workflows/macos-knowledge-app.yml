@@ -87,6 +87,7 @@ jobs:
           node scripts/material-pages-qa.cjs
           node scripts/project-canvas-qa.cjs
           node scripts/catalog-tags-qa.cjs
+          node scripts/project-covers-qa.cjs
 
       - name: Install universal Mac Rust targets
         run: rustup toolchain install 1.95.0 --profile minimal --target aarch64-apple-darwin,x86_64-apple-darwin

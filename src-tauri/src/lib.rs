@@ -196,6 +196,7 @@ pub fn run() {
             project_canvas::project_canvas_relate,
             project_canvas::project_canvas_label,
             project_canvas::tags::project_canvas_tags,
+            project_canvas::covers::project_canvas_cover,
             commands::boards_list,
             commands::board_create,
             commands::board_load,

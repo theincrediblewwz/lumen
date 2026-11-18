@@ -74,16 +74,18 @@ if (fixtureParams.has('catalogDesignQA')) {
   };
   fixtureLayout.boards.project = { board: { x: 339, y: 215 }, 'board-two': { x: 601, y: 114 } };
 }
+let fixtureCovers = {};
 if (keepNavigation) {
   const saved = JSON.parse(localStorage.getItem('lumen.fixture-navigation') ?? 'null');
   if (saved) {
     fixtureProjects = saved.projects;
     fixtureBoards.splice(0, fixtureBoards.length, ...saved.boards);
     fixtureLayout = saved.layout ?? fixtureLayout;
+    fixtureCovers = saved.covers ?? fixtureCovers;
   }
 }
 const saveNavigation = () => {
-  if (keepNavigation) localStorage.setItem('lumen.fixture-navigation', JSON.stringify({ projects: fixtureProjects, boards: fixtureBoards, layout: fixtureLayout }));
+  if (keepNavigation) localStorage.setItem('lumen.fixture-navigation', JSON.stringify({ projects: fixtureProjects, boards: fixtureBoards, layout: fixtureLayout, covers: fixtureCovers }));
 };
 const fixtureCanvasScope = () => 'project-canvas:' + storageRoot;
 window.__fixtureNavigationCalls=[];
@@ -181,7 +183,19 @@ window.__TAURI_INTERNALS__={metadata:{currentWindow:{label:'main'},currentWebvie
   if(command==='knowledge_export'&&fixtureParams.has('knowledgeDesignQA')){window.__fixtureExports.push(structuredClone(args));return;}
   if(command==='knowledge_import_read'&&fixtureParams.has('knowledgeDesignQA'))return structuredClone(library);
   if(command==='board_package_export'&&fixtureParams.has('navigationQA')){window.__fixtureExports.push(structuredClone(args));return;}
-  if (command === 'project_canvas_read') return { scope: fixtureCanvasScope(), layout: structuredClone(fixtureLayout) };
+  if (command === 'project_canvas_read') return { scope: fixtureCanvasScope(), layout: structuredClone(fixtureLayout), covers: structuredClone(fixtureCovers) };
+  if (command === 'project_canvas_cover') {
+    if (args.expectedScope !== fixtureCanvasScope()) throw Error('资料库已变化');
+    if (window.__fixtureNavigationFailure) throw Error('合成磁盘写入失败');
+    const { target, coverId, expectedCoverId } = args;
+    const key = target.kind === 'project' ? target.id : `${target.projectId}/${target.id}`;
+    const current = fixtureCovers[key] ?? null;
+    if (current !== coverId && current !== expectedCoverId) throw Error('这个封面已在其他窗口更改');
+    if (coverId) fixtureCovers[key] = coverId;
+    else delete fixtureCovers[key];
+    saveNavigation();
+    return structuredClone(fixtureCovers);
+  }
   if (command === 'project_canvas_label') {
     if (args.expectedScope !== fixtureCanvasScope()) throw Error('资料库已变化');
     if (window.__fixtureNavigationFailure) throw Error('合成磁盘写入失败');

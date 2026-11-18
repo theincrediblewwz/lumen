@@ -3,6 +3,7 @@ import { api, pickStorageDir, type AppInfo, type BoardEdge, type BoardFile, type
 import { ContextMenu, type ContextMenuState } from './components/ContextMenu';
 import { TitleBar } from './components/TitleBar';
 import { ProjectCanvas } from './components/ProjectCanvas';
+import { ProjectCoverPicker } from './components/ProjectCoverPicker';
 import { ProjectPath } from './components/ProjectPath';
 import { TagEditor, TagFilter } from './components/CatalogTags';
 import { ConfirmAction } from './components/ConfirmAction';
@@ -28,10 +29,12 @@ import {exportLibraryPackage,restoreLibraryPackage,applyLibraryPreferences} from
 
 import { loadFavorites, saveFavorites } from './favorites';
 import type { BoardAppearance } from './canvas/presentation';
-import { catalogTiles, EMPTY_PROJECT_LAYOUT, parentProject, projectPath, type CatalogTile, type ProjectLayout, type ProjectRelation } from './projectCanvas/layout';
+import { catalogTiles, EMPTY_PROJECT_LAYOUT, parentProject, projectPath, type CatalogTile, type ProjectLayoutSnapshot, type ProjectRelation } from './projectCanvas/layout';
+import { EMPTY_COVERS, readCover, type CoverTarget } from './projectCanvas/covers';
 import { allTags, assignedTags, colorTag, NO_TAGS, tagKey, type TagDefinition, type TagTarget } from './projectCanvas/tags';
 
 type Phase = 'loading' | 'setup' | 'ready';
+type CoverEdit = { target: CoverTarget; name: string; current: string | null; scope: string; trigger?: HTMLElement | null };
 
 type Editing =
   | null
@@ -74,6 +77,8 @@ export default function App() {
   const [root, setRoot] = useState<string | null>(null);
   const [projects, setProjects] = useState<ProjectMeta[]>([]);
   const [layout, setLayout] = useState(EMPTY_PROJECT_LAYOUT);
+  const [covers, setCovers] = useState(EMPTY_COVERS);
+  const [coverEdit, setCoverEdit] = useState<CoverEdit>();
   const [canvasScope, setCanvasScope] = useState('');
   const [tagFilters, setTagFilters] = useState<Record<string, string[]>>({});
   const [tagEdit, setTagEdit] = useState<{ target: TagTarget; name: string; colorMark?: string }>();
@@ -150,7 +155,7 @@ export default function App() {
   const editRef = useRef<HTMLInputElement>(null);
   const mac = /darwin|mac/i.test(platform);
   const projectTrail = useMemo(() => projectPath(projects, layout, activeProject?.id ?? null), [projects, layout, activeProject?.id]);
-  const tiles = useMemo(() => catalogTiles(projects, boards, layout, activeProject?.id ?? null, favorites), [projects, boards, layout, activeProject?.id, favorites]);
+  const tiles = useMemo(() => catalogTiles(projects, boards, layout, activeProject?.id ?? null, favorites, covers), [projects, boards, layout, activeProject?.id, favorites, covers]);
   const tags = useMemo(() => allTags(layout.tags), [layout.tags]);
   const filterKey = JSON.stringify([canvasScope || root, activeBoard ? 'board' : 'project', activeBoard?.id ?? activeProject?.id ?? null]);
   const filterIds = tagFilters[filterKey] ?? NO_TAGS;
@@ -160,18 +165,20 @@ export default function App() {
   const readCatalog = useCallback(async () => {
     const [rows, placement] = await Promise.all([
       api.projectsList(),
-      api.projectCanvasRead().catch(error => {
+      api.projectCanvasRead().catch((error): ProjectLayoutSnapshot => {
         setError(`项目画布未能读取：${String(error)}`);
         return { layout: EMPTY_PROJECT_LAYOUT, scope: '' };
       }),
     ]);
-    return { rows, ...placement };
+    if (placement.coverError) setError(`封面记录未能读取：${placement.coverError}`);
+    return { rows, ...placement, covers: placement.covers ?? EMPTY_COVERS };
   }, []);
 
   const refreshProjects = useCallback(async () => {
     const current = await readCatalog();
     setProjects(current.rows);
     setLayout(current.layout);
+    setCovers(current.covers);
     setCanvasScope(current.scope);
   }, [readCatalog]);
 
@@ -246,7 +253,7 @@ export default function App() {
         const board = current && nextBoards.some(b => b.id === current.id)
           ? await api.boardLoad(current.projectId, current.id) : null;
         if (request !== generation || route !== routeGeneration.current) return;
-        setProjects(catalog.rows); setLayout(catalog.layout); setCanvasScope(catalog.scope);
+        setProjects(catalog.rows); setLayout(catalog.layout); setCovers(catalog.covers); setCanvasScope(catalog.scope);
         activeProjectRef.current = folder; setActiveProject(folder); setBoards(nextBoards);
         activeBoardRef.current = board; setActiveBoard(board); setBoardGeneration(n => n + 1);
       }catch(error){setError(String(error));throw error;}
@@ -365,7 +372,7 @@ export default function App() {
         ]);
         const folder = catalog.rows.find(row => row.id === projectId);
         if (!folder || !nextBoards.some(row => row.id === boardId)) throw new Error('这块白板已不在资料库中。');
-        setProjects(catalog.rows); setLayout(catalog.layout); setCanvasScope(catalog.scope);
+        setProjects(catalog.rows); setLayout(catalog.layout); setCovers(catalog.covers); setCanvasScope(catalog.scope);
         activeProjectRef.current = folder; setActiveProject(folder); setBoards(nextBoards);
         activeBoardRef.current = nextBoard; setActiveBoard(nextBoard);
         if (nodeId) setTagFilters(old => ({ ...old, [JSON.stringify([catalog.scope, 'board', boardId])]: [] }));
@@ -560,12 +567,12 @@ export default function App() {
     setLayout(await api.projectCanvasRelate(activeProject?.id ?? null, relation, present, canvasScope));
   });
 
-  const saveCatalog = async (apply: () => Promise<ProjectLayout>) => {
+  const saveCatalog = async (apply: () => Promise<void>) => {
     let saved = false;
     let error = '有一项保存尚未完成，请稍后再试。';
     await withBusy(async () => {
       if (!canvasScope) throw new Error('请先恢复项目画布，再保存此更改。');
-      setLayout(await apply());
+      await apply();
       saved = true;
     }, message => { error = message; });
     if (!saved) throw new Error(error.replace(/^Error:\s*/, ''));
@@ -573,7 +580,20 @@ export default function App() {
 
   const saveTagDraft = (target: TagTarget, assigned: string[], newTags: Record<string, TagDefinition>) => saveCatalog(async () => {
     if (target.kind === 'node') await flushBoards();
-    return api.projectCanvasTags(target, assigned, newTags, canvasScope);
+    setLayout(await api.projectCanvasTags(target, assigned, newTags, canvasScope));
+  });
+
+  const saveCover = (edit: CoverEdit, coverId: string | null) => saveCatalog(async () => {
+    if (edit.scope !== canvasScope) throw Error('资料库已切换，请重新选择封面');
+    try {
+      const next = await api.projectCanvasCover(edit.target, coverId, edit.current, edit.scope);
+      routeGeneration.current++;
+      setCovers(next);
+    } catch (error) {
+      const latest = await api.projectCanvasRead().catch(() => undefined);
+      if (latest?.scope === edit.scope && latest.covers) setCovers(latest.covers);
+      throw error;
+    }
   });
 
   const removeProject = (p: ProjectMeta) => setDeletion({
@@ -724,6 +744,14 @@ export default function App() {
       { type: 'item', label: '设置…', onClick: () => setSettingsOpen(true) },
     ]);
 
+  const coverMenuItem = (event: React.MouseEvent, target: CoverTarget, name: string) => {
+    const trigger = event.currentTarget.closest('.project-tile')?.querySelector<HTMLElement>('.project-tile-open');
+    return {
+      type: 'item' as const, label: '更换封面…', disabled: !canvasScope,
+      onClick: () => setCoverEdit({ target, name, current: readCover(covers, target), scope: canvasScope, trigger }),
+    };
+  };
+
   const projectItemMenu = (e: React.MouseEvent, p: ProjectMeta) => {
     const sourceParent = parentProject(layout, p.id);
     const destinations = projects.flatMap(project => {
@@ -742,6 +770,7 @@ export default function App() {
     const hasChildren = projects.some(row => parentProject(layout, row.id) === p.id);
     openAt(e, [
       { type: 'item', label: '打开', onClick: () => navigateProject(p.id) },
+      coverMenuItem(e, { kind: 'project', id: p.id }, p.name),
       {type:'item',label:favorites.projects.includes(p.id)?'取消收藏置顶':'收藏并置顶',onClick:()=>toggleFavorite('projects',p.id)},
       { type: 'item', label: '编辑标签…', onClick: () => setTagEdit({ target: { kind: 'project', id: p.id }, name: p.name }) },
       { type: 'group', label: '连到项目…', disabled: !linkTargets.length || !canvasScope, items: linkTargets },
@@ -760,6 +789,7 @@ export default function App() {
   const boardItemMenu = (e: React.MouseEvent, b: BoardMeta) =>
     openAt(e, [
       { type: 'item', label: '打开', onClick: () => activeProject && openBoard(activeProject.id, b.id) },
+      ...(activeProject ? [coverMenuItem(e, { kind: 'board', projectId: activeProject.id, id: b.id }, b.name)] : []),
       {type:'item',label:favorites.boards.includes(b.id)?'取消收藏置顶':'收藏并置顶',onClick:()=>toggleFavorite('boards',b.id)},
       { type: 'item', label: '编辑标签…', onClick: () => {
         if (activeProject) setTagEdit({ target: { kind: 'board', id: b.id, projectId: activeProject.id }, name: b.name });
@@ -897,14 +927,16 @@ export default function App() {
             relations={layout.relations}
             tags={tags}
             filtering={tagFilter.size > 0}
-            disabled={busy || syncLocked || !!editing}
+            disabled={busy || syncLocked || !!editing || !!coverEdit}
             onOpen={tile => {
               if (tile.kind === 'project') navigateProject(tile.row.id);
               else if (activeProject) openBoard(activeProject.id, tile.row.id);
             }}
             onPlace={placeTile}
             onConnect={relation => relateProjects(relation, true)}
-            onLabel={(relation, label) => saveCatalog(() => api.projectCanvasLabel(activeProject?.id ?? null, relation, label, canvasScope))}
+            onLabel={(relation, label) => saveCatalog(async () => {
+              setLayout(await api.projectCanvasLabel(activeProject?.id ?? null, relation, label, canvasScope));
+            })}
             onRelationMenu={(event, relation) => openAt(event, [
               { type: 'item', label: '删除连线', danger: true, onClick: () => relateProjects(relation, false) },
             ], true)}
@@ -944,6 +976,12 @@ export default function App() {
         onRestored={(board) => {pendingBoards.current.delete(board.id);setActiveBoard(board);setBoardGeneration(n=>n+1);}}
       />
       <ShortcutsHelp open={helpOpen} platform={platform} onClose={() => setHelpOpen(false)} />
+      {coverEdit && <ProjectCoverPicker name={coverEdit.name} kind={coverEdit.target.kind} current={coverEdit.current}
+        onClose={() => {
+          const { trigger } = coverEdit;
+          setCoverEdit(undefined);
+          requestAnimationFrame(() => trigger?.focus({ preventScroll: true }));
+        }} onSave={id => saveCover(coverEdit, id)} />}
       {tagEdit && <TagEditor key={tagKey(tagEdit.target)} title={tagEdit.name} tags={tags}
         assigned={assignedTags(layout.tags, tagEdit.target)} colorMark={tagEdit.colorMark}
         onClose={() => setTagEdit(undefined)}
