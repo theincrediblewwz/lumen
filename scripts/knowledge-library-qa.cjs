@@ -14,8 +14,8 @@ const more = () => page.getByLabel('知识库更多操作', { exact: true }).cli
 async function open(extra = '') {
   await page.goto(url + extra);
   await page.getByRole('button', { name: '桌面夹', exact: true }).click();
-  await page.locator('.pane-boards .list-item').filter({ hasText: '注意力学习' }).click();
-  await page.getByRole('button', { name: '知识库', exact: true }).click(); await reading().waitFor();
+  await page.locator('.project-tile.is-board').filter({ hasText: '注意力学习' }).click();
+  await page.getByRole('button', { name: '菜单', exact: true }).click(); await page.getByRole('menuitem', { name: '知识库', exact: true }).click(); await reading().waitFor();
 }
 async function theme(value) { await page.evaluate(async theme => { const { DEFAULT_SETTINGS, applySettings } = await import('/src/settings.ts'); applySettings({ ...DEFAULT_SETTINGS, theme, glass: false }, 'macos'); }, value); }
 async function capture(name) { await page.screenshot({ path: path.join(output, name + '.png'), animations: 'disabled' }); }
@@ -26,7 +26,7 @@ async function deepLink(entryId, revisionId, draft) { await page.evaluate(detail
   page = await browser.newPage({ viewport: { width: 1487, height: 1058 } }); page.setDefaultTimeout(16000);
   page.on('pageerror', e => errors.push(e.message));
   await open(); await theme('light'); await page.locator('.katex').first().waitFor();
-  assert.equal(await page.locator('.sidebar').isVisible(), false);
+  assert.equal(await page.locator('.project-canvas').count(), 0);
   assert.equal(await entries().count(), 6); assert.equal(await page.locator('.knowledge-entry[aria-pressed=true]').innerText(), '我的理解\n我怎样理解注意力');
   assert.equal(await page.locator('.knowledge-reference-bar').innerText(), '用于白板 · 注意力学习\n引用到白板\nAI引用：关闭');
   assert.equal(await page.locator('.math-error').count(), 0);
@@ -97,9 +97,9 @@ async function deepLink(entryId, revisionId, draft) { await page.evaluate(detail
   await more(); await page.getByRole('button', { name: '导入知识副本', exact: true }).click(); await page.getByRole('alertdialog').getByRole('button', { name: '取消', exact: true }).click(); assert.equal((await load()).library.entries.length, count);
   await more(); await page.getByRole('button', { name: '导入知识副本', exact: true }).click(); await page.getByRole('alertdialog').getByRole('button', { name: '确认', exact: true }).click(); await page.waitForFunction(count => JSON.parse(localStorage.getItem('lumen.fixture-knowledge-design')).entries.length === count * 2, count);
   checks.push('export reaches the native command; import cancellation preserves storage and approval adds independent copies');
-  await page.getByRole('button', { name: '收起侧栏', exact: true }).click(); assert.equal(await page.getByRole('complementary', { name: '知识索引', exact: true }).isVisible(), false);
-  await page.getByRole('button', { name: '返回白板', exact: true }).click(); assert.equal(await page.locator('.sidebar.has-boards').isVisible(), true); assert.equal(await page.locator('.node-card').count(), 1);
-  await page.reload(); await page.getByRole('button', { name: '知识库', exact: true }).click(); await reading().waitFor(); assert.equal((await load()).library.entries.length, count * 2);
+  await page.getByRole('button', { name: '收起知识索引', exact: true }).click(); assert.equal(await page.getByRole('complementary', { name: '知识索引', exact: true }).isVisible(), false);
+  await page.getByRole('button', { name: '返回白板', exact: true }).click(); assert.equal(await page.getByRole('navigation', { name: '项目路径' }).getByRole('button', { name: '桌面夹', exact: true }).isVisible(), true); assert.equal(await page.locator('.node-card').count(), 1);
+  await page.reload(); await page.getByRole('button', { name: '菜单', exact: true }).click(); await page.getByRole('menuitem', { name: '知识库', exact: true }).click(); await reading().waitFor(); assert.equal((await load()).library.entries.length, count * 2);
   assert.equal(await page.getByRole('button', { name: '引用到白板', exact: true }).count(), 0); checks.push('return restores original board navigation; saved knowledge survives reload and stays independent without a selected board');
   await open('&restrictedKnowledge=1'); await more(); await page.locator('.knowledge-global-policy').getByRole('radio', { name: '允许按问题检索', exact: true }).check(); await page.keyboard.press('Escape');
   assert.ok((await page.getByLabel('白板引用设置', { exact: true }).innerText()).includes('资料范围受限'));

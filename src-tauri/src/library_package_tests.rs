@@ -8,6 +8,65 @@ fn setup() -> (PathBuf, String, String) {
     let b = storage::create_board(&root, &p.id, "Board").unwrap();
     (root, p.id, b.id)
 }
+
+#[test]
+fn project_package_keeps_its_nested_subtree_positions_and_materials() {
+    let (root, parent, _) = setup();
+    let child = crate::project_canvas::create_child(&root, "Nested project", &parent).unwrap();
+    let grandchild = crate::project_canvas::create_child(&root, "Grandchild", &child.id).unwrap();
+    let other =
+        crate::project_canvas::create_child(&root, "Folder outside the subtree", &parent).unwrap();
+    let sibling = crate::project_canvas::create_child(&root, "Related folder", &child.id).unwrap();
+    let board = storage::create_board(&root, &grandchild.id, "Nested board").unwrap();
+    let doc = storage::write_doc(
+        &root,
+        &grandchild.id,
+        &board.id,
+        "Nested original",
+        "Original text",
+    )
+    .unwrap();
+    let layout_path = root.join(crate::project_canvas::FILE);
+    let mut raw: Value = serde_json::from_slice(&fs::read(&layout_path).unwrap()).unwrap();
+    raw["projects"][&child.id]["position"] = json!({ "x":135.5, "y":-42.0 });
+    raw["boards"][&grandchild.id][&board.id] = json!({ "x":70, "y":320 });
+    let complete_edge = json!({ "from": &grandchild.id, "to": &sibling.id });
+    raw["relations"] = json!([complete_edge.clone(), { "from": &child.id, "to": &other.id }]);
+    let original_layout = serde_json::to_vec(&raw).unwrap();
+    fs::write(&layout_path, &original_layout).unwrap();
+    let restores = root.with_extension("canvas-restores");
+    fs::create_dir(&restores).unwrap();
+    let archive = restores.join("nested.zip");
+    let result = export_at(&root, Some(&child.id), &archive, json!({}), |_, _| {}).unwrap();
+    assert_eq!(result["projects"], 3);
+    let restored = restore_at(&archive, &restores).unwrap();
+    let destination = PathBuf::from(restored["root"].as_str().unwrap());
+    let index = storage::read_index(&destination).unwrap();
+    let layout = crate::project_canvas::read(&destination, &index).unwrap();
+    assert_eq!(layout.parent(&child.id), None);
+    assert_eq!(layout.parent(&grandchild.id), Some(child.id.as_str()));
+    assert!(!destination.join(&other.id).exists());
+    let restored_layout: Value =
+        serde_json::from_slice(&fs::read(destination.join(crate::project_canvas::FILE)).unwrap())
+            .unwrap();
+    assert_eq!(
+        restored_layout["projects"][&child.id]["position"],
+        raw["projects"][&child.id]["position"]
+    );
+    assert_eq!(
+        restored_layout["boards"][&grandchild.id][&board.id]["y"].as_f64(),
+        Some(320.0)
+    );
+    assert_eq!(restored_layout["relations"], json!([complete_edge]));
+    let relative = PathBuf::from(grandchild.id).join(board.id).join(doc.path);
+    assert_eq!(
+        fs::read(destination.join(&relative)).unwrap(),
+        fs::read(root.join(relative)).unwrap()
+    );
+    assert_eq!(fs::read(layout_path).unwrap(), original_layout);
+    fs::remove_dir_all(root).unwrap();
+    fs::remove_dir_all(restores).unwrap();
+}
 fn library(board: &str) -> Value {
     let now = storage::now_iso();
     let entry = |id: &str| json!({"id":id,"kind":"understanding","title":id,"body":"Personal understanding","source":"Synthetic","authorship":"user","basis_json":"[]","created_at":now,"updated_at":now,"revision_id":format!("rev_{id}"),"archived":0});
@@ -49,7 +108,7 @@ fn whole_library_roundtrip_includes_projects_independent_knowledge_history_origi
         b"synthetic credential excluded",
     )
     .unwrap();
-    fs::create_dir(root.join(".lumen-sync")).unwrap();
+    fs::create_dir_all(root.join(".lumen-sync")).unwrap();
     fs::write(
         root.join(".lumen-sync/settings.json"),
         b"synthetic connection excluded",

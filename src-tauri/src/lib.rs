@@ -6,6 +6,7 @@ mod config;
 mod secrets;
 mod local_credentials;
 mod storage;
+mod project_canvas;
 mod documents;
 mod workspace_editing;
 mod portable_documents;
@@ -189,6 +190,10 @@ pub fn run() {
             commands::project_create,
             commands::project_delete,
             commands::project_rename,
+            project_canvas::project_canvas_read,
+            project_canvas::project_canvas_place,
+            project_canvas::project_canvas_move,
+            project_canvas::project_canvas_relate,
             commands::boards_list,
             commands::board_create,
             commands::board_load,

@@ -2,6 +2,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { api, pickStorageDir, type AppInfo, type BoardEdge, type BoardFile, type BoardMeta, type BoardNode, type ProjectMeta } from './api';
 import { ContextMenu, type ContextMenuState } from './components/ContextMenu';
 import { TitleBar } from './components/TitleBar';
+import { ProjectCanvas } from './components/ProjectCanvas';
+import { ProjectPath } from './components/ProjectPath';
 import { ConfirmAction } from './components/ConfirmAction';
 import { BoardCanvas } from './components/BoardCanvas';
 import { ReaderOverlay } from './components/ReaderOverlay';
@@ -23,16 +25,16 @@ import type { KnowledgeDraft } from './knowledge/store';
 import {exportBoardPackage,importBoardPackage} from './documents/client';
 import {exportLibraryPackage,restoreLibraryPackage,applyLibraryPreferences} from './libraryPackages';
 
-import { loadFavorites, saveFavorites, pinnedFirst } from './favorites';
+import { loadFavorites, saveFavorites } from './favorites';
 import type { BoardAppearance } from './canvas/presentation';
+import { catalogTiles, EMPTY_PROJECT_LAYOUT, parentProject, projectPath, type CatalogTile, type ProjectRelation } from './projectCanvas/layout';
 
 type Phase = 'loading' | 'setup' | 'ready';
 
-/** 内联编辑状态：在某个列表里就地新建 / 重命名 */
 type Editing =
   | null
-  | { kind: 'new-project' }
-  | { kind: 'new-board' }
+  | { kind: 'new-project'; parentId: string | null }
+  | { kind: 'new-board'; projectId: string }
   | { kind: 'rename-project'; id: string; value: string }
   | { kind: 'rename-board'; id: string; value: string };
 
@@ -69,10 +71,14 @@ export default function App() {
   const [platform, setPlatform] = useState<string>('');
   const [root, setRoot] = useState<string | null>(null);
   const [projects, setProjects] = useState<ProjectMeta[]>([]);
+  const [layout, setLayout] = useState(EMPTY_PROJECT_LAYOUT);
+  const [canvasScope, setCanvasScope] = useState('');
   const [boards, setBoards] = useState<BoardMeta[]>([]);
   const [activeProject, setActiveProject] = useState<ProjectMeta | null>(null);
   const [activeBoard, setActiveBoard] = useState<BoardFile | null>(null);
-  const [boardsExpanded, setBoardsExpanded] = useState(true);
+  const activeProjectRef = useRef(activeProject);
+  activeProjectRef.current = activeProject;
+  const routeGeneration = useRef(0);
   const [knowledgeOpen, setKnowledgeOpen] = useState(false);
   const [knowledgeIndexCollapsed, setKnowledgeIndexCollapsed] = useState(false);
   const knowledgeEditing = useRef(false);
@@ -119,7 +125,6 @@ export default function App() {
     if (!editing) setError(previous => previous === '当前写作尚未保存，请保存或取消写作后再关闭窗口。' ? null : previous);
   }, []);
 
-  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [fullscreen, setFullscreen] = useState(false);
   const [settings, setSettings] = useState<Settings>(() => loadSettings());
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -140,6 +145,26 @@ export default function App() {
   const [helpOpen, setHelpOpen] = useState(false);
   const editRef = useRef<HTMLInputElement>(null);
   const mac = /darwin|mac/i.test(platform);
+  const projectTrail = useMemo(() => projectPath(projects, layout, activeProject?.id ?? null), [projects, layout, activeProject?.id]);
+  const tiles = useMemo(() => catalogTiles(projects, boards, layout, activeProject?.id ?? null, favorites), [projects, boards, layout, activeProject?.id, favorites]);
+
+  const readCatalog = useCallback(async () => {
+    const [rows, placement] = await Promise.all([
+      api.projectsList(),
+      api.projectCanvasRead().catch(error => {
+        setError(`项目画布未能读取：${String(error)}`);
+        return { layout: EMPTY_PROJECT_LAYOUT, scope: '' };
+      }),
+    ]);
+    return { rows, ...placement };
+  }, []);
+
+  const refreshProjects = useCallback(async () => {
+    const current = await readCatalog();
+    setProjects(current.rows);
+    setLayout(current.layout);
+    setCanvasScope(current.scope);
+  }, [readCatalog]);
 
   /* 应用外观设置（主题 / 玻璃 / 动画）到 <html>；platform 变化后重跑
      （原生材质仅 macOS 启用，需知道平台才能正确决定 native/实色）。 */
@@ -201,21 +226,20 @@ export default function App() {
     let generation=0;
     const refresh=async()=>{
       const request=++generation;
+      const route = routeGeneration.current;
       try {
         await flushBoards();
-        const projects=await api.projectsList();
-        if(request!==generation)return;
-        setProjects(projects);
-        const current=activeBoardRef.current;
-        if(current) {
-          const project=projects.find(p=>p.id===current.projectId)??null;
-          setActiveProject(project);
-          const boards=project?await api.boardsList(project.id):[];
-          if(request!==generation)return;setBoards(boards);
-          const next=boards.some(b=>b.id===current.id)?await api.boardLoad(current.projectId,current.id):null;
-          if(request!==generation)return;
-          activeBoardRef.current=next;setActiveBoard(next);setBoardGeneration(n=>n+1);
-        }
+        const catalog = await readCatalog();
+        if (request !== generation || route !== routeGeneration.current) return;
+        const current = activeBoardRef.current;
+        const folder = catalog.rows.find(p => p.id === activeProjectRef.current?.id) ?? null;
+        const nextBoards = folder ? await api.boardsList(folder.id) : [];
+        const board = current && nextBoards.some(b => b.id === current.id)
+          ? await api.boardLoad(current.projectId, current.id) : null;
+        if (request !== generation || route !== routeGeneration.current) return;
+        setProjects(catalog.rows); setLayout(catalog.layout); setCanvasScope(catalog.scope);
+        activeProjectRef.current = folder; setActiveProject(folder); setBoards(nextBoards);
+        activeBoardRef.current = board; setActiveBoard(board); setBoardGeneration(n => n + 1);
       }catch(error){setError(String(error));throw error;}
     };
     const unregisterRefresh=registerLibraryRefresh(refresh);
@@ -239,7 +263,7 @@ export default function App() {
       }));
     });
     return()=>{disposed=true;unregisterRefresh();stops.forEach(stop=>stop());window.removeEventListener('lumen:sync-edit-lock',onLock);window.removeEventListener('lumen:library-changed',onChanged);};
-  },[flushBoards]);
+  },[flushBoards, readCatalog]);
 
   /* 启动：读平台信息 + 配置 */
   useEffect(() => {
@@ -252,14 +276,14 @@ export default function App() {
           return;
         }
         setRoot(cfg.storage_root);
-        setProjects(await api.projectsList());
+        await refreshProjects();
         setPhase('ready');
       })
       .catch((e: unknown) => {
         setError(String(e));
         setPhase('setup');
       });
-  }, []);
+  }, [refreshProjects]);
 
   /* 屏蔽 WebView 自带的原生右键菜单（刷新/打印/另存为…）。
      应用内的右键交互由各元素的 onContextMenu 显式弹出，不受影响。 */
@@ -316,40 +340,29 @@ export default function App() {
     }
   }, [editing]);
 
-  const refreshProjects = useCallback(async () => {
-    setProjects(await api.projectsList());
-  }, []);
   const refreshBoards = useCallback(async (projectId: string) => {
-    setBoards(await api.boardsList(projectId));
+    const rows = await api.boardsList(projectId);
+    if (activeProjectRef.current?.id === projectId) setBoards(rows);
   }, []);
 
   // ── AI 引用跳转（M5-6）：切到目标白板并高亮节点 ──
   const jumpTo = useCallback(
     (projectId: string, boardId: string, nodeId: string | null) =>
       leaveKnowledge(() => void withBusy(async () => {
-        // 若目标项目/白板不是当前的，切过去
+        routeGeneration.current++;
         await flushBoards();
-        setActiveBoard((prevBoard) => {
-          if (prevBoard && prevBoard.id === boardId) return prevBoard;
-          return prevBoard; // 实际加载在下面 async
-        });
-        const projs = await api.projectsList();
-        const proj = projs.find((p) => p.id === projectId) ?? null;
-        if (proj) {
-          setActiveProject(proj);
-          setBoards(await api.boardsList(projectId));
-        }
-        const bf = await api.boardLoad(projectId, boardId);
-        setActiveBoard(bf);
-        setSidebarCollapsed(true); // 给画布腾地方
-        // 等画布挂载后再定位（用 nonce 保证每次都触发）；无 nodeId 只切白板不高亮
-        if (nodeId) {
-          requestAnimationFrame(() =>
-            setFocusNode({ id: nodeId, nonce: Date.now() }),
-          );
-        }
+        const [catalog, nextBoards, nextBoard] = await Promise.all([
+          readCatalog(), api.boardsList(projectId), api.boardLoad(projectId, boardId),
+        ]);
+        const folder = catalog.rows.find(row => row.id === projectId);
+        if (!folder || !nextBoards.some(row => row.id === boardId)) throw new Error('这块白板已不在资料库中。');
+        setProjects(catalog.rows); setLayout(catalog.layout); setCanvasScope(catalog.scope);
+        activeProjectRef.current = folder; setActiveProject(folder); setBoards(nextBoards);
+        activeBoardRef.current = nextBoard; setActiveBoard(nextBoard);
+        setFocusNode(nodeId ? { id: nodeId, nonce: Date.now() } : null);
+        void api.snapshotCreate(projectId, boardId, false).catch(() => {});
       })),
-    [leaveKnowledge, flushBoards],
+    [leaveKnowledge, flushBoards, readCatalog],
   );
 
   useEffect(() => {
@@ -384,17 +397,7 @@ export default function App() {
   }, [jumpTo]);
 
   /* ── 打开白板：加载 board.json 到画布 ── */
-  const openBoard = useCallback(
-    (projectId: string, boardId: string) =>
-      leaveKnowledge(() => void withBusy(async () => {
-        // 打开前自动存一份快照（DESIGN §FR-8.4：去重、保留最近 20 份）；失败不阻断打开
-        await flushBoards();
-        api.snapshotCreate(projectId, boardId, false).catch(() => {});
-        const bf = await api.boardLoad(projectId, boardId);
-        setActiveBoard(bf);
-      })),
-    [leaveKnowledge, flushBoards],
-  );
+  const openBoard = (projectId: string, boardId: string) => jumpTo(projectId, boardId, null);
 
   /* ── 画布变更：本地即时更新 + 防抖落盘（DESIGN §6.5） ── */
   const onCanvasChange = useCallback(
@@ -413,6 +416,7 @@ export default function App() {
     if(document.querySelector('.board-canvas-live[aria-busy="true"]')){setError('请先完成正在进行的画布操作。');return;}
     if(document.querySelector('.document-editor-modal')){setError('请先保存并关闭Markdown编辑器，再切换白板或项目。');return;}
     if (busyRef.current) return;
+    if (syncLockRef.current) { setError('正在保存或同步，请稍后再试。'); return; }
     busyRef.current = true;
     setBusy(true);
     setError(null);
@@ -458,7 +462,9 @@ export default function App() {
       await ensureLibraryCanSwitch();
       await flushBoards();
       const cfg = await api.configSetRoot(picked);
+      routeGeneration.current++;
       setRoot(cfg.storage_root);
+      activeProjectRef.current = null;
       setActiveProject(null);
       activeBoardRef.current = null;
       setActiveBoard(null);
@@ -469,7 +475,6 @@ export default function App() {
       setPhase('ready');
     });
 
-  /* ── 提交内联编辑 ── */
   const commitEdit = async () => {
     if (editSubmitting.current || busyRef.current) return;
     const cur = editingRef.current;
@@ -481,15 +486,17 @@ export default function App() {
       const finish = () => { editingRef.current = null; setEditing(null); };
       if (cur.kind === 'new-project') {
         await withBoardEditLock(async () => {
-          const created = await api.projectCreate(name);
-          finish(); setProjects(rows => [...rows, created]);
-          activeBoardRef.current = null; setActiveBoard(null);
-          setActiveProject(created); setBoards([]); setBoardsExpanded(true);
+          if (cur.parentId && !canvasScope) throw new Error('请先恢复项目画布，再新建子项目。');
+          await api.projectCreate(name, cur.parentId, canvasScope || undefined);
+          finish();
+          await refreshProjects();
         });
       } else if (cur.kind === 'new-board') {
-        if (!activeProject) throw new Error('请先选择项目');
-        const created = await api.boardCreate(activeProject.id, name);
-        finish(); setBoards(rows => [...rows, created]);
+        await withBoardEditLock(async () => {
+          const created = await api.boardCreate(cur.projectId, name);
+          finish();
+          setBoards(rows => [...rows, created]);
+        });
       } else if (cur.kind === 'rename-project') {
         const renamed = await api.projectRename(cur.id, name);
         finish(); setProjects(rows => rows.map(row => row.id === cur.id ? renamed : row));
@@ -509,26 +516,46 @@ export default function App() {
     if (editingRef.current === cur) editRef.current?.focus();
   };
 
-  const selectProject = (p: ProjectMeta) =>
+  const navigateProject = (id: string | null) =>
     leaveKnowledge(() => void withBusy(async () => {
+      routeGeneration.current++;
       await flushBoards();
-      // Navigation visibility is independent of the selected board and its data.
-      if (activeProject?.id === p.id) {
-        if (!knowledgeOpen) setBoardsExpanded(v => !v);
-        return;
-      }
-      setBoardsExpanded(true);
-      setActiveProject(p);
+      const folder = id ? projects.find(project => project.id === id) : null;
+      if (id && !folder) throw new Error('此项目已不在资料库中。');
+      const nextBoards = folder ? await api.boardsList(folder.id) : [];
+      activeProjectRef.current = folder ?? null;
+      setActiveProject(folder ?? null);
+      setBoards(nextBoards);
       activeBoardRef.current = null;
       setActiveBoard(null);
-      await refreshBoards(p.id);
+      setFocusNode(null);
     }));
+
+  const moveProject = (id: string, parentId: string | null) => withBusy(async () => {
+    if (!canvasScope) throw new Error('请先恢复项目画布，再移动项目。');
+    const next = await api.projectCanvasMove(id, parentProject(layout, id), parentId, canvasScope);
+    setLayout(next);
+  });
+
+  const placeTile = (tile: CatalogTile, position: { x: number; y: number }, target?: string) => {
+    if (tile.kind === 'project' && target) return moveProject(tile.row.id, target);
+    return withBusy(async () => {
+      if (!canvasScope) throw new Error('请先恢复项目画布，再摆放卡片。');
+      setLayout(await api.projectCanvasPlace(tile.kind, tile.row.id, activeProject?.id ?? null, position, canvasScope));
+    });
+  };
+
+  const relateProjects = (relation: ProjectRelation, present: boolean) => void withBusy(async () => {
+    if (!canvasScope) throw new Error('请先恢复项目画布，再编辑连线。');
+    setLayout(await api.projectCanvasRelate(activeProject?.id ?? null, relation, present, canvasScope));
+  });
 
   const removeProject = (p: ProjectMeta) => setDeletion({
     message: `删除项目「${p.name}」？其中的白板与挂载资料都会被移除。知识库内容保留。`,
     accept: () => void withBusy(() => withBoardEditLock(async () => {
       await api.projectDelete(p.id);
       if (activeProject?.id === p.id) {
+        activeProjectRef.current = null;
         setActiveProject(null);
         activeBoardRef.current = null; setActiveBoard(null);
         setBoards([]);
@@ -548,10 +575,12 @@ export default function App() {
   };
 
   /* ── 右键菜单构造 ── */
-  const openAt = (e: React.MouseEvent, items: ContextMenuState['items']) => {
+  const openAt = (e: React.MouseEvent, items: ContextMenuState['items'], atPointer = false) => {
     e.preventDefault();
     e.stopPropagation();
-    setMenu({ x: e.clientX, y: e.clientY, items });
+    const bounds = e.currentTarget.getBoundingClientRect();
+    const atControl = (e.type === 'click' && !atPointer) || (!e.clientX && !e.clientY);
+    setMenu({ x: atControl ? bounds.left : e.clientX, y: atControl ? bounds.bottom + 4 : e.clientY, items });
   };
 
   /* ── 导出（M6-7）：写入白板 exports/ 目录，完成后提示路径 ── */
@@ -614,17 +643,36 @@ export default function App() {
       const cfg = await api.configSetRoot(restored.root);
       const warnings = applyLibraryPreferences(restored.preferences);
       const nextSettings = loadSettings(); setSettings(nextSettings); applySettings(nextSettings, platform);
-      setRoot(cfg.storage_root); setActiveProject(null); activeBoardRef.current = null; setActiveBoard(null);
+      routeGeneration.current++;
+      setRoot(cfg.storage_root); activeProjectRef.current = null; setActiveProject(null); activeBoardRef.current = null; setActiveBoard(null);
       setKnowledgeOpen(false); setKnowledgeTarget({}); setBoards([]); await refreshProjects(); setPhase('ready');
       setArchiveStatus(warnings.length ? `已打开恢复的资料库。${warnings.join('、')}未能写入本机偏好，备份中的记录仍保留。` : '已打开恢复的资料库，原资料目录保留。');
     }) });
   });
+
+  const createItems = (): Extract<ContextMenuState['items'][number], { type: 'item' }>[] => {
+    const project = activeProject;
+    return [
+      { type: 'item', label: '新建项目', onClick: () => setEditing({ kind: 'new-project', parentId: project?.id ?? null }) },
+      ...(project ? [
+        { type: 'item' as const, label: '新建白板', onClick: () => setEditing({ kind: 'new-board', projectId: project.id }) },
+        { type: 'item' as const, label: '从对话新建白板…', onClick: () => leaveKnowledge(() => setImportTarget({ projectId: project.id })) },
+      ] : []),
+    ];
+  };
 
   const appMenu = (e: React.MouseEvent) =>
     openAt(e, [
       { type: 'info', text: '脉络 Lumen' },
       { type: 'separator' },
       { type: 'item', label: '全局搜索  Ctrl/Cmd+K', onClick: () => setSearchOpen(true) },
+      ...(phase === 'ready' ? [
+        { type: 'item' as const, label: '知识库', onClick: () => {
+          if (knowledgeOpen) leaveKnowledge();
+          else { setKnowledgeTarget({}); setKnowledgeOpen(true); }
+        } },
+        ...(!activeBoard && !knowledgeOpen ? [{ type: 'group' as const, label: '新建', items: createItems() }] : []),
+      ] : []),
       { type: 'group', label: '导入', items: [
         {type:'item',label:'项目/全库资料包（恢复到新目录）…',onClick:restoreLibrary},
         {type:'item',label:'白板资料包…',disabled:!activeProject,onClick:()=>activeProject&&leaveKnowledge(()=>void withBusy(async()=>{const board=await importBoardPackage(activeProject.id);if(board){await refreshBoards(activeProject.id);activeBoardRef.current=board;setActiveBoard(board);setBoardGeneration(n=>n+1);}}))},
@@ -650,13 +698,27 @@ export default function App() {
       { type: 'item', label: '设置…', onClick: () => setSettingsOpen(true) },
     ]);
 
-  const projectsPaneMenu = (e: React.MouseEvent) =>
-    openAt(e, [{ type: 'item', label: '新建项目', onClick: () => setEditing({ kind: 'new-project' }) }]);
-
-  const projectItemMenu = (e: React.MouseEvent, p: ProjectMeta) =>
+  const projectItemMenu = (e: React.MouseEvent, p: ProjectMeta) => {
+    const sourceParent = parentProject(layout, p.id);
+    const destinations = projects.flatMap(project => {
+      if (project.id === sourceParent) return [];
+      const path = projectPath(projects, layout, project.id);
+      if (path.some(row => row.id === p.id)) return [];
+      return [{
+        type: 'item' as const, label: path.map(row => row.name).join(' / '),
+        onClick: () => void moveProject(p.id, project.id),
+      }];
+    });
+    const linked = new Set(layout.relations?.filter(edge => edge.from === p.id).map(edge => edge.to));
+    const linkTargets = projects.filter(row => row.id !== p.id && parentProject(layout, row.id) === sourceParent && !linked.has(row.id))
+      .map(row => ({ type: 'item' as const, label: row.name, onClick: () => relateProjects({ from: p.id, to: row.id }, true) }));
+    if (sourceParent) destinations.unshift({ type: 'item', label: '项目首页', onClick: () => void moveProject(p.id, null) });
+    const hasChildren = projects.some(row => parentProject(layout, row.id) === p.id);
     openAt(e, [
-      { type: 'item', label: '打开', onClick: () => selectProject(p) },
+      { type: 'item', label: '打开', onClick: () => navigateProject(p.id) },
       {type:'item',label:favorites.projects.includes(p.id)?'取消收藏置顶':'收藏并置顶',onClick:()=>toggleFavorite('projects',p.id)},
+      { type: 'group', label: '连到项目…', disabled: !linkTargets.length || !canvasScope, items: linkTargets },
+      { type: 'group', label: '移到项目…', disabled: !destinations.length || !canvasScope, items: destinations },
       { type: 'item', label: '导出完整项目资料包…', onClick: () => exportLibrary(p) },
       {
         type: 'item',
@@ -664,19 +726,9 @@ export default function App() {
         onClick: () => setEditing({ kind: 'rename-project', id: p.id, value: p.name }),
       },
       { type: 'separator' },
-      { type: 'item', label: '删除项目', danger: true, onClick: () => removeProject(p) },
+      { type: 'item', label: hasChildren ? '先移出子项目再删除' : '删除项目', danger: true, disabled: hasChildren, onClick: () => removeProject(p) },
     ]);
-
-  const boardsPaneMenu = (e: React.MouseEvent) =>
-    openAt(e, [
-      {
-        type: 'item',
-        label: '新建白板',
-        disabled: !activeProject,
-        onClick: () => activeProject && setEditing({ kind: 'new-board' }),
-      },
-      { type:'item',label:'从对话新建白板…',disabled:!activeProject,onClick:()=>activeProject&&leaveKnowledge(()=>setImportTarget({projectId:activeProject.id})) },
-    ]);
+  };
 
   const boardItemMenu = (e: React.MouseEvent, b: BoardMeta) =>
     openAt(e, [
@@ -692,26 +744,53 @@ export default function App() {
       { type: 'item', label: '删除白板', danger: true, onClick: () => removeBoard(b) },
     ]);
 
-  const inlineEditor = (
-    <li key={editing && 'id' in editing ? editing.id : editing?.kind} className="list-item is-editing">
+  const cancelEdit = () => {
+    if (busyRef.current) return;
+    editingRef.current = null;
+    setEditing(null);
+  };
+  const editTitle = editing?.kind === 'new-project' ? '新建项目'
+    : editing?.kind === 'new-board' ? '新建白板' : '重命名';
+  const nameDialog = editing && (
+    <div className="settings-overlay" onMouseDown={cancelEdit}>
+      <form className="settings-card project-name-dialog" role="dialog" aria-modal="true" aria-label={editTitle}
+        onMouseDown={event => event.stopPropagation()}
+        onSubmit={event => { event.preventDefault(); void commitEdit(); }}
+        onKeyDown={event => {
+          event.stopPropagation();
+          if (event.key === 'Escape') { event.preventDefault(); cancelEdit(); }
+          if (event.key === 'Tab') {
+            const fields = [...event.currentTarget.querySelectorAll<HTMLElement>('input:not(:disabled),button:not(:disabled)')];
+            const current = fields.indexOf(document.activeElement as HTMLElement);
+            if (fields.length) {
+              event.preventDefault();
+              fields[(current + (event.shiftKey ? -1 : 1) + fields.length) % fields.length].focus();
+            }
+          }
+        }}>
+        <h2>{editTitle}</h2>
       <input
         ref={editRef}
-        className="input inline-input"
+        className="input"
         aria-label="名称"
         disabled={busy}
         value={draft}
         placeholder="输入名称，回车确认"
         onChange={(e) => setDraft(e.target.value)}
-        onClick={e => e.stopPropagation()}
         onKeyDown={(e) => {
-          e.stopPropagation();
-          if (e.nativeEvent.isComposing || e.nativeEvent.keyCode === 229) return;
-          if (e.key === 'Enter') { e.preventDefault(); void commitEdit(); }
-          else if (e.key === 'Escape') { e.preventDefault(); editingRef.current = null; setEditing(null); }
+          if (e.key === 'Enter' && (e.nativeEvent.isComposing || e.nativeEvent.keyCode === 229)) {
+            e.preventDefault();
+            e.stopPropagation();
+          }
         }}
-        onBlur={() => commitEdit()}
       />
-    </li>
+        {error && <p className="error-text" role="alert">{error}</p>}
+        <div className="action-confirm-buttons">
+          <button type="button" className="btn" onClick={cancelEdit} disabled={busy}>取消</button>
+          <button type="submit" className="btn btn-primary" disabled={busy || !draft.trim()}>保存</button>
+        </div>
+      </form>
+    </div>
   );
 
   /* ── 首屏加载 ── */
@@ -720,7 +799,7 @@ export default function App() {
   if (phase === 'setup') {
     return (
       <div className="board-surface">
-        <TitleBar platform={platform} brand="脉络" onMenu={appMenu} />
+        <TitleBar platform={platform} brand="脉络" onMenu={appMenu} onSettings={() => setSettingsOpen(true)} />
         <div className="screen-center">
           <div className="setup-card">
             <h1 className="setup-title">脉络</h1>
@@ -746,121 +825,20 @@ export default function App() {
   /* ── 主界面 ── */
   return (
     <div className={`board-surface${fullscreen ? ' is-fullscreen' : ''}`}>
-      {!fullscreen && (
-        <TitleBar
-          platform={platform}
-          brand="脉络"
-          onMenu={appMenu}
-          onToggleSidebar={() => knowledgeOpen ? setKnowledgeIndexCollapsed(v => !v) : setSidebarCollapsed(v => !v)}
-          sidebarCollapsed={knowledgeOpen ? knowledgeIndexCollapsed : sidebarCollapsed}
-        />
-      )}
-
-      {fullscreen && (
-        <button
-          type="button"
-          className="fullscreen-exit"
-          title="退出全屏  Esc"
-          onClick={() => applyFullscreen(false)}
-        >
-          <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true">
-            <path
-              d="M6 2H2v4M14 6V2h-4M10 14h4v-4M2 10v4h4"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="1.5"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-            />
-          </svg>
-          <span>退出全屏</span>
-        </button>
-      )}
+      <TitleBar
+        platform={platform}
+        brand="脉络"
+        onMenu={appMenu}
+        onHome={() => navigateProject(null)}
+        onSettings={() => setSettingsOpen(true)}
+        onToggleIndex={knowledgeOpen ? () => setKnowledgeIndexCollapsed(value => !value) : undefined}
+        indexCollapsed={knowledgeIndexCollapsed}
+        path={<ProjectPath path={knowledgeOpen ? [] : projectTrail} board={knowledgeOpen ? '知识库' : activeBoard?.name} onNavigate={navigateProject} />}
+      />
 
       {(error || archiveStatus) && <div className={`error-bar${error ? '' : ' is-information'}`} role="status">{error || archiveStatus}</div>}
 
       <div className="workspace">
-        {/* 侧栏（项目 + 白板）：由标题栏三横线开关统一收起/展开。
-            始终挂载，用 is-collapsed 类做宽度过渡，收起/展开都有动画。 */}
-        <div
-          hidden={knowledgeOpen}
-          className={`sidebar glass-surface${sidebarCollapsed ? ' is-collapsed' : ''}${
-            activeProject && boardsExpanded ? ' has-boards' : ''
-          }`}
-        >
-          <div className="sidebar-inner">
-            {/* 项目栏：空白处右键 = 新建项目 */}
-            <aside className="pane pane-projects" onClick={e => {
-              if (!(e.target as HTMLElement).closest('li,button,input')) setBoardsExpanded(false);
-            }}>
-              <div className="pane-head">
-                <span>项目</span>
-                <button className="pane-add" title="新建项目" onClick={() => setEditing({ kind: 'new-project' })}>
-                  ＋
-                </button>
-              </div>
-              <ul className="list" onContextMenu={projectsPaneMenu}>
-                {pinnedFirst(projects,favorites.projects).map((p) => editing?.kind === 'rename-project' && editing.id === p.id ? inlineEditor : (
-                  <li
-                    key={p.id}
-                    className={`list-item ${activeProject?.id === p.id ? 'is-active' : ''}`}
-                    role="button"
-                    tabIndex={0}
-                    aria-label={p.name}
-                    aria-expanded={activeProject?.id === p.id && boardsExpanded}
-                    onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); selectProject(p); } }}
-                    onClick={() => selectProject(p)}
-                    onContextMenu={(e) => projectItemMenu(e, p)}
-                  >
-                    <span className="list-title">{p.name}</span>
-                    <button className="favorite-toggle" aria-label={`收藏置顶项目：${p.name}`} aria-pressed={favorites.projects.includes(p.id)} title={favorites.projects.includes(p.id)?'取消收藏置顶':'收藏并置顶'} onKeyDown={e=>e.stopPropagation()} onClick={e=>{e.stopPropagation();toggleFavorite('projects',p.id);}}>{favorites.projects.includes(p.id)?'★':'☆'}</button>
-                  </li>
-                ))}
-                {editing?.kind === 'new-project' && inlineEditor}
-                {projects.length === 0 && editing?.kind !== 'new-project' && (
-                  <li className="list-empty">右键此处新建项目</li>
-                )}
-              </ul>
-              <button className={`knowledge-nav${knowledgeOpen ? ' is-active' : ''}`} aria-pressed={knowledgeOpen} onClick={() => { if (knowledgeOpen) leaveKnowledge(); else { setKnowledgeTarget({}); setKnowledgeOpen(true); } }}>知识库</button>
-            </aside>
-
-            {/* 白板栏：仅在选中项目时出现；空白处右键 = 新建白板 */}
-            {activeProject && boardsExpanded && (
-            <aside className="pane pane-boards">
-              <div className="pane-head">
-                <span>{activeProject ? `白板 · ${activeProject.name}` : '白板'}</span>
-                {activeProject && (
-                  <button className="pane-add" title="新建白板" aria-haspopup="menu" onClick={boardsPaneMenu}>
-                    ＋
-                  </button>
-                )}
-              </div>
-              <ul className="list" onContextMenu={activeProject ? boardsPaneMenu : undefined}>
-                {pinnedFirst(boards,favorites.boards).map((b) => editing?.kind === 'rename-board' && editing.id === b.id ? inlineEditor : (
-                  <li
-                    key={b.id}
-                    className={`list-item ${activeBoard?.id === b.id ? 'is-active' : ''}`} role="button" tabIndex={0} aria-label={b.name}
-                    onKeyDown={e=>{if(e.target===e.currentTarget&&(e.key==='Enter'||e.key===' ')){e.preventDefault();activeProject&&openBoard(activeProject.id,b.id);}}}
-                    onClick={() => activeProject && openBoard(activeProject.id, b.id)}
-                    onContextMenu={(e) => boardItemMenu(e, b)}
-                  >
-                    <span className="list-title">{b.name}</span>
-
-                    <span className="list-meta">{b.updated_at.slice(0, 10)}</span>
-                    <button className="favorite-toggle" aria-label={`收藏置顶白板：${b.name}`} aria-pressed={favorites.boards.includes(b.id)} title={favorites.boards.includes(b.id)?'取消收藏置顶':'收藏并置顶'} onClick={e=>{e.stopPropagation();toggleFavorite('boards',b.id);}}>{favorites.boards.includes(b.id)?'★':'☆'}</button>
-                  </li>
-                ))}
-                {editing?.kind === 'new-board' && inlineEditor}
-                {activeProject && boards.length === 0 && editing?.kind !== 'new-board' && (
-                  <li className="list-empty">右键此处新建白板</li>
-                )}
-              </ul>
-            </aside>
-            )}
-          </div>
-        </div>
-
-        {/* 画布区：挂 CanvasEngine（M2-2 / M2-3） */}
         {knowledgeOpen ? <KnowledgeLibrary boardId={activeBoard?.id} boardName={activeBoard?.name} boardPolicy={activeBoard?._sync_content_policy} indexCollapsed={knowledgeIndexCollapsed} {...knowledgeTarget} onEditingChange={onKnowledgeEditingChange} onNavigationReady={registerKnowledgeNavigation} onClose={() => { setKnowledgeOpen(false); setError(null); }} /> : activeBoard ? (
           <BoardCanvas
             key={`${activeBoard.id}:${boardGeneration}`}
@@ -869,27 +847,50 @@ export default function App() {
             edgeStyle={settings.edgeStyle ?? 'curved'}
             guessMath={settings.guessMath}
             focusNode={focusNode && activeBoard.nodes.some((n) => n.id === focusNode.id) ? focusNode : null}
-            onBlankClick={() => { setSidebarCollapsed(true); setBoardsExpanded(false); }}
           />
         ) : (
-          <main className="board-canvas canvas-placeholder">
-            <p className="placeholder-hint">
-              {!activeProject
-                ? '从左侧选择一个项目'
-                : boards.length === 0
-                  ? '右键白板栏空白处 · 新建一块白板'
-                  : '选择一块白板打开画布'}
-            </p>
-          </main>
+          <ProjectCanvas
+            key={JSON.stringify([canvasScope || root, activeProject?.id])}
+            scope={canvasScope || root || ''}
+            folderId={activeProject?.id ?? null}
+            folderName={activeProject?.name}
+            tiles={tiles}
+            relations={layout.relations}
+            disabled={busy || syncLocked || !!editing}
+            onOpen={tile => {
+              if (tile.kind === 'project') navigateProject(tile.row.id);
+              else if (activeProject) openBoard(activeProject.id, tile.row.id);
+            }}
+            onPlace={placeTile}
+            onConnect={relation => relateProjects(relation, true)}
+            onRelationMenu={(event, relation) => openAt(event, [
+              { type: 'item', label: '删除连线', danger: true, onClick: () => relateProjects(relation, false) },
+            ], true)}
+            onFavorite={tile => toggleFavorite(tile.kind === 'project' ? 'projects' : 'boards', tile.row.id)}
+            onMenu={(event, tile) => {
+              if (!tile) openAt(event, createItems());
+              else if (tile.kind === 'project') projectItemMenu(event, tile.row);
+              else boardItemMenu(event, tile.row);
+            }}
+            onAdd={event => activeProject ? openAt(event, createItems()) : setEditing({ kind: 'new-project', parentId: null })}
+          />
         )}
       </div>
       {activeBoard&&!knowledgeOpen&&<button className={`board-save-state is-${saveState}`} title="内容自动保存 · Cmd/Ctrl+S立即保存" onClick={()=>void flushBoards().catch(e=>setError(String(e)))}>{saveState==='saved'?'已保存':saveState==='saving'?'保存中…':saveState==='error'?'保存失败 · 点击重试':'等待保存…'}</button>}
       {syncLocked&&<div className="sync-edit-lock" role="status">正在保存并同步资料…</div>}
 
       {menu && <ContextMenu state={menu} onClose={() => setMenu(null)} />}
+      {nameDialog}
       {deletion && <ConfirmAction message={deletion.message} confirmLabel={deletion.confirmLabel} onCancel={cancelDeletion} onConfirm={() => { const accept = deletion.accept; setDeletion(null); accept(); }} />}
       {importTarget&&<ConversationImport target={importTarget} onClose={()=>setImportTarget(undefined)} onImported={(board,rootNodeId)=>{
-        pendingBoards.current.delete(board.id);activeBoardRef.current=board;setActiveBoard(board);setActiveProject(projects.find(p=>p.id===board.projectId)??activeProject);setBoardGeneration(n=>n+1);setKnowledgeOpen(false);setSidebarCollapsed(false);setBoardsExpanded(true);setImportTarget(undefined);if(rootNodeId)setFocusNode({id:rootNodeId,nonce:Date.now()});void refreshBoards(board.projectId).catch(e=>setError(`对话已保存，列表刷新未完成：${String(e)}`));
+        routeGeneration.current++;
+        pendingBoards.current.delete(board.id);
+        activeBoardRef.current = board; setActiveBoard(board);
+        const project = projects.find(p => p.id === board.projectId) ?? null;
+        activeProjectRef.current = project; setActiveProject(project);
+        setBoardGeneration(n => n + 1); setKnowledgeOpen(false); setImportTarget(undefined);
+        if (rootNodeId) setFocusNode({ id: rootNodeId, nonce: Date.now() });
+        void refreshBoards(board.projectId).catch(error => setError(`对话已保存，列表刷新未完成：${String(error)}`));
       }}/>}
       <GlobalSearch open={searchOpen} onClose={() => setSearchOpen(false)} onJump={jumpTo} />
       <SnapshotPanel
@@ -914,7 +915,7 @@ export default function App() {
         projectId={activeProject?.id ?? null}
         boardId={activeBoard?.id ?? null}
         boardName={activeBoard?.name ?? null}
-        suspended={knowledgeOpen}
+        suspended={knowledgeOpen || !activeBoard}
         onBoardSettings={()=>window.dispatchEvent(new CustomEvent('lumen:board-settings',{detail:activeBoard?.id}))}
       />
     </div>

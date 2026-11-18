@@ -64,15 +64,24 @@ pub fn projects_list() -> Result<Vec<storage::ProjectMeta>, String> {
 }
 
 #[tauri::command]
-pub fn project_create(name: String) -> Result<storage::ProjectMeta, String> {
+pub fn project_create(name: String, parent_id: Option<String>, expected_scope: Option<String>) -> Result<storage::ProjectMeta, String> {
     let _io_guard = crate::sync::IO_LOCK.lock().map_err(|e| e.to_string())?;
-    storage::create_project(&root()?, &name)
+    let root = root()?;
+    if let Some(expected) = expected_scope.as_deref() {
+        crate::board_operations::ensure_scope(&root, expected)?;
+    }
+    match parent_id {
+        Some(parent) => crate::project_canvas::create_child(&root, &name, &parent),
+        None => storage::create_project(&root, &name),
+    }
 }
 
 #[tauri::command]
 pub fn project_delete(id: String) -> Result<(), String> {
     let _io_guard = crate::sync::IO_LOCK.lock().map_err(|e| e.to_string())?;
-    storage::delete_project(&root()?, &id)
+    let root = root()?;
+    crate::project_canvas::require_no_children(&root, &id)?;
+    storage::delete_project(&root, &id)
 }
 
 #[tauri::command]

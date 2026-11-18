@@ -40,8 +40,31 @@ const captureState=fixtureParams.has('captureQA')?JSON.parse(localStorage.getIte
 if(captureState&&!captureState.chats){chats.conversations[0].id='c_capture_123';chats.conversations[0].messages.forEach((message,index)=>{message.id='c_message_'+index;});chats.conversations[0].messages[1].content+='\n\n| 项目 | 内容 |\n|---|---|\n| 示例 | 保留表格 |\n\n公式 $x_i^2$。\n\n$$\n\\frac{1}{2}\n$$\n\n```js\nconst x_i = 2;\n```';}
 if(captureState){if(captureState.chats)chats=captureState.chats;for(let i=0;i<fixtureBoards.length;i++)if(captureState.boards[fixtureBoards[i].id])fixtureBoards[i]=captureState.boards[fixtureBoards[i].id];}
 if(captureState)for(const saved of Object.values(captureState.boards))if(!fixtureBoards.some(b=>b.id===saved.id))fixtureBoards.push(saved);
-if(fixtureParams.has('navigationQA')){const saved=JSON.parse(localStorage.getItem('lumen.fixture-navigation')??'null');if(saved){fixtureProjects=saved.projects;fixtureBoards.splice(0,fixtureBoards.length,...saved.boards);}}
-const saveNavigation=()=>{if(fixtureParams.has('navigationQA'))localStorage.setItem('lumen.fixture-navigation',JSON.stringify({projects:fixtureProjects,boards:fixtureBoards}));};
+let fixtureLayout = { version: 1, projects: {}, boards: {} };
+const keepNavigation = fixtureParams.has('navigationQA') || fixtureParams.has('projectCanvasQA');
+if (fixtureParams.has('catalogDesignQA')) {
+  fixtureProjects[0].name = '研究笔记';
+  fixtureProjects.push({ id: 'notes', name: '阅读笔记', created_at: now }, { id: 'materials', name: '资料整理', created_at: now });
+  fixtureBoards[0].name = '讨论脉络';
+  fixtureBoards[1].name = '研究问题';
+  fixtureLayout.projects = {
+    materials: { parentId: 'project', position: { x: 104, y: 114 } },
+    notes: { parentId: 'project', position: { x: 106, y: 382 } },
+  };
+  fixtureLayout.boards.project = { board: { x: 339, y: 215 }, 'board-two': { x: 601, y: 114 } };
+}
+if (keepNavigation) {
+  const saved = JSON.parse(localStorage.getItem('lumen.fixture-navigation') ?? 'null');
+  if (saved) {
+    fixtureProjects = saved.projects;
+    fixtureBoards.splice(0, fixtureBoards.length, ...saved.boards);
+    fixtureLayout = saved.layout ?? fixtureLayout;
+  }
+}
+const saveNavigation = () => {
+  if (keepNavigation) localStorage.setItem('lumen.fixture-navigation', JSON.stringify({ projects: fixtureProjects, boards: fixtureBoards, layout: fixtureLayout }));
+};
+const fixtureCanvasScope = () => 'project-canvas:' + storageRoot;
 window.__fixtureNavigationCalls=[];
 window.__fixtureCaptureCalls=[];
 window.__fixtureOperationCalls=[];window.__fixtureExports=[];
@@ -137,11 +160,49 @@ window.__TAURI_INTERNALS__={metadata:{currentWindow:{label:'main'},currentWebvie
   if(command==='knowledge_export'&&fixtureParams.has('knowledgeDesignQA')){window.__fixtureExports.push(structuredClone(args));return;}
   if(command==='knowledge_import_read'&&fixtureParams.has('knowledgeDesignQA'))return structuredClone(library);
   if(command==='board_package_export'&&fixtureParams.has('navigationQA')){window.__fixtureExports.push(structuredClone(args));return;}
+  if (command === 'project_canvas_read') return { scope: fixtureCanvasScope(), layout: structuredClone(fixtureLayout) };
+  if (command === 'project_canvas_relate') {
+    if (args.expectedScope !== fixtureCanvasScope()) throw Error('资料库已变化');
+    if (window.__fixtureNavigationFailure) throw Error('合成磁盘写入失败');
+    const siblings = new Set(fixtureProjects.filter(row =>
+      (fixtureLayout.projects[row.id]?.parentId ?? null) === args.projectId
+    ).map(row => row.id));
+    if (args.from === args.to || !siblings.has(args.from) || !siblings.has(args.to)) throw Error('请选择同一画布上的两个项目');
+    const keep = (fixtureLayout.relations ?? []).filter(edge => edge.from !== args.from || edge.to !== args.to);
+    fixtureLayout.relations = args.present ? [...keep, { from: args.from, to: args.to }] : keep;
+    saveNavigation();
+    return structuredClone(fixtureLayout);
+  }
+  if (command === 'project_canvas_move' || command === 'project_canvas_place') {
+    if (args.expectedScope !== fixtureCanvasScope()) throw Error('资料库已变化');
+    if (window.__fixtureNavigationFailure) throw Error('合成磁盘写入失败');
+    if (command === 'project_canvas_move') {
+      let target = args.parentId;
+      while (target) {
+        if (target === args.id) throw Error('不能移入自己的子项目');
+        target = fixtureLayout.projects[target]?.parentId;
+      }
+      fixtureLayout.projects[args.id] = { parentId: args.parentId };
+    } else if (args.kind === 'project') {
+      fixtureLayout.projects[args.id] = { parentId: args.projectId, position: args.position };
+    } else {
+      if (!args.projectId) throw Error('首页只能放项目');
+      (fixtureLayout.boards[args.projectId] ??= {})[args.id] = args.position;
+    }
+    saveNavigation();
+    return structuredClone(fixtureLayout);
+  }
   if(['project_create','project_rename','project_delete','board_create','board_rename','board_delete'].includes(command)){
     window.__fixtureNavigationCalls.push({command,args:structuredClone(args)});
     if(window.__fixtureNavigationDelay)await new Promise(r=>setTimeout(r,window.__fixtureNavigationDelay));
     if(window.__fixtureNavigationFailure)throw Error('合成磁盘写入失败');
-    if(command==='project_create'){const row={id:'p_'+crypto.randomUUID(),name:args.name,created_at:now};fixtureProjects.push(row);saveNavigation();return structuredClone(row);}
+    if (command === 'project_create') {
+      const row = { id: 'p_' + crypto.randomUUID(), name: args.name, created_at: now };
+      fixtureProjects.push(row);
+      if (args.parentId) fixtureLayout.projects[row.id] = { parentId: args.parentId };
+      saveNavigation();
+      return structuredClone(row);
+    }
     if(command==='project_rename'){const row=fixtureProjects.find(p=>p.id===args.id);row.name=args.name;saveNavigation();return structuredClone(row);}
     if(command==='project_delete'){fixtureProjects=fixtureProjects.filter(p=>p.id!==args.id);for(let i=fixtureBoards.length-1;i>=0;i--)if(fixtureBoards[i].projectId===args.id)fixtureBoards.splice(i,1);saveNavigation();return;}
     if(command==='board_create'){const row={...structuredClone(board),id:'b_'+crypto.randomUUID(),projectId:args.projectId,name:args.name,nodes:[],edges:[]};fixtureBoards.push(row);saveNavigation();return structuredClone(row);}

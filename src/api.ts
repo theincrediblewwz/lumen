@@ -1,5 +1,6 @@
 import { invoke } from '@tauri-apps/api/core';
 import { open } from '@tauri-apps/plugin-dialog';
+import type { ProjectLayout, ProjectLayoutSnapshot, ProjectRelation } from './projectCanvas/layout';
 
 /* ── 与 src-tauri/src/storage.rs 的数据模型一一对应 ── */
 
@@ -107,10 +108,18 @@ export const api = {
   configSetRoot: (root: string) => invoke<AppConfig>('config_set_storage_root', { root }),
 
   projectsList: () => invoke<ProjectMeta[]>('projects_list'),
-  projectCreate: (name: string) => invoke<ProjectMeta>('project_create', { name }),
+  projectCreate: (name: string, parentId: string | null = null, expectedScope?: string) =>
+    invoke<ProjectMeta>('project_create', { name, parentId, expectedScope }),
   projectDelete: (id: string) => invoke<void>('project_delete', { id }),
   projectRename: (id: string, name: string) =>
     invoke<ProjectMeta>('project_rename', { id, name }),
+  projectCanvasRead: () => invoke<ProjectLayoutSnapshot>('project_canvas_read'),
+  projectCanvasPlace: (kind: 'project' | 'board', id: string, projectId: string | null, position: { x: number; y: number }, expectedScope: string) =>
+    invoke<ProjectLayout>('project_canvas_place', { kind, id, projectId, position, expectedScope }),
+  projectCanvasMove: (id: string, expectedParentId: string | null, parentId: string | null, expectedScope: string) =>
+    invoke<ProjectLayout>('project_canvas_move', { id, expectedParentId, parentId, expectedScope }),
+  projectCanvasRelate: (projectId: string | null, relation: ProjectRelation, present: boolean, expectedScope: string) =>
+    invoke<ProjectLayout>('project_canvas_relate', { projectId, ...relation, present, expectedScope }),
 
   boardsList: (projectId: string) => invoke<BoardMeta[]>('boards_list', { projectId }),
   boardCreate: (projectId: string, name: string) =>

@@ -389,11 +389,11 @@ const errors = [],
       "/scripts/knowledge-ui-fixture.html?platform=macos&nodes=1&captureQA=1",
   );
   await page
-    .locator(".pane-projects .list-item")
+    .locator(".project-tile.is-project")
     .filter({ hasText: "桌面夹" })
     .click();
   await page
-    .locator(".pane-boards .list-item")
+    .locator(".project-tile.is-board")
     .filter({ hasText: "合成学习白板" })
     .click();
   await page.locator(".node-card").first().click();

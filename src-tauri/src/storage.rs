@@ -208,12 +208,19 @@ pub fn read_index(root: &Path) -> Result<IndexFile, String> {
 }
 
 pub fn create_project(root: &Path, name: &str) -> Result<ProjectMeta, String> {
+    let (meta, files) = prepare_project(root, name)?;
+    crate::sync::transaction(root, files)?;
+    Ok(meta)
+}
+
+pub(crate) fn prepare_project(
+    root: &Path,
+    name: &str,
+) -> Result<(ProjectMeta, std::collections::BTreeMap<String, Vec<u8>>), String> {
     let name = name.trim();
     if name.is_empty() {
         return Err("项目名不能为空".into());
     }
-    ensure_storage(root)?;
-
     let id = new_id("p");
     let now = now_iso();
     let meta = ProjectMeta { id: id.clone(), name: name.to_string(), created_at: now.clone() };
@@ -221,8 +228,6 @@ pub fn create_project(root: &Path, name: &str) -> Result<ProjectMeta, String> {
     let mut index = read_index(root)?;
     index.version = FORMAT_VERSION;
     index.projects.push(meta.clone());
-    write_json(&index_path(root), &index)?;
-
     let pf = ProjectFile {
         version: FORMAT_VERSION,
         id,
@@ -231,8 +236,12 @@ pub fn create_project(root: &Path, name: &str) -> Result<ProjectMeta, String> {
         updated_at: now,
         boards: vec![],
     };
-    write_json(&project_file(root, &pf.id), &pf)?;
-    Ok(meta)
+    let bytes = |result: Result<Vec<u8>, serde_json::Error>| result.map_err(|e| e.to_string());
+    let files = [
+        ("index.json".into(), bytes(serde_json::to_vec_pretty(&index))?),
+        (format!("{}/project.json", pf.id), bytes(serde_json::to_vec_pretty(&pf))?),
+    ].into_iter().collect();
+    Ok((meta, files))
 }
 
 pub fn read_project(root: &Path, project_id: &str) -> Result<ProjectFile, String> {

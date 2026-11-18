@@ -22,15 +22,12 @@ fs.mkdirSync(out, { recursive: true });
   };
   const card = id => page.locator(`.canvas-world>[data-node-id="${id}"]`);
   const openBoard = async name => {
-    const expand = page.getByRole('button', { name: '展开侧栏', exact: true });
-    if (await expand.count()) await expand.click();
-    if (!await page.getByText(name, { exact: true }).isVisible()) await page.getByText('桌面夹', { exact: true }).click();
-    await page.getByText(name, { exact: true }).click();
-    await page.getByRole('button', { name: '收起侧栏', exact: true }).click();
+    const tile = page.locator('.project-tile.is-board').getByRole('button', { name, exact: true });
+    const folder = page.getByRole('navigation', { name: '项目路径' }).getByRole('button', { name: '桌面夹', exact: true });
+    if (await folder.isVisible()) await folder.click();
+    if (!await tile.isVisible()) await page.locator('.project-tile.is-project').getByRole('button',{name:'桌面夹',exact:true}).click();
+    await tile.click();
     await page.locator('.board-canvas-live').waitFor();
-    // The sidebar animates its width; wait for the actual canvas origin to settle.
-    // Otherwise the recorded client point and the event handler use different origins.
-    await page.waitForFunction(() => document.querySelector('.sidebar.is-collapsed')?.getBoundingClientRect().width === 0);
   };
   const wheel = async (deltaY, boardId = 'board') => {
     const before = (await state()).boards[boardId].viewport;

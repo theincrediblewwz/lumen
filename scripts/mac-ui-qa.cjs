@@ -52,20 +52,20 @@ async function withinViewport(page, locator) {
   assert.equal(await page.title(), '知识库合成页面验收');
   assert.ok(page.url().startsWith(base + '/scripts/knowledge-ui-fixture.html'));
   assert.equal(await page.locator('vite-error-overlay').count(), 0);
-  await page.locator('.pane-projects .list-item').filter({ hasText: '桌面夹' }).click();
-  await page.locator('.pane-boards .list-item').filter({ hasText: '合成学习白板' }).click();
-  await page.locator('.knowledge-nav').click();
+  await page.locator('.project-tile.is-project').filter({ hasText: '桌面夹' }).click();
+  await page.locator('.project-tile.is-board').filter({ hasText: '合成学习白板' }).click();
+  await page.getByRole('button', { name: '菜单', exact: true }).click(); await page.getByRole('menuitem', { name: '知识库', exact: true }).click();
   await page.locator('.knowledge-reading article').waitFor();
   for (const value of ['light', 'paper', 'dark']) for (const width of [1280, 1024, 720]) {
     await page.setViewportSize({ width, height: 820 });
     await theme(page, value);
     assert.equal(await page.locator('.knowledge-workspace').evaluate(el => el.scrollWidth <= el.clientWidth), true);
     await withinViewport(page, page.getByRole('button', { name: '返回白板', exact: true }));
-    assert.equal(await page.locator('.sidebar').isVisible(), false);
+    assert.equal(await page.locator('.project-canvas').count(), 0);
     assert.equal(await page.locator('.knowledge-columns').evaluate(el => getComputedStyle(el).flexDirection), width > 780 ? 'row' : 'column');
     await screenshot(page, `mac-knowledge-${value}-${width}`);
   }
-  checks.push('knowledge owns the workspace, hides both board sidebars and adapts its index at 780px; 3 themes at 1280/1024/720');
+  checks.push('knowledge owns the workspace, covers the project canvas and adapts its index at 780px; 3 themes at 1280/1024/720');
   await page.setViewportSize({ width: 1280, height: 820 });
   await page.getByRole('button', { name: '写下理解', exact: true }).click();
   await page.getByRole('textbox', { name: '知识标题', exact: true }).fill('Mac 知识草稿');
@@ -77,12 +77,12 @@ async function withinViewport(page, locator) {
   await page.locator('.knowledge-reading h2').filter({ hasText: 'Mac 知识草稿' }).waitFor();
   await page.getByRole('button', { name: '返回白板', exact: true }).click();
   await page.locator('.knowledge-workspace').waitFor({ state: 'detached' });
-  await page.locator('.knowledge-nav').click();
-  await page.getByRole('button', { name: '收起侧栏', exact: true }).click();
+  await page.getByRole('button', { name: '菜单', exact: true }).click(); await page.getByRole('menuitem', { name: '知识库', exact: true }).click();
+  await page.getByRole('button', { name: '收起知识索引', exact: true }).click();
   assert.equal(await page.getByRole('complementary', { name: '知识索引', exact: true }).isVisible(), false);
   await page.getByRole('button', { name: '返回白板', exact: true }).click();
-  assert.equal(await page.locator('.sidebar').isVisible(), true);
-  await page.locator('.pane-boards .list-item').filter({ hasText: '第二块合成白板' }).click();
+  await page.getByRole('navigation', { name: '项目路径' }).getByRole('button', { name: '桌面夹', exact: true }).click();
+  await page.locator('.project-tile.is-board').filter({ hasText: '第二块合成白板' }).click();
   await page.locator('.knowledge-workspace').waitFor({ state: 'detached' });
   checks.push('knowledge draft cancel/save, independent index collapse and explicit return restore the board navigation');
   await theme(page, 'paper');

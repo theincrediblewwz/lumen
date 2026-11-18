@@ -1,5 +1,5 @@
 //! Streaming content archives. Restore creates a new library; never merges into or replaces the live one.
-use crate::{board_operations as safety, commands, documents, knowledge, storage, sync};
+use crate::{board_operations as safety, commands, documents, knowledge, project_canvas, storage, sync};
 use serde::de::{DeserializeSeed, IgnoredAny, MapAccess, SeqAccess, Visitor};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -277,15 +277,19 @@ fn collect(
 ) -> Result<(BTreeMap<String, Source>, usize, usize), String> {
     safety::checked_path(root, "index.json")?;
     let mut index = storage::read_index(root)?;
+    let mut layout = project_canvas::read(root, &index)?;
     if let Some(id) = project {
         storage::safe_id(id)?;
-        index.projects.retain(|row| row.id == id);
-        if index.projects.len() != 1 {
+        if !index.projects.iter().any(|row| row.id == id) {
             return Err("待导出项目不存在".into());
         }
+        let included = layout.subtree(id);
+        index.projects.retain(|row| included.contains(&row.id));
+        layout.retain_projects(&included);
     }
     let mut files = BTreeMap::new();
     let mut boards = BTreeSet::new();
+    let mut owners = BTreeMap::new();
     let mut project_ids = BTreeSet::new();
     files.insert(
         "index.json".into(),
@@ -316,6 +320,7 @@ fn collect(
             if !boards.insert(board.id.clone()) {
                 return Err("白板标识重复".into());
             }
+            owners.insert(board.id.clone(), meta.id.clone());
             let base = format!("{}/{}", meta.id, board.id);
             add_file(root, &format!("{base}/board.json"), &mut files)?;
             for name in [
@@ -333,6 +338,10 @@ fn collect(
                 add_tree(root, &format!("{base}/{name}"), &mut files)?;
             }
         }
+    }
+    if safety::checked_path(root, project_canvas::FILE)?.exists() {
+        layout.retain_boards(&owners);
+        files.insert(project_canvas::FILE.into(), Source::Bytes(layout.bytes()?));
     }
     let path = safety::checked_path(root, "knowledge/library.json")?;
     if path.exists() {
@@ -572,6 +581,7 @@ fn valid_library(root: &Path, files: &BTreeMap<String, Entry>) -> Result<(), Str
     if index.version != 1 {
         return Err("资料索引版本不受支持".into());
     }
+    project_canvas::read(root, &index)?;
     let mut seen = BTreeSet::new();
     let mut boards = BTreeMap::new();
     let mut owners = BTreeMap::new();
@@ -619,6 +629,7 @@ fn valid_library(root: &Path, files: &BTreeMap<String, Entry>) -> Result<(), Str
             "index.json",
             "knowledge/library.json",
             "reading-preferences.json",
+            project_canvas::FILE,
         ]
         .contains(&path.as_str())
         {
@@ -719,6 +730,7 @@ pub(crate) fn restore_at(source: &Path, parent: &Path) -> Result<Value, String> 
         let allowed = key == "index.json"
             || key == "knowledge/library.json"
             || key == "reading-preferences.json"
+            || key == project_canvas::FILE
             || segments.len() == 2 && segments[1] == "project.json"
             || segments.len() >= 3 && segments[1] == ".conversation-imports"
             || segments.len() == 3
@@ -739,6 +751,7 @@ pub(crate) fn restore_at(source: &Path, parent: &Path) -> Result<Value, String> 
             "index.json",
             "knowledge/library.json",
             "reading-preferences.json",
+            project_canvas::FILE,
         ]
         .contains(&key)
         {

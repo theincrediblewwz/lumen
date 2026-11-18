@@ -1,5 +1,7 @@
 import { getCurrentWindow } from '@tauri-apps/api/window';
-import { useEffect, useState } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
+import { Menu, PanelLeftClose, PanelLeftOpen, Settings } from 'lucide-react';
+import icon from '../../app-icon.png';
 
 /**
  * 自定义标题栏（native_mac 策略）
@@ -12,14 +14,20 @@ export function TitleBar({
   platform,
   brand,
   onMenu,
-  onToggleSidebar,
-  sidebarCollapsed,
+  onHome,
+  onSettings,
+  onToggleIndex,
+  indexCollapsed,
+  path,
 }: {
   platform: string; // 'macos' | 'windows' | 'linux' | ...
   brand: string;
   onMenu: (e: React.MouseEvent) => void;
-  onToggleSidebar?: () => void;
-  sidebarCollapsed?: boolean;
+  onHome?: () => void;
+  onSettings: () => void;
+  onToggleIndex?: () => void;
+  indexCollapsed?: boolean;
+  path?: ReactNode;
 }) {
   const isMac = platform === 'macos';
   const showWinControls = Boolean(platform) && !isMac; // 平台确认后再显示自绘按钮
@@ -43,40 +51,43 @@ export function TitleBar({
       className={`titlebar${isMac ? ' is-mac' : ''}${!platform ? ' is-platform-pending' : ''}`}
       data-tauri-drag-region
     >
-      {/* 侧栏开关：三根横线，紧挨品牌名 */}
-      {onToggleSidebar && (
+      {onHome ? (
+        <button type="button" className="titlebar-btn titlebar-logo" aria-label="返回项目首页" onClick={onHome}>
+          <img src={icon} width="26" height="26" alt="" /><span>{brand}</span>
+        </button>
+      ) : (
+        <span className="titlebar-logo" data-tauri-drag-region>
+          <img src={icon} width="26" height="26" alt="" data-tauri-drag-region /><span data-tauri-drag-region>{brand}</span>
+        </span>
+      )}
+      {path}
+      <div className="titlebar-actions">
+        {onToggleIndex && (
+          <button type="button" className="titlebar-btn titlebar-menu"
+            aria-label={indexCollapsed ? '展开知识索引' : '收起知识索引'}
+            title={indexCollapsed ? '展开知识索引' : '收起知识索引'}
+            aria-pressed={!indexCollapsed} onClick={onToggleIndex}>
+            {indexCollapsed ? <PanelLeftOpen size={17} /> : <PanelLeftClose size={17} />}
+          </button>
+        )}
         <button
           type="button"
-          className={`titlebar-btn titlebar-sidebar${sidebarCollapsed ? ' is-collapsed' : ''}`}
-          title={sidebarCollapsed ? '展开侧栏' : '收起侧栏'}
-          aria-label={sidebarCollapsed ? '展开侧栏' : '收起侧栏'}
-          aria-pressed={!sidebarCollapsed}
-          onClick={onToggleSidebar}
+          className="titlebar-btn titlebar-menu"
+          title="设置"
+          aria-label="设置"
+          onClick={onSettings}
         >
-          <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true">
-            <path d="M2 4h12M2 8h12M2 12h12" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
-          </svg>
+          <Settings size={17} aria-hidden="true" />
         </button>
-      )}
-
-      <span className="titlebar-brand" data-tauri-drag-region>
-        {brand}
-      </span>
-
-      <div className="titlebar-actions">
         <button
           type="button"
           className="titlebar-btn titlebar-menu"
           title="菜单"
           aria-label="菜单"
+          aria-haspopup="menu"
           onClick={onMenu}
         >
-          {/* 更多菜单图标（内联 SVG，避免外链） */}
-          <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true">
-            <circle cx="8" cy="3" r="1.4" fill="currentColor" />
-            <circle cx="8" cy="8" r="1.4" fill="currentColor" />
-            <circle cx="8" cy="13" r="1.4" fill="currentColor" />
-          </svg>
+          <Menu size={19} aria-hidden="true" />
         </button>
 
         {showWinControls && (

@@ -1,0 +1,422 @@
+//! Desktop project tree and positions. Board and document paths remain stable.
+use crate::{board_operations as safety, commands, storage, sync};
+use serde::{Deserialize, Serialize};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    fs,
+    path::Path,
+};
+
+pub(crate) const FILE: &str = "project-canvas.json";
+const MAX_FILE_BYTES: u64 = 16 * 1024 * 1024;
+
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Serialize)]
+pub struct Position {
+    x: f64,
+    y: f64,
+}
+
+impl Position {
+    fn check(self) -> Result<(), String> {
+        if [self.x, self.y]
+            .iter()
+            .any(|v| !v.is_finite() || v.abs() > 1_000_000.0)
+        {
+            return Err("画布位置超出范围".into());
+        }
+        Ok(())
+    }
+}
+
+#[derive(Clone, Default, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct Placement {
+    pub parent_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    position: Option<Position>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
+#[serde(deny_unknown_fields)]
+struct Relation {
+    from: String,
+    to: String,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct Layout {
+    version: u8,
+    #[serde(default)]
+    projects: BTreeMap<String, Placement>,
+    #[serde(default)]
+    boards: BTreeMap<String, BTreeMap<String, Position>>,
+    #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
+    relations: BTreeSet<Relation>,
+}
+
+impl Default for Layout {
+    fn default() -> Self {
+        Self {
+            version: 1,
+            projects: BTreeMap::new(),
+            boards: BTreeMap::new(),
+            relations: BTreeSet::new(),
+        }
+    }
+}
+
+impl Layout {
+    pub(crate) fn parent(&self, id: &str) -> Option<&str> {
+        self.projects.get(id)?.parent_id.as_deref()
+    }
+
+    pub(crate) fn subtree(&self, id: &str) -> BTreeSet<String> {
+        let mut children = BTreeMap::<&str, Vec<&str>>::new();
+        for (child, placement) in &self.projects {
+            if let Some(parent) = placement.parent_id.as_deref() {
+                children.entry(parent).or_default().push(child);
+            }
+        }
+        let mut included = BTreeSet::new();
+        let mut pending = vec![id];
+        while let Some(item) = pending.pop() {
+            if included.insert(item.to_owned()) {
+                if let Some(rows) = children.get(item) {
+                    pending.extend(rows);
+                }
+            }
+        }
+        included
+    }
+
+    pub(crate) fn retain_projects(&mut self, ids: &BTreeSet<String>) {
+        self.projects.retain(|id, _| ids.contains(id));
+        self.boards.retain(|id, _| ids.contains(id));
+        self.relations
+            .retain(|edge| ids.contains(&edge.from) && ids.contains(&edge.to));
+        for placement in self.projects.values_mut() {
+            if placement
+                .parent_id
+                .as_ref()
+                .is_some_and(|id| !ids.contains(id))
+            {
+                placement.parent_id = None;
+            }
+        }
+    }
+
+    pub(crate) fn retain_boards(&mut self, owners: &BTreeMap<String, String>) {
+        self.boards.retain(|owner, positions| {
+            positions.retain(|id, _| owners.get(id) == Some(owner));
+            !positions.is_empty()
+        });
+    }
+
+    pub(crate) fn bytes(&self) -> Result<Vec<u8>, String> {
+        let bytes = serde_json::to_vec_pretty(self).map_err(|e| e.to_string())?;
+        if bytes.len() as u64 > MAX_FILE_BYTES {
+            return Err("项目画布文件过大".into());
+        }
+        Ok(bytes)
+    }
+
+    fn validate(&self) -> Result<(), String> {
+        if self.version != 1 {
+            return Err("不支持此项目画布文件版本".into());
+        }
+        let mut checked = BTreeSet::new();
+        for (id, placement) in &self.projects {
+            storage::safe_id(id)?;
+            if let Some(parent) = &placement.parent_id {
+                storage::safe_id(parent)?;
+            }
+            if let Some(point) = placement.position {
+                point.check()?;
+            }
+            let mut visiting = BTreeSet::new();
+            let mut current = Some(id.as_str());
+            while let Some(item) = current {
+                if checked.contains(item) {
+                    break;
+                }
+                if !visiting.insert(item) {
+                    return Err("项目画布包含循环嵌套".into());
+                }
+                current = self.parent(item);
+            }
+            checked.extend(visiting);
+        }
+        for (owner, boards) in &self.boards {
+            storage::safe_id(owner)?;
+            for (id, point) in boards {
+                storage::safe_id(id)?;
+                point.check()?;
+            }
+        }
+        for edge in &self.relations {
+            storage::safe_id(&edge.from)?;
+            storage::safe_id(&edge.to)?;
+            if edge.from == edge.to {
+                return Err("项目连线不能指向自身".into());
+            }
+        }
+        Ok(())
+    }
+}
+
+pub(crate) fn read(root: &Path, index: &storage::IndexFile) -> Result<Layout, String> {
+    let path = safety::checked_path(root, FILE)?;
+    if !path.exists() {
+        return Ok(Layout::default());
+    }
+    if fs::metadata(&path).map_err(|e| e.to_string())?.len() > MAX_FILE_BYTES {
+        return Err("项目画布文件过大".into());
+    }
+    let mut layout: Layout = serde_json::from_slice(&fs::read(path).map_err(|e| e.to_string())?)
+        .map_err(|e| format!("无法读取项目画布：{e}"))?;
+    layout.validate()?;
+    layout.retain_projects(&index.projects.iter().map(|p| p.id.clone()).collect());
+    Ok(layout)
+}
+
+fn write(root: &Path, layout: &Layout) -> Result<(), String> {
+    sync::atomic_bytes(&safety::checked_path(root, FILE)?, &layout.bytes()?)
+}
+
+fn require_project(index: &storage::IndexFile, id: &str) -> Result<(), String> {
+    storage::safe_id(id)?;
+    if index.projects.iter().any(|p| p.id == id) {
+        Ok(())
+    } else {
+        Err("项目已不在此资料库中".into())
+    }
+}
+
+pub(crate) fn create_child(
+    root: &Path,
+    name: &str,
+    parent: &str,
+) -> Result<storage::ProjectMeta, String> {
+    let index = storage::read_index(root)?;
+    require_project(&index, parent)?;
+    storage::read_project(root, parent)?;
+    let mut layout = read(root, &index)?;
+    let (meta, mut writes) = storage::prepare_project(root, name)?;
+    layout.projects.insert(
+        meta.id.clone(),
+        Placement {
+            parent_id: Some(parent.to_owned()),
+            position: None,
+        },
+    );
+    writes.insert(FILE.into(), layout.bytes()?);
+    sync::transaction(root, writes)?;
+    Ok(meta)
+}
+
+pub(crate) fn require_no_children(root: &Path, id: &str) -> Result<(), String> {
+    let layout = read(root, &storage::read_index(root)?)?;
+    if layout
+        .projects
+        .values()
+        .any(|p| p.parent_id.as_deref() == Some(id))
+    {
+        return Err("此项目还有子项目，请先将子项目移出".into());
+    }
+    Ok(())
+}
+
+fn move_project(
+    root: &Path,
+    id: &str,
+    expected_parent: Option<&str>,
+    parent: Option<String>,
+) -> Result<Layout, String> {
+    let index = storage::read_index(root)?;
+    require_project(&index, id)?;
+    let mut layout = read(root, &index)?;
+    if layout.parent(id) != expected_parent {
+        return Err("项目所在位置已变化，请重新打开后再移动".into());
+    }
+    if let Some(target) = parent.as_deref() {
+        require_project(&index, target)?;
+        if layout.subtree(id).contains(target) {
+            return Err("不能将项目移入自身或它的子项目".into());
+        }
+    }
+    if layout.parent(id) != parent.as_deref() {
+        layout.projects.insert(
+            id.into(),
+            Placement {
+                parent_id: parent,
+                position: None,
+            },
+        );
+        write(root, &layout)?;
+    }
+    Ok(layout)
+}
+
+fn relate(
+    root: &Path,
+    project: Option<&str>,
+    from: String,
+    to: String,
+    present: bool,
+) -> Result<Layout, String> {
+    let index = storage::read_index(root)?;
+    require_project(&index, &from)?;
+    require_project(&index, &to)?;
+    let mut layout = read(root, &index)?;
+    if from == to || layout.parent(&from) != project || layout.parent(&to) != project {
+        return Err("请选择同一画布上的两个项目建立连线".into());
+    }
+    let relation = Relation { from, to };
+    let changed = if present {
+        layout.relations.insert(relation)
+    } else {
+        layout.relations.remove(&relation)
+    };
+    if changed {
+        write(root, &layout)?;
+    }
+    Ok(layout)
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum TileKind {
+    Project,
+    Board,
+}
+
+fn place(
+    root: &Path,
+    kind: TileKind,
+    id: &str,
+    project: Option<&str>,
+    position: Position,
+) -> Result<Layout, String> {
+    position.check()?;
+    let index = storage::read_index(root)?;
+    let mut layout = read(root, &index)?;
+    match kind {
+        TileKind::Project => {
+            require_project(&index, id)?;
+            if layout.parent(id) != project {
+                return Err("项目已移到另一层，请重新打开后再摆放".into());
+            }
+            layout.projects.entry(id.into()).or_default().position = Some(position);
+        }
+        TileKind::Board => {
+            let owner = project.ok_or("首页只能放项目")?;
+            require_project(&index, owner)?;
+            storage::safe_id(id)?;
+            if !storage::read_project(root, owner)?
+                .boards
+                .iter()
+                .any(|b| b.id == id)
+            {
+                return Err("白板已不在此项目中".into());
+            }
+            layout
+                .boards
+                .entry(owner.into())
+                .or_default()
+                .insert(id.into(), position);
+        }
+    }
+    write(root, &layout)?;
+    Ok(layout)
+}
+
+/// Sync protocol projects represent whiteboards. A board deletion or an older
+/// client projecting just boards must not remove the containing desktop folder.
+pub(crate) fn preserve_folders(
+    root: &Path,
+    writes: &mut BTreeMap<String, Vec<u8>>,
+) -> Result<(), String> {
+    let Some(bytes) = writes.get("index.json") else {
+        return Ok(());
+    };
+    let mut incoming: storage::IndexFile =
+        serde_json::from_slice(bytes).map_err(|e| e.to_string())?;
+    let projected: BTreeSet<_> = incoming.projects.iter().map(|p| p.id.clone()).collect();
+    let mut changed = false;
+    for folder in storage::read_index(root)?.projects {
+        if projected.contains(&folder.id) {
+            continue;
+        }
+        let mut content = storage::read_project(root, &folder.id)?;
+        if !content.boards.is_empty() {
+            content.boards.clear();
+            content.updated_at = storage::now_iso();
+            writes.insert(
+                format!("{}/project.json", folder.id),
+                serde_json::to_vec_pretty(&content).map_err(|e| e.to_string())?,
+            );
+        }
+        incoming.projects.push(folder);
+        changed = true;
+    }
+    if changed {
+        writes.insert(
+            "index.json".into(),
+            serde_json::to_vec_pretty(&incoming).map_err(|e| e.to_string())?,
+        );
+    }
+    Ok(())
+}
+
+#[tauri::command]
+pub fn project_canvas_read() -> Result<serde_json::Value, String> {
+    let _guard = sync::IO_LOCK.lock().map_err(|e| e.to_string())?;
+    let root = commands::root()?;
+    let layout = read(&root, &storage::read_index(&root)?)?;
+    Ok(serde_json::json!({ "layout": layout, "scope": safety::scope(&root)? }))
+}
+
+#[tauri::command]
+pub fn project_canvas_place(
+    kind: TileKind,
+    id: String,
+    project_id: Option<String>,
+    position: Position,
+    expected_scope: String,
+) -> Result<Layout, String> {
+    let _guard = sync::IO_LOCK.lock().map_err(|e| e.to_string())?;
+    let root = commands::root()?;
+    safety::ensure_scope(&root, &expected_scope)?;
+    place(&root, kind, &id, project_id.as_deref(), position)
+}
+
+#[tauri::command]
+pub fn project_canvas_move(
+    id: String,
+    expected_parent_id: Option<String>,
+    parent_id: Option<String>,
+    expected_scope: String,
+) -> Result<Layout, String> {
+    let _guard = sync::IO_LOCK.lock().map_err(|e| e.to_string())?;
+    let root = commands::root()?;
+    safety::ensure_scope(&root, &expected_scope)?;
+    move_project(&root, &id, expected_parent_id.as_deref(), parent_id)
+}
+
+#[tauri::command]
+pub fn project_canvas_relate(
+    project_id: Option<String>,
+    from: String,
+    to: String,
+    present: bool,
+    expected_scope: String,
+) -> Result<Layout, String> {
+    let _guard = sync::IO_LOCK.lock().map_err(|e| e.to_string())?;
+    let root = commands::root()?;
+    safety::ensure_scope(&root, &expected_scope)?;
+    relate(&root, project_id.as_deref(), from, to, present)
+}
+
+#[cfg(test)]
+mod tests;

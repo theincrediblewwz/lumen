@@ -210,6 +210,7 @@ pub fn sync_apply(app:tauri::AppHandle,expected_revision: String, files: BTreeMa
     if !settings(&root)?.enabled { return Err("同步已暂停".into()); }
     if snapshot(&root)?.revision != expected_revision { return Err("本地内容已改变，保留更改并在下一轮重新同步".into()); }
     let mut writes = files;
+    crate::project_canvas::preserve_folders(&root, &mut writes)?;
     if let Some(bytes)=writes.get("knowledge/library.json") {
         let library:Value=serde_json::from_slice(bytes).map_err(err)?;
         let before=snapshot(&root)?;
