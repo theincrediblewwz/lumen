@@ -5,9 +5,9 @@
 
 ## 当前版本
 
-[下载 Mac 0.1.18](https://github.com/theincrediblewwz/lumen/releases/tag/mac-v0.1.18) · [白板编辑与保存](./docs/CANVAS_AUTHORING.md) · [导入与恢复](./docs/LONG_MARKDOWN_AND_FAITHFUL_IMPORT.md)
+[下载 Mac 0.1.19](https://github.com/theincrediblewwz/lumen/releases/tag/mac-v0.1.19) · [白板编辑与保存](./docs/CANVAS_AUTHORING.md) · [导入与恢复](./docs/LONG_MARKDOWN_AND_FAITHFUL_IMPORT.md)
 
-**0.1.19 素材分页与子流程可读性候选。** 文档逐页接下一素材、大图等比扩大；子板可拉宽及独立收起预览，普通/热力节点都有明亮子流程光边，右侧面板遮挡光路，图标改亮绿色。完整构建通过后更新下载，操作见[素材分页](./docs/MATERIAL_PREVIEWS.md)。
+**0.1.19 素材分页与子流程可读性已完成构建和验收。** 文档逐页接下一素材、大图等比扩大；子板可拉宽及独立收起预览，普通/热力节点都有明亮子流程光边，右侧面板遮挡光路，图标改亮绿色。操作见[素材分页](./docs/MATERIAL_PREVIEWS.md)。
 
 **0.1.16 已完成构建和验收。** 新增节点内线性流程、框内右侧编号和右下悬浮追加、局部可见步骤直接选择、流畅拖动换位；画布/面板粘贴、多图文资源与首位预览、Answer Export ZIP；内容自适应、关系公式与三点提示、可拖动直弯连线。详见[子流程与内容组合](./docs/FLOW_COMPOSITION.md)。0.1.15的收藏、独立Markdown编辑器、自动保存与分级热力图继续保留。
 
