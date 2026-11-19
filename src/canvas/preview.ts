@@ -5,7 +5,7 @@ export function stepPreview(position: PreviewPosition, counts: number[], directi
   const resource = Math.max(0, Math.min(counts.length - 1, position.resource));
   const page = Math.max(0, Math.min(Math.max(1, counts[resource]) - 1, position.page));
   if (direction > 0) return page + 1 < counts[resource] ? { resource, page: page + 1 }
-    : { resource: (resource + 1) % counts.length, page: 0 };
+    : resource + 1 < counts.length ? { resource: resource + 1, page: 0 } : { resource, page };
   if (page > 0) return { resource, page: page - 1 };
   if (resource === 0) return { resource, page };
   const previous = resource - 1;

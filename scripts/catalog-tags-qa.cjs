@@ -100,7 +100,7 @@ const evidence = path.resolve(process.env.LSQ_UI_EVIDENCE || 'mac-ui-evidence');
     await rendered.locator('.katex').waitFor();
     await snapshot('home');
     await tag(custom).click();
-    await card('理论').click();
+    await card('理论').dblclick();
     await card('研究白板').waitFor();
     await eye().click(); assert.equal(await tag('全部内容').getAttribute('aria-pressed'), 'true');
     await page.keyboard.press('Escape');

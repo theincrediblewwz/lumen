@@ -37,7 +37,7 @@ async function drag(dx, dy) {
   await input().evaluate(el => el.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, isComposing: true, keyCode: 229 })));
   assert.equal(await input().count(), 1); assert.equal(await page.evaluate(() => window.__fixtureNavigationCalls.length), 1);
   await input().press('Escape'); checks.push('IME composition Enter does not prematurely rename');
-  await project('学习项目').click();
+  await project('学习项目').dblclick();
   await rename(board('合成学习白板'), '重命名白板');
   await page.evaluate(() => { window.__fixtureNavigationFailure = true; }); await input().press('Enter');
   await page.locator('.error-bar').filter({ hasText: '合成磁盘写入失败' }).waitFor();
@@ -54,7 +54,7 @@ async function drag(dx, dy) {
   await board('重命名白板').click(); await page.locator('.node-card').waitFor(); await drag(25, 15);
   await crumb('学习项目').click();
   await rename(board('重命名白板'), '最终白板'); await input().press('Enter'); await board('最终白板').waitFor();
-  await page.reload(); await project('学习项目').click(); await board('最终白板').click(); await page.locator('.node-card').waitFor();
+  await page.reload(); await project('学习项目').dblclick(); await board('最终白板').click(); await page.locator('.node-card').waitFor();
   assert.equal(await page.locator('.node-card').evaluate(el => parseFloat(el.style.left)), 125);
   checks.push('rename flushes pending canvas changes; content, project and board names survive reloading');
   await menu(); assert.equal(await page.getByRole('menuitem', { name: 'PNG · 图片', exact: true }).count(), 0);
@@ -99,7 +99,7 @@ async function drag(dx, dy) {
   await page.getByRole('button', { name: '新建项目', exact: true }).click(); await input().fill('新项目'); await input().press('Enter'); await project('新项目').waitFor();
   assert.equal(await page.locator('.node-card').count(), 0); assert.equal(await page.locator('.ai-fab').count(), 0);
   checks.push('creating a project stays on the root canvas without a stale board or AI context');
-  await project('学习项目').click(); await board('最终白板').click(); await page.locator('.node-card').waitFor(); await drag(5, 5);
+  await project('学习项目').dblclick(); await board('最终白板').click(); await page.locator('.node-card').waitFor(); await drag(5, 5);
   await crumb('学习项目').click();
   await board('最终白板').click({ button: 'right' }); await page.getByRole('menuitem', { name: '删除白板', exact: true }).click();
   for (const key of ['Delete', 'Backspace', 'ArrowRight', 'n', 'Control+z']) await page.keyboard.press(key);
@@ -115,7 +115,7 @@ async function drag(dx, dy) {
   await crumb('项目首页').click();
   await project('学习项目').click({ button: 'right' }); await page.getByRole('menuitem', { name: '删除项目', exact: true }).click();
   await page.getByRole('button', { name: '确认删除', exact: true }).click(); await project('学习项目').waitFor({ state: 'hidden' });
-  assert.equal(await page.locator('.node-card').count(), 0); await project('另一项目').click(); await board('另一项目的白板').click();
+  assert.equal(await page.locator('.node-card').count(), 0); await project('另一项目').dblclick(); await board('另一项目的白板').click();
   await page.reload(); await project('另一项目').waitFor(); assert.equal(await project('学习项目').count(), 0);
   checks.push('project deletion stays scoped and other saved folders remain reachable');
   await page.getByRole('button', { name: '菜单', exact: true }).click(); await page.getByRole('menuitem', { name: '知识库', exact: true }).click(); await page.locator('.knowledge-reading article').waitFor();

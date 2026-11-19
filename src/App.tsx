@@ -178,6 +178,10 @@ export default function App() {
   const filterIds = tagFilters[filterKey] ?? NO_TAGS;
   const tagFilter = useMemo(() => new Set(filterIds), [filterIds]);
   const visibleTiles = useMemo(() => tagFilter.size ? tiles.filter(tile => tile.tagIds.some(id => tagFilter.has(id))) : tiles, [tiles, tagFilter]);
+  const previewTiles = useCallback((projectId: string, childBoards: BoardMeta[]) => {
+    const children = catalogTiles(projects, childBoards, layout, projectId, favorites, covers);
+    return tagFilter.size ? children.filter(tile => tile.tagIds.some(id => tagFilter.has(id))) : children;
+  }, [projects, layout, favorites, covers, tagFilter]);
 
   const readCatalog = useCallback(async () => {
     const [rows, placement] = await Promise.all([
@@ -946,9 +950,11 @@ export default function App() {
             tags={tags}
             filtering={tagFilter.size > 0}
             disabled={busy || syncLocked || !!editing || !!coverEdit}
-            onOpen={tile => {
+            readBoards={api.boardsList}
+            previewTiles={previewTiles}
+            onOpen={(tile, owner = activeProject?.id) => {
               if (tile.kind === 'project') navigateProject(tile.row.id);
-              else if (activeProject) openBoard(activeProject.id, tile.row.id);
+              else if (owner) openBoard(owner, tile.row.id);
             }}
             onPlace={placeTile}
             onConnect={relation => relateProjects(relation, true)}

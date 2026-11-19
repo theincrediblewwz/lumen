@@ -13,7 +13,7 @@ const reading = () => page.locator('.knowledge-reading .md-body');
 const more = () => page.getByLabel('知识库更多操作', { exact: true }).click();
 async function open(extra = '') {
   await page.goto(url + extra);
-  await page.getByRole('button', { name: '桌面夹', exact: true }).click();
+  await page.getByRole('button', { name: '桌面夹', exact: true }).dblclick();
   await page.locator('.project-tile.is-board').filter({ hasText: '注意力学习' }).click();
   await page.getByRole('button', { name: '菜单', exact: true }).click(); await page.getByRole('menuitem', { name: '知识库', exact: true }).click(); await reading().waitFor();
 }

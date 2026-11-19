@@ -29,7 +29,7 @@ async function profileState(page) { return page.evaluate(async () => { const { l
   const breadcrumb = name => page.getByRole('navigation', { name: '项目路径' }).getByRole('button', { name, exact: true });
   const isOpen = () => breadcrumb('桌面夹').isVisible();
   await page.goto(fixture('main') + '&nodes=1'); await page.locator('.titlebar.is-mac').waitFor();
-  await click(page, projects());
+  await projects().dblclick();
   await click(page, page.locator('.project-tile.is-board').filter({ hasText: '合成学习白板' }));
   await page.locator('.node-card').waitFor();
   await theme(page, 'paper'); await shot(page, '04-after-board');

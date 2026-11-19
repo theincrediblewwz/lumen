@@ -11,9 +11,10 @@ import { StickerImage } from './StickerImage';
 import { imageDoc } from '../canvas/composition';
 
 const GAP = 24;
+const ignorePageCount = () => {};
 type PageProps = { page: number; onPages: (count: number) => void };
 /** Only the current resource is loaded; source order and original bytes are untouched. */
-export function NodeAttachment({ projectId, boardId, doc, refresh = 0, page = 0, onPages = () => {}, onImageSize }: {
+export function NodeAttachment({ projectId, boardId, doc, refresh = 0, page = 0, onPages = ignorePageCount, onImageSize }: {
   projectId: string; boardId: string; doc: DocRef; refresh?: number; page?: number;
   onPages?: (count: number) => void; onImageSize?: (size: { width: number; height: number }) => void;
 }) {
@@ -27,9 +28,11 @@ function DocumentOpening({ projectId, boardId, doc, refresh, page, onPages }: {
   const [payload, setPayload] = useState<DocumentPayload>(), [error, setError] = useState('');
   useEffect(() => {
     let active = true; setPayload(undefined); setError('');
-    void documentPayload(projectId, boardId, doc.path).then(p => active && setPayload(p)).catch(e => active && setError(String(e)));
+    void documentPayload(projectId, boardId, doc.path).then(p => active && setPayload(p)).catch(e => {
+      if (active) { setError(String(e)); onPages(1); }
+    });
     return () => { active = false; };
-  }, [projectId, boardId, doc.path, doc.bytes, refresh]);
+  }, [projectId, boardId, doc.path, doc.bytes, refresh, onPages]);
   const images = useDocumentImages(projectId, boardId, doc.path, payload?.attachment, payload?.scope);
   const html = useMemo(() => payload?.attachment?.kind === 'markdown_bundle' ? renderRichMarkdown(payload.markdown, payload.attachment, images.urls).html : undefined, [payload, images.urls]);
   if (error) return <div className="node-resource-error" data-content-status="error">文档暂时无法预览</div>;
@@ -72,7 +75,7 @@ export function DocumentPages({ markdown, html, page, onPages, waiting = false, 
       const fragments = Array.from(inner.firstElementChild?.getClientRects() ?? []);
       const pages = Math.max(1, ...fragments.map(rect => 1 + Math.round((rect.left - origin.left) / ((width + GAP) * scale))));
       setLayout(old => old.width === width && old.height === height && old.pages === pages ? old : { width, height, pages });
-      onPages(pages);
+      if (!waiting) onPages(pages);
     };
     const schedule = () => { cancelAnimationFrame(frame); frame = requestAnimationFrame(measure); };
     const resize = new ResizeObserver(schedule); resize.observe(view);
@@ -81,7 +84,7 @@ export function DocumentPages({ markdown, html, page, onPages, waiting = false, 
     if (board) appearance.observe(board, { attributes:true, attributeFilter:['style'] });
     inner.addEventListener('load', schedule, true); document.fonts.addEventListener('loadingdone', schedule); void document.fonts.ready.then(schedule); schedule();
     return () => { alive = false; cancelAnimationFrame(frame); resize.disconnect(); mutations.disconnect(); appearance.disconnect(); inner.removeEventListener('load', schedule, true); document.fonts.removeEventListener('loadingdone', schedule); };
-  }, [markdown, html, onPages]);
+  }, [markdown, html, onPages, waiting]);
   const current = Math.min(page, layout.pages - 1);
   return <div ref={viewport} className={`node-document-opening node-page-viewport${question ? ' node-question' : ''}`} data-content-status={error ? 'error' : waiting || !layout.width ? 'loading' : 'ready'} style={{ height: layout.height }}>
     <div ref={content} className="node-page-columns" style={{ width: layout.width || undefined, columnWidth: layout.width || undefined, height: layout.height, transform: `translateX(${-current * (layout.width + GAP)}px)` }}>
@@ -101,7 +104,7 @@ function PdfPagePreview({ projectId, boardId, doc, payload, page, onPages }: {
     let alive = true, task: ReturnType<typeof import('../documents/pdf')['loadPdf']> | undefined;
     void Promise.all([import('../documents/pdf'), assetBytes(projectId, boardId, doc.path, payload.attachment!.original, payload.scope)])
       .then(async ([module, bytes]) => { if (!alive) return; task = module.loadPdf(bytes); const value = await task.promise; if (alive) { setPdf(value); onPages(value.numPages); } })
-      .catch(e => alive && setError(String(e)));
+      .catch(e => { if (alive) { setError(String(e)); onPages(1); } });
     return () => { alive = false; void task?.destroy(); };
   }, [projectId, boardId, doc.path, payload, onPages]);
   useEffect(() => {

@@ -52,7 +52,7 @@ async function withinViewport(page, locator) {
   assert.equal(await page.title(), '知识库合成页面验收');
   assert.ok(page.url().startsWith(base + '/scripts/knowledge-ui-fixture.html'));
   assert.equal(await page.locator('vite-error-overlay').count(), 0);
-  await page.locator('.project-tile.is-project').filter({ hasText: '桌面夹' }).click();
+  await page.locator('.project-tile.is-project').filter({ hasText: '桌面夹' }).dblclick();
   await page.locator('.project-tile.is-board').filter({ hasText: '合成学习白板' }).click();
   await page.getByRole('button', { name: '菜单', exact: true }).click(); await page.getByRole('menuitem', { name: '知识库', exact: true }).click();
   await page.locator('.knowledge-reading article').waitFor();

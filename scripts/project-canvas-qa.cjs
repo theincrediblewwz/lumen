@@ -23,6 +23,36 @@ const evidence = path.resolve(process.env.LSQ_UI_EVIDENCE || 'mac-ui-evidence');
   const trail = () => page.locator('.project-path [aria-current=page]').innerText();
   const saved = () => page.evaluate(() => JSON.parse(localStorage.getItem('lumen.fixture-navigation')));
   const menuItem = name => page.getByRole('menuitem', { name, exact: true });
+  const branches = owner => page.locator(`.project-tile[data-preview-owner="${owner}"]`);
+  const allBranches = () => page.locator('.project-tile.is-preview-tile');
+  const settled = owner => page.waitForFunction(id => {
+    const cards = [...document.querySelectorAll(`.project-tile[data-preview-owner="${id}"]`)];
+    return cards.length > 0 && cards.every(card => card.style.opacity === '1');
+  }, owner);
+  const positions = () => page.locator('.project-tile:not(.is-preview-tile)').evaluateAll(cards => Object.fromEntries(cards.map(card => {
+    const point = new DOMMatrixReadOnly(card.style.transform);
+    return [card.querySelector('.project-tile-open').dataset.id, [point.m41, point.m42]];
+  })));
+  const watchPreview = () => page.evaluate(() => new Promise(resolve => {
+    const frames = [], end = performance.now() + 770;
+    function read(now) {
+      const tile = document.querySelector('.project-tile.is-preview-tile');
+      const line = document.querySelector('.project-preview-spoke');
+      if (tile && line) {
+        const point = new DOMMatrixReadOnly(tile.style.transform);
+        const from = ['x1', 'y1'].map(key => Number(line.getAttribute(key)));
+        const to = ['x2', 'y2'].map(key => Number(line.getAttribute(key)));
+        const dx = Math.abs(to[0] - (point.m41 + 77)), dy = Math.abs(to[1] - (point.m42 + 62));
+        frames.push({
+          clock: now, alpha: Number(tile.style.opacity), to,
+          length: Math.hypot(to[0] - from[0], to[1] - from[1]),
+          endpointError: Math.abs(Math.max(dx / 65, dy / 54) - 1),
+        });
+      }
+      if (now < end) requestAnimationFrame(read); else resolve(frames);
+    }
+    requestAnimationFrame(read);
+  }));
   const point = async (locator, offsetY = 32) => {
     const rect = await locator.boundingBox();
     assert.ok(rect);
@@ -80,6 +110,64 @@ const evidence = path.resolve(process.env.LSQ_UI_EVIDENCE || 'mac-ui-evidence');
     assert.equal(await trail(), '项目首页');
     check('dragging a project persists its position without opening it');
 
+    const originals = await positions(), layoutBefore = (await saved()).layout;
+    const originalView = await page.locator('.project-canvas-world').getAttribute('style');
+    const expansion = watchPreview();
+    await folder('桌面夹').click();
+    await settled('project');
+    const openingFrames = await expansion;
+    assert.equal(await trail(), '项目首页');
+    assert.equal(await folder('桌面夹').getAttribute('aria-expanded'), 'true');
+    assert.equal(await branches('project').count(), 2);
+    const spread = await positions();
+    assert.notDeepEqual(spread['project-other'], originals['project-other']);
+    assert.deepEqual(spread.project, originals.project);
+    for (const axis of [0, 1]) {
+      const oldDistance = originals[rootFolder.id][axis] - originals['project-other'][axis];
+      const newDistance = spread[rootFolder.id][axis] - spread['project-other'][axis];
+      assert.ok(Math.abs(newDistance - oldDistance) < 0.01);
+    }
+    assert.ok(openingFrames.filter(frame => frame.alpha > 0.02 && frame.alpha < 0.98).length >= 3);
+    assert.ok(openingFrames.every(frame => frame.endpointError < 0.02));
+    assert.ok(openingFrames.every((frame, i) => i === 0 || frame.length >= openingFrames[i-1].length - 0.01));
+    await page.screenshot({ path: path.join(evidence, 'project-folder-preview-expanded.png') });
+    const collapse = watchPreview();
+    await folder('桌面夹').click();
+    await allBranches().first().waitFor({ state: 'detached' });
+    const closingFrames = await collapse;
+    assert.ok(closingFrames.filter(frame => frame.alpha > 0.02 && frame.alpha < 0.98).length >= 3);
+    assert.ok(closingFrames.every(frame => frame.endpointError < 0.02));
+    assert.ok(closingFrames.every((frame, i) => i === 0 || frame.length <= closingFrames[i-1].length + 0.01));
+    assert.deepEqual(await positions(), originals);
+    assert.equal(await page.locator('.project-canvas-world').getAttribute('style'), originalView);
+    assert.deepEqual((await saved()).layout, layoutBefore);
+    fs.writeFileSync(path.join(evidence, 'project-folder-preview-frames.json'), JSON.stringify({ openingFrames, closingFrames }, null, 2));
+    check('single-click animates the same card and spoke positions on every frame; other folders keep their spacing and collapse restores the layout');
+
+    await folder('桌面夹').click();
+    await settled('project');
+    await folder('另一项目').click();
+    await settled('project-other');
+    assert.equal(await branches('project').count(), 0);
+    assert.equal(await folder('桌面夹').getAttribute('aria-expanded'), 'false');
+    assert.equal(await trail(), '项目首页');
+    await branches('project-other').getByRole('button', { name: '另一项目的白板', exact: true }).click();
+    await page.locator('.board-canvas-live').waitFor();
+    assert.equal(await trail(), '另一项目的白板');
+    await crumb('项目首页').click();
+    await folder('桌面夹').waitFor();
+    assert.deepEqual(await positions(), originals);
+    assert.equal(await allBranches().count(), 0);
+    await page.emulateMedia({ reducedMotion: 'reduce' });
+    await folder('桌面夹').press('Space');
+    await branches('project').first().waitFor();
+    assert.equal(await branches('project').first().evaluate(card => card.style.opacity), '1');
+    await folder('桌面夹').press('Escape');
+    await allBranches().first().waitFor({ state: 'detached' });
+    await page.emulateMedia({ reducedMotion: 'no-preference' });
+    assert.deepEqual((await saved()).layout, layoutBefore);
+    check('switching previews and opening a projected board use the correct project; returning clears the temporary view, and reduced motion snaps');
+
     await folder('桌面夹').hover();
     const source = await point(port('桌面夹'), null);
     const target = await point(folder('另一项目'));
@@ -111,7 +199,7 @@ const evidence = path.resolve(process.env.LSQ_UI_EVIDENCE || 'mac-ui-evidence');
     assert.equal(await rootArrow.count(), 1);
     check('keyboard menus can create the reverse arrow and remove just that direction');
 
-    await folder('桌面夹').click();
+    await folder('桌面夹').dblclick();
     await board('合成学习白板').waitFor();
     await newItem('project', '阅读资料');
     await newItem('board', '补充白板');
@@ -131,9 +219,9 @@ const evidence = path.resolve(process.env.LSQ_UI_EVIDENCE || 'mac-ui-evidence');
     await page.mouse.move(850, 450); await page.mouse.wheel(0, 200);
     await page.waitForFunction(() => Number(document.querySelector('.project-canvas')?.dataset.zoom) < 1);
     const transform = await page.locator('.project-canvas-world').getAttribute('style');
-    await folder('阅读资料').click();
+    await folder('阅读资料').dblclick();
     await newItem('project', '第三层');
-    await folder('第三层').click();
+    await folder('第三层').dblclick();
     await newItem('board', '最深白板');
     await board('最深白板').click(); await page.locator('.board-canvas-live').waitFor();
     assert.equal(await trail(), '最深白板');
@@ -144,6 +232,20 @@ const evidence = path.resolve(process.env.LSQ_UI_EVIDENCE || 'mac-ui-evidence');
     check('three project levels and the board appear in the path; jumping back restores the camera and positions');
 
     await crumb('项目首页').click();
+    await folder('桌面夹').click();
+    await settled('project');
+    assert.equal(await branches('project').locator('.project-preview-open').count(), 4);
+    await branches('project').getByRole('button', { name: '阅读资料', exact: true }).dblclick();
+    await folder('第三层').waitFor();
+    assert.equal(await trail(), '阅读资料');
+    await crumb('项目首页').click();
+    await folder('桌面夹').waitFor();
+    assert.equal(await allBranches().count(), 0);
+    await folder('桌面夹').dblclick();
+    await folder('阅读资料').waitFor();
+    check('previews include both subprojects and boards, and double-clicking a projected folder enters its real path');
+
+    await crumb('项目首页').click();
     const moving = await point(folder('另一项目')), destination = await point(folder('桌面夹'));
     await page.mouse.move(moving.x, moving.y); await page.mouse.down();
     await page.mouse.move(destination.x, destination.y, { steps: 12 });
@@ -151,10 +253,10 @@ const evidence = path.resolve(process.env.LSQ_UI_EVIDENCE || 'mac-ui-evidence');
     await page.mouse.up();
     await folder('另一项目').waitFor({ state: 'detached' });
     assert.equal(await rootArrow.count(), 0);
-    await folder('桌面夹').click(); await folder('另一项目').waitFor();
+    await folder('桌面夹').dblclick(); await folder('另一项目').waitFor();
     await drag(await point(port('阅读资料'), null), await point(folder('另一项目')));
     await arrow('阅读资料', '另一项目').waitFor();
-    await folder('另一项目').click(); await board('另一项目的白板').waitFor();
+    await folder('另一项目').dblclick(); await board('另一项目的白板').waitFor();
     check('reparenting preserves content and hides arrows across levels; folders can also connect inside a project');
 
     await crumb('桌面夹').click();
@@ -181,13 +283,13 @@ const evidence = path.resolve(process.env.LSQ_UI_EVIDENCE || 'mac-ui-evidence');
     assert.equal(await trail(), '项目首页');
     await rootArrow.waitFor();
     assert.deepEqual(await point(folder('第三个项目')), restartPoint);
-    await folder('桌面夹').click(); await folder('阅读资料').click(); await folder('第三层').click();
+    await folder('桌面夹').dblclick(); await folder('阅读资料').dblclick(); await folder('第三层').dblclick();
     await board('最深白板').waitFor();
     check('failed writes roll back the visual move; restart opens root and preserves all saved levels');
 
     const design = await browser.newPage({ viewport: { width: 1487, height: 1058 } });
     await design.goto(address + '&catalogDesignQA', { waitUntil: 'domcontentloaded' });
-    await design.getByRole('button', { name: '研究笔记', exact: true }).click();
+    await design.getByRole('button', { name: '研究笔记', exact: true }).dblclick();
     await design.getByRole('button', { name: '讨论脉络', exact: true }).waitFor();
     await design.mouse.move(1400, 170);
     await design.screenshot({ path: path.join(evidence, 'project-canvas-reference-size.png'), animations: 'disabled' });

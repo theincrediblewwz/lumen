@@ -25,7 +25,7 @@ fs.mkdirSync(out, { recursive: true });
     const tile = page.locator('.project-tile.is-board').getByRole('button', { name, exact: true });
     const folder = page.getByRole('navigation', { name: '项目路径' }).getByRole('button', { name: '桌面夹', exact: true });
     if (await folder.isVisible()) await folder.click();
-    if (!await tile.isVisible()) await page.locator('.project-tile.is-project').getByRole('button',{name:'桌面夹',exact:true}).click();
+    if (!await tile.isVisible()) await page.locator('.project-tile.is-project').getByRole('button',{name:'桌面夹',exact:true}).dblclick();
     await tile.click();
     await page.locator('.board-canvas-live').waitFor();
   };

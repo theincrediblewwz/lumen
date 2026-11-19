@@ -22,13 +22,20 @@ const base=process.env.LSQ_UI_URL||'http://127.0.0.1:5198',out=path.resolve(proc
    localStorage.setItem('lumen.fixture-capture',JSON.stringify(s));
   });
   const syntheticAssets=await page.evaluate(()=>JSON.parse(sessionStorage.getItem('lumen.fixture-assets')||'{}'));for(const [name,bytes]of Object.entries(syntheticAssets))fs.writeFileSync(path.join(out,path.basename(name)),Buffer.from(bytes));
-  await page.reload({waitUntil:'domcontentloaded'});await page.waitForFunction(()=>window.__fixtureReactMounted);await page.getByText('桌面夹',{exact:true}).click();await page.getByText('分页与子流程',{exact:true}).click();
+  await page.reload({waitUntil:'domcontentloaded'});await page.waitForFunction(()=>window.__fixtureReactMounted);await page.getByText('桌面夹',{exact:true}).dblclick();await page.getByText('分页与子流程',{exact:true}).click();
   assert.match(await page.title(),/知识库合成页面验收/);assert.equal(await page.locator('vite-error-overlay').count(),0);await card('materials').locator('[data-content-status="ready"]').first().waitFor();
   await page.waitForFunction(()=>Number(document.querySelector('[data-node-id="materials"] .node-preview').dataset.previewPages)>1);await page.waitForFunction(()=>!document.querySelector('[data-node-id="materials"] .math[data-tex]:not([data-done])'));
   await fit();const original=(await state()).boards.board.nodes;const count=Number(await preview().getAttribute('data-preview-pages'));assert.ok(count>3);
   const previous=()=>preview().getByRole('button',{name:'上一页',exact:true});
   const next=()=>preview().getByRole('button',{name:'下一页',exact:true});
-  assert.equal(await previous().count(),0);
+  const previousMaterial=()=>preview().getByRole('button',{name:'上一个素材',exact:true});
+  const nextMaterial=()=>preview().getByRole('button',{name:'下一个素材',exact:true});
+  const progress=async (material,page,total)=>{
+   assert.equal(await preview().locator('.node-preview-material-number').innerText(),String(material));
+   assert.equal(await preview().locator('.node-preview-page-number').innerText(),`${page}/${total}`);
+  };
+  assert.equal(await preview().locator('.node-preview-previous').count(),0);
+  await progress(1,1,count);
   await next().click();
   assert.equal(await preview().getAttribute('data-preview-page'),'1');
   const pagerStyle=button=>button.evaluate(e=>{const s=getComputedStyle(e);return {width:s.width,height:s.height,radius:s.borderRadius,bottom:s.bottom,left:s.left,right:s.right};});
@@ -37,6 +44,9 @@ const base=process.env.LSQ_UI_URL||'http://127.0.0.1:5198',out=path.resolve(proc
   assert.deepEqual([right.width,right.height,right.radius,right.bottom,right.right],['24px','24px','6px','4px','4px']);
   const textViewport=await preview().locator('.node-page-viewport').boundingBox();
   for(const button of [previous(),next()])assert.ok((await button.boundingBox()).y>=textViewport.y+textViewport.height-.5);
+  const indicator=await preview().locator('.node-preview-progress').boundingBox();
+  assert.ok(indicator.y>=textViewport.y+textViewport.height-.5);
+  assert.ok(Math.abs(indicator.x+indicator.width/2-(textViewport.x+textViewport.width/2))<1);
   await previous().focus();await previous().press('Enter');assert.equal(await preview().getAttribute('data-preview-page'),'0');
   assert.equal(await previous().count(),0);assert.equal(await next().evaluate(e=>document.activeElement===e),true);
   check('small rounded controls sit in opposite bottom corners; Previous appears after page one and returns keyboard focus on the first page');
@@ -51,20 +61,32 @@ const base=process.env.LSQ_UI_URL||'http://127.0.0.1:5198',out=path.resolve(proc
    if(i<count-1)await preview().getByRole('button',{name:'下一页',exact:true}).click();
   }
   assert.equal(seen.size,45);assert.ok(end);check('walking every page visits all 45 paragraphs and the final marker without dropping content');
-  await preview().getByRole('button',{name:'下一页',exact:true}).click();await card('materials').locator('.sticker-image').waitFor();await page.waitForFunction(()=>document.querySelector('[data-node-id="materials"] img')?.naturalWidth===320);await page.waitForTimeout(150);
+  assert.equal(await next().count(),0);
+  assert.match(await nextMaterial().getAttribute('class'),/is-material-turn/);
+  await progress(1,count,count);
+  await page.screenshot({path:path.join(out,'material-pager-document-boundary.png')});
+  await nextMaterial().click();await card('materials').locator('.sticker-image').waitFor();await page.waitForFunction(()=>document.querySelector('[data-node-id="materials"] img')?.naturalWidth===320);await page.waitForTimeout(150);
   const small=await card('materials').boundingBox();assert.ok(small.width<430);check('the last document page advances to the next image in original attachment order');
-  await previous().click();await preview().locator('[data-content-status="ready"]').waitFor();
+  await progress(2,1,1);
+  assert.equal(await previous().count(),0);
+  assert.match(await previousMaterial().getAttribute('class'),/is-material-turn/);
+  await previousMaterial().click();await preview().locator('[data-content-status="ready"]').waitFor();
   assert.equal(await preview().getAttribute('data-preview-resource'),'docs/pages.md');
   assert.equal(await preview().getAttribute('data-preview-page'),String(count-1));
-  await next().click();await card('materials').locator('.sticker-image').waitFor();
+  await nextMaterial().click();await card('materials').locator('.sticker-image').waitFor();
   check('Previous from an image returns to the last page of the preceding document');
-  await preview().getByRole('button',{name:'下一页',exact:true}).click();await page.waitForFunction(()=>document.querySelector('[data-node-id="materials"] img')?.naturalWidth===2400);await page.waitForTimeout(150);const large=await card('materials').boundingBox();assert.ok(large.width>small.width*2);
+  await nextMaterial().click();await page.waitForFunction(()=>document.querySelector('[data-node-id="materials"] img')?.naturalWidth===2400);await page.waitForTimeout(150);const large=await card('materials').boundingBox();assert.ok(large.width>small.width*2);
   const ratio=await card('materials').locator('img').evaluate(e=>e.getBoundingClientRect().width/e.getBoundingClientRect().height);assert.ok(Math.abs(ratio-2)<.01);check('high-resolution next image grows proportionally instead of inheriting the smaller slide footprint');
-  await fit();await preview().getByRole('button',{name:'下一页',exact:true}).click();await preview().locator('.node-document-opening[data-content-status="ready"]').waitFor();assert.match(await preview().innerText(),/SECOND_DOCUMENT/);check('image navigation continues to the next Markdown document');
-  const shortPages=Number(await preview().getAttribute('data-preview-pages'));for(let i=0;i<shortPages-1;i++)await preview().getByRole('button',{name:'下一页',exact:true}).click();
-  await preview().getByRole('button',{name:'下一页',exact:true}).click();await page.waitForFunction(()=>document.querySelector('[data-node-id="materials"] img')?.naturalHeight===1200);await fit();const portraitRatio=await card('materials').locator('img').evaluate(e=>e.getBoundingClientRect().width/e.getBoundingClientRect().height);assert.ok(Math.abs(portraitRatio-.5)<.01);
-  await preview().getByRole('button',{name:'下一页',exact:true}).click();await preview().locator('.node-document-opening').waitFor();assert.equal(await preview().getAttribute('data-preview-resource'),'docs/pages.md');assert.deepEqual((await state()).boards.board.nodes,original);check('portrait ratio and cyclic navigation are correct; previewing never rewrites nodes, originals or resource order');
-  await preview().locator('[data-content-status="ready"]').first().waitFor();await preview().getByRole('button',{name:'下一页',exact:true}).click();assert.equal(await preview().getAttribute('data-preview-page'),'1');
+  await fit();await nextMaterial().click();await preview().locator('.node-document-opening[data-content-status="ready"]').waitFor();assert.match(await preview().innerText(),/SECOND_DOCUMENT/);check('image navigation continues to the next Markdown document');
+  const shortPages=Number(await preview().getAttribute('data-preview-pages'));for(let i=0;i<shortPages-1;i++)await next().click();
+  await nextMaterial().click();await page.waitForFunction(()=>document.querySelector('[data-node-id="materials"] img')?.naturalHeight===1200);await fit();const portraitRatio=await card('materials').locator('img').evaluate(e=>e.getBoundingClientRect().width/e.getBoundingClientRect().height);assert.ok(Math.abs(portraitRatio-.5)<.01);
+  await progress(5,1,1);
+  assert.equal(await preview().locator('.node-preview-next').count(),0);
+  assert.deepEqual((await state()).boards.board.nodes,original);
+  check('single and double chevrons distinguish paging from switching materials, the counter follows both, and navigation stops at the end');
+  await previousMaterial().click();await preview().locator('[data-content-status="ready"]').first().waitFor();
+  assert.equal(await preview().getAttribute('data-preview-resource'),'docs/short.md');
+  assert.equal(await preview().getAttribute('data-preview-page'),String(shortPages-1));
   await fit();await card('owner').click();await page.locator('.flow-panel').waitFor();await page.locator('[data-flow-step="step-a"] [data-content-status="ready"]').first().waitFor();
   const before=await page.locator('.flow-panel').boundingBox(),handle=await page.getByRole('separator',{name:'调整子白板宽度',exact:true}).boundingBox();await page.mouse.move(handle.x+handle.width/2,handle.y+handle.height/2);await page.mouse.down();await page.mouse.move(handle.x+180,handle.y+handle.height/2,{steps:10});await page.mouse.up();const after=await page.locator('.flow-panel').boundingBox();assert.ok(after.width>before.width+150);check('dragging the right border widens the subboard and reflows its steps');
   await page.locator('[data-flow-step="step-a"] .node-preview-next').click();assert.equal(await page.locator('[data-flow-step="step-a"] .node-preview').getAttribute('data-preview-page'),'1');
@@ -73,7 +95,7 @@ const base=process.env.LSQ_UI_URL||'http://127.0.0.1:5198',out=path.resolve(proc
   const mask=await page.locator('[data-flow-occlusion]').evaluate(e=>({x:Number(e.getAttribute('x')),y:Number(e.getAttribute('y')),w:Number(e.getAttribute('width')),h:Number(e.getAttribute('height'))}));const panel=await page.locator('.node-panel').boundingBox(),canvas=await page.locator('.board-canvas-live').boundingBox();assert.ok(Math.abs(mask.x-(panel.x-canvas.x-1))<2);assert.ok(mask.w>=panel.width);const stack=await page.evaluate(()=>[getComputedStyle(document.querySelector('.node-panel')).zIndex,getComputedStyle(document.querySelector('.flow-light-paths')).zIndex].map(Number));assert.ok(stack[0]>stack[1]);check('light paths exclude the current right panel rectangle and render beneath it');
   for(const theme of ['light','dark','paper']){await page.evaluate(async theme=>{const m=await import('/src/settings.ts');m.applySettings({...m.DEFAULT_SETTINGS,theme,glass:true},'macos');},theme);await page.screenshot({path:path.join(out,`material-flow-${theme}.png`)});}
   const glow=await card('owner').evaluate(e=>{const s=getComputedStyle(e,'::after');return{animation:s.animationName,border:s.borderTopWidth,shadow:s.boxShadow};});assert.equal(glow.animation,'flow-breathe');assert.ok(parseFloat(glow.border)>0);assert.notEqual(glow.shadow,'none');check('ordinary owner nodes have a bright hue-matched slow breathing perimeter');
-  await page.locator('.flow-close').click();await page.locator('.np-close').click();await fit();await preview().waitFor();assert.equal(await preview().getAttribute('data-preview-page'),'1');check('viewport virtualization restores the node reading position');await page.locator('.canvas-zoom-label').click();for(let i=0;i<6;i++)await page.keyboard.press('Meta+-');await page.locator('.heat-cell.has-flow').waitFor();const flowCount=await page.locator('.heat-cell').evaluateAll(c=>c.reduce((sum,e)=>sum+Number(e.dataset.flowCount),0));assert.equal(flowCount,1);assert.equal(await page.locator('.heat-cell.has-flow').evaluate(e=>getComputedStyle(e,'::after').animationName),'flow-breathe');check('overview aggregation retains the subflow marker and bright breathing perimeter');
+  await page.locator('.flow-close').click();await page.locator('.np-close').click();await fit();await preview().waitFor();assert.equal(await preview().getAttribute('data-preview-resource'),'docs/short.md');assert.equal(await preview().getAttribute('data-preview-page'),String(shortPages-1));check('viewport virtualization restores the node reading position');await page.locator('.canvas-zoom-label').click();for(let i=0;i<6;i++)await page.keyboard.press('Meta+-');await page.locator('.heat-cell.has-flow').waitFor();const flowCount=await page.locator('.heat-cell').evaluateAll(c=>c.reduce((sum,e)=>sum+Number(e.dataset.flowCount),0));assert.equal(flowCount,1);assert.equal(await page.locator('.heat-cell.has-flow').evaluate(e=>getComputedStyle(e,'::after').animationName),'flow-breathe');check('overview aggregation retains the subflow marker and bright breathing perimeter');
   await page.screenshot({path:path.join(out,'material-overview.png')});
   await page.emulateMedia({reducedMotion:'reduce'});assert.equal(await page.locator('.heat-cell.has-flow').evaluate(e=>getComputedStyle(e,'::after').animationName),'none');check('reduced-motion mode keeps a bright static perimeter');
   await page.setViewportSize({width:720,height:650});await page.locator('.canvas-zoom-label').click();await fit();if(await card('owner').count()){await card('owner').click();const b=await page.locator('.flow-panel').boundingBox();assert.ok(b.width<=688);await page.screenshot({path:path.join(out,'material-flow-720.png')});}check('subboard width remains bounded in a narrow viewport');
@@ -81,12 +103,12 @@ const base=process.env.LSQ_UI_URL||'http://127.0.0.1:5198',out=path.resolve(proc
   await page.setViewportSize({width:1440,height:960});await page.emulateMedia({reducedMotion:'no-preference'});
   const pdfBytes=[...fs.readFileSync(path.join(__dirname,'fixtures/rich-print.pdf'))];
   await page.evaluate(async bytes=>{const s=JSON.parse(localStorage.getItem('lumen.fixture-capture')),raw=new Uint8Array(bytes),hash=[...new Uint8Array(await crypto.subtle.digest('SHA-256',raw))].map(v=>v.toString(16).padStart(2,'0')).join(''),asset={path:'docs/asset_'+hash+'.pdf',sha256:hash,size:raw.length,media_type:'application/pdf'};s.richDocuments['docs/preview.pdf']={markdown:'# PDF original',scope:'synthetic-scope',attachment:{schema:'lumen-document/v1',kind:'pdf',original:asset,images:{},pages:2,extraction:'ready'}};s.documents['docs/preview.pdf']='# PDF original';const assets=JSON.parse(sessionStorage.getItem('lumen.fixture-assets')||'{}');assets[asset.path]=bytes;sessionStorage.setItem('lumen.fixture-assets',JSON.stringify(assets));s.boards.board.nodes=[{id:'pdf',title:'PDF分页',x:100,y:130,w:420,docs:[{path:'docs/preview.pdf',title:'双页 PDF'}],created_at:'',updated_at:''}];s.boards.board.edges=[];s.boards.board.viewport={x:0,y:0,zoom:1};localStorage.setItem('lumen.fixture-capture',JSON.stringify(s));},pdfBytes);
-  await page.reload({waitUntil:'domcontentloaded'});await page.waitForFunction(()=>window.__fixtureReactMounted);await page.getByText('桌面夹',{exact:true}).click();await page.getByText('分页与子流程',{exact:true}).click();await card('pdf').locator('.node-pdf-page[data-content-status="ready"]').waitFor();assert.equal(await card('pdf').locator('.node-preview').getAttribute('data-preview-pages'),'2');
+  await page.reload({waitUntil:'domcontentloaded'});await page.waitForFunction(()=>window.__fixtureReactMounted);await page.getByText('桌面夹',{exact:true}).dblclick();await page.getByText('分页与子流程',{exact:true}).click();await card('pdf').locator('.node-pdf-page[data-content-status="ready"]').waitFor();assert.equal(await card('pdf').locator('.node-preview').getAttribute('data-preview-pages'),'2');
   const firstCanvas=await card('pdf').locator('canvas').evaluate(e=>e.toDataURL());await card('pdf').getByRole('button',{name:'下一页',exact:true}).click();await card('pdf').locator('canvas[aria-label="PDF 第2页"]').waitFor();await card('pdf').locator('.node-pdf-page[data-content-status="ready"]').waitFor();assert.notEqual(await card('pdf').locator('canvas').evaluate(e=>e.toDataURL()),firstCanvas);check('offline PDF previews render the distinct original first and second pages');
   await page.screenshot({path:path.join(out,'material-pdf.png')});
   // Promoting a document must still select it even when a full-question resource exists.
   await page.evaluate(()=>{const s=JSON.parse(localStorage.getItem('lumen.fixture-capture'));s.boards.board.nodes=[{id:'promote',title:'首位素材',summary:'完整问题仍然保留，公式 $\\nu$。',x:100,y:140,w:420,docs:[{path:'docs/question_promote.md',title:'完整问题'},{path:'docs/pages.md',title:'分页文档'},{path:'docs/short.md',title:'下一篇文档'}],created_at:'',updated_at:''}];localStorage.setItem('lumen.fixture-capture',JSON.stringify(s));});
-  await page.reload({waitUntil:'domcontentloaded'});await page.waitForFunction(()=>window.__fixtureReactMounted);await page.getByText('桌面夹',{exact:true}).click();await page.getByText('分页与子流程',{exact:true}).click();
+  await page.reload({waitUntil:'domcontentloaded'});await page.waitForFunction(()=>window.__fixtureReactMounted);await page.getByText('桌面夹',{exact:true}).dblclick();await page.getByText('分页与子流程',{exact:true}).click();
   const mixed=card('promote'),question=mixed.getByRole('group',{name:'完整问题预览'}),attachment=mixed.getByRole('group',{name:'附件预览'});
   await question.locator('[data-content-status="ready"]').waitFor();await attachment.locator('[data-content-status="ready"]').waitFor();
   assert.equal(await mixed.locator('.node-preview').count(),2);
@@ -107,7 +129,7 @@ const base=process.env.LSQ_UI_URL||'http://127.0.0.1:5198',out=path.resolve(proc
   check('promoting an attachment selects it while the separate full-question document stays visible');await page.locator('.np-close').click();
   // A large Markdown resource remains completely accessible within bounded-height pages.
   await page.evaluate(()=>{const s=JSON.parse(localStorage.getItem('lumen.fixture-capture'));s.documents['docs/large.md']=Array.from({length:2400},(_,i)=>`段落 ${i} `+'大文档分页保持正文完整，翻页浏览而不是裁掉后半篇。'.repeat(6)).join('\n\n')+'\n\nLARGE_DOCUMENT_END';s.boards.board.nodes=[{id:'huge',title:'大文档分页',x:100,y:140,w:480,docs:[{path:'docs/large.md',title:'完整大文档'}],created_at:'',updated_at:''}];localStorage.setItem('lumen.fixture-capture',JSON.stringify(s));});
-  const started=Date.now();await page.reload({waitUntil:'domcontentloaded'});await page.waitForFunction(()=>window.__fixtureReactMounted);await page.getByText('桌面夹',{exact:true}).click();await page.getByText('分页与子流程',{exact:true}).click();await card('huge').locator('[data-content-status="ready"]').waitFor();const hugePages=Number(await card('huge').locator('.node-preview').getAttribute('data-preview-pages'));assert.ok(hugePages>100);assert.ok((await card('huge').boundingBox()).height<400);assert.match(await card('huge').innerText(),/LARGE_DOCUMENT_END/);assert.equal(await card('huge').locator('.node-page-columns p').count(),2401);check('large Markdown retains every paragraph and its last marker while rendering a bounded-height first page');
+  const started=Date.now();await page.reload({waitUntil:'domcontentloaded'});await page.waitForFunction(()=>window.__fixtureReactMounted);await page.getByText('桌面夹',{exact:true}).dblclick();await page.getByText('分页与子流程',{exact:true}).click();await card('huge').locator('[data-content-status="ready"]').waitFor();const hugePages=Number(await card('huge').locator('.node-preview').getAttribute('data-preview-pages'));assert.ok(hugePages>100);assert.ok((await card('huge').boundingBox()).height<400);assert.match(await card('huge').innerText(),/LARGE_DOCUMENT_END/);assert.equal(await card('huge').locator('.node-page-columns p').count(),2401);check('large Markdown retains every paragraph and its last marker while rendering a bounded-height first page');
   fs.writeFileSync(path.join(out,'material-large-metrics.json'),JSON.stringify({characters:(await state()).documents['docs/large.md'].length,bytes:Buffer.byteLength((await state()).documents['docs/large.md']),pages:hugePages,loadMs:Date.now()-started},null,2));
   assert.deepEqual(errors,[]);fs.writeFileSync(path.join(out,'material-pages-report.json'),JSON.stringify({browser:'WebKit',fallback:'Browser plugin not available',pageIdentity:true,notBlank:true,noOverlay:true,checks,errors,documentPages:count,paragraphsSeen:seen.size},null,2));console.log(JSON.stringify({checks:checks.length,errors,pages:count}));
  }catch(e){await page.screenshot({path:path.join(out,'material-failure.png')});fs.writeFileSync(path.join(out,'material-failure.txt'),e.stack+'\n'+JSON.stringify(errors));throw e;}finally{await browser.close();}

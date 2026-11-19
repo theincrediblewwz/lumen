@@ -6,11 +6,12 @@ describe('material previews and subboard presentation', () => {
     const visited = [];
     for (let i = 0; i < 6; i++) { visited.push(position); position = stepPreview(position, counts); }
     expect(visited).toEqual([{ resource: 0, page: 0 }, { resource: 0, page: 1 }, { resource: 0, page: 2 }, { resource: 1, page: 0 }, { resource: 2, page: 0 }, { resource: 2, page: 1 }]);
-    expect(position).toEqual({ resource: 0, page: 0 });
-    expect(stepPreview(position, counts, -1)).toEqual(position);
+    expect(position).toEqual({ resource: 2, page: 1 });
+    expect(stepPreview(visited[0], counts, -1)).toEqual(visited[0]);
     expect(stepPreview({ resource: 1, page: 0 }, counts, -1)).toEqual({ resource: 0, page: 2 });
     expect(stepPreview({ resource: 2, page: 1 }, counts, -1)).toEqual({ resource: 2, page: 0 });
-    expect(stepPreview({ resource: 20, page: 99 }, [1])).toEqual({ resource: 0, page: 0 }); expect(stepPreview(position, [])).toEqual(position);
+    expect(stepPreview({ resource: 20, page: 99 }, [1])).toEqual({ resource: 0, page: 0 });
+    expect(stepPreview(visited[0], [])).toEqual(visited[0]);
   });
   it('grows higher-resolution slides while preserving portrait and landscape ratios', () => {
     expect(materialImageSize(400, 200)).toEqual({ w: 400, h: 200 });

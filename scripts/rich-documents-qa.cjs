@@ -391,7 +391,7 @@ const errors = [],
   await page
     .locator(".project-tile.is-project")
     .filter({ hasText: "桌面夹" })
-    .click();
+    .dblclick();
   await page
     .locator(".project-tile.is-board")
     .filter({ hasText: "合成学习白板" })

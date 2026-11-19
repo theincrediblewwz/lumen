@@ -1,11 +1,13 @@
 import { Check, Plus, Sparkles, Star, X } from 'lucide-react';
-import { useEffect, useId, useRef, useState, type MouseEvent, type PointerEvent } from 'react';
-import type { Viewport } from '../api';
+import { memo, useEffect, useId, useRef, useState, type MouseEvent, type PointerEvent } from 'react';
+import type { BoardMeta, Viewport } from '../api';
 import { fitToBounds, IDENTITY_VIEWPORT, screenToWorld, worldToScreen, zoomByFactor, type Vec2 } from '../canvas/CanvasEngine';
-import { bentGeometry, borderPoint, edgeGeometry, straightPath, type Box } from '../canvas/geometry';
+import { bentGeometry, borderPoint, boxCenter, edgeGeometry, straightPath, type Box } from '../canvas/geometry';
 import { coverPreset } from '../projectCanvas/coverPresets';
-import { readProjectView, saveProjectView, TILE_HEIGHT, TILE_WIDTH, type CatalogTile, type ProjectRelation } from '../projectCanvas/layout';
+import { cardBounds, translate } from '../projectCanvas/expansion';
+import { TILE_HEIGHT, TILE_WIDTH, type CatalogTile, type ProjectRelation } from '../projectCanvas/layout';
 import type { CatalogTag } from '../projectCanvas/tags';
+import { tileKey, useExpansion } from '../projectCanvas/useExpansion';
 import { EdgeLabel } from './EdgeLabel';
 import { TagDots } from './CatalogTags';
 import { ProjectTileArtwork } from './ProjectTileArtwork';
@@ -31,7 +33,9 @@ type Props = {
   tags: CatalogTag[];
   filtering: boolean;
   disabled: boolean;
-  onOpen: (tile: CatalogTile) => void;
+  readBoards: (projectId: string) => Promise<BoardMeta[]>;
+  previewTiles: (projectId: string, boards: BoardMeta[]) => CatalogTile[];
+  onOpen: (tile: CatalogTile, owner?: string) => void;
   onPlace: (tile: CatalogTile, point: Vec2, target?: string) => Promise<void>;
   onConnect: (relation: ProjectRelation) => void;
   onLabel: (relation: ProjectRelation, label: string) => Promise<void>;
@@ -45,6 +49,17 @@ type Props = {
 // Include the folder tab so arrowheads stay visible above the icon.
 function folderBox(position: Vec2): Box {
   return { x: position.x + 22, y: position.y + 10, w: 110, h: 71 };
+}
+
+function previewSpoke(parent: Box, tile: CatalogTile, position: Vec2) {
+  // Include captions in the mask so a spoke never crosses a translucent icon or its text.
+  const source = { ...parent, h: TILE_HEIGHT - 10 };
+  const target = tile.kind === 'project' ? { ...folderBox(position), h: TILE_HEIGHT - 10 }
+    : { x: position.x + 12, y: position.y + 8, w: 130, h: TILE_HEIGHT - 8 };
+  const from = boxCenter(source), to = boxCenter(target);
+  const start = borderPoint(source, to), end = borderPoint(target, from);
+  if ((end.x - start.x) * (to.x - from.x) + (end.y - start.y) * (to.y - from.y) <= 0) return null;
+  return { start, end };
 }
 
 function namedGeometry(from: Box, to: Box, label?: string) {
@@ -105,10 +120,21 @@ function RelationName({ relation, point, width, height, onClose, onSave }: {
   </form>;
 }
 
-export function ProjectCanvas({ scope, folderId, folderName, tiles, relations, tags, filtering, disabled, onOpen, onPlace, onConnect, onLabel, onRelationMenu, onFavorite, onMenu, onAdd, onWorkspaceAi }: Props) {
+const TileContent = memo(function TileContent({ tile, tags, drop }: { tile: CatalogTile; tags: CatalogTag[]; drop?: string }) {
+  return <>
+    <span className="project-tile-visual" aria-hidden="true" data-drop-project={drop}>
+      <ProjectTileArtwork kind={tile.kind} cover={coverPreset(tile.coverId)} />
+    </span>
+    <span className="project-tile-title">{tile.row.name}</span>
+    <TagDots tags={tags.filter(tag => tile.tagIds.includes(tag.id))} />
+  </>;
+});
+
+export function ProjectCanvas({ scope, folderId, folderName, tiles, relations, tags, filtering, disabled, readBoards, previewTiles, onOpen, onPlace, onConnect, onLabel, onRelationMenu, onFavorite, onMenu, onAdd, onWorkspaceAi }: Props) {
   const element = useRef<HTMLElement>(null);
-  const [viewport, setViewport] = useState(() => readProjectView(scope, folderId));
-  const view = useRef(viewport);
+  const { viewport, view, setView, takeCamera, persistView, selected, scene, message, toggle, close } = useExpansion({
+    host: element, scope, folderId, tiles, readBoards, previewTiles,
+  });
   const wheelSave = useRef(0);
   const gesture = useRef<Drag>();
   const suppressClick = useRef(false);
@@ -118,14 +144,22 @@ export function ProjectCanvas({ scope, folderId, folderName, tiles, relations, t
   const [editingName, setEditingName] = useState<string>();
 
   function tilePosition(tile: CatalogTile) {
-    return dragged?.id === tile.row.id && dragged.kind === tile.kind
+    const point = dragged?.id === tile.row.id && dragged.kind === tile.kind
       ? dragged.position ?? tile.position
       : tile.position;
+    const offset = scene.offsets.get(tileKey(tile));
+    return offset ? translate(point, offset) : point;
   }
 
   const folders = new Map(tiles.filter(tile => tile.kind === 'project').map(tile => [
-    tile.row.id, { name: tile.row.name, box: folderBox(tilePosition(tile)) },
+    tile.row.id, { name: tile.row.name, position: tile.position, box: folderBox(tilePosition(tile)) },
   ]));
+  const branches = scene.branches.map(branch => {
+    const owner = folders.get(branch.owner);
+    const drag = dragged?.kind === 'project' && dragged.id === branch.owner ? dragged.position : undefined;
+    const point = owner && drag ? translate(branch.point, { x: drag.x - owner.position.x, y: drag.y - owner.position.y }) : branch.point;
+    return { ...branch, point, box: owner?.box ?? folderBox(branch.origin) };
+  });
   const laidRelations = (relations ?? []).flatMap(relation => {
     const from = folders.get(relation.from), to = folders.get(relation.to);
     return from && to ? [{
@@ -134,11 +168,6 @@ export function ProjectCanvas({ scope, folderId, folderName, tiles, relations, t
     }] : [];
   });
   const named = laidRelations.find(edge => edge.key === editingName);
-
-  function setView(next: Viewport) {
-    view.current = next;
-    setViewport(next);
-  }
 
   useEffect(() => {
     const host = element.current!;
@@ -150,21 +179,21 @@ export function ProjectCanvas({ scope, folderId, folderName, tiles, relations, t
       const delta = event.deltaMode === WheelEvent.DOM_DELTA_LINE ? event.deltaY * 16 : event.deltaY;
       setView(zoomByFactor(view.current, anchor, Math.exp(-delta * 0.0015), 0.15, 2.5));
       window.clearTimeout(wheelSave.current);
-      wheelSave.current = window.setTimeout(() => saveProjectView(scope, folderId, view.current), 160);
+      wheelSave.current = window.setTimeout(persistView, 160);
     };
     host.addEventListener('wheel', wheel, { passive: false });
     return () => host.removeEventListener('wheel', wheel);
-  }, [scope, folderId, disabled]);
+  }, [persistView, disabled]);
 
   useEffect(() => () => {
     window.clearTimeout(wheelSave.current);
-    saveProjectView(scope, folderId, view.current);
-  }, [scope, folderId]);
+  }, []);
 
   function begin(event: PointerEvent<HTMLElement>) {
     if (disabled || gesture.current || !event.isPrimary || (event.button !== 0 && event.button !== 1)) return;
     suppressClick.current = false;
     const hit = event.target as Element;
+    if (event.button === 0 && hit.closest('.project-preview-open')) return;
     const port = hit.closest<HTMLButtonElement>('[data-connect-project]');
     if (port) {
       if (event.button !== 0) return;
@@ -217,6 +246,7 @@ export function ProjectCanvas({ scope, folderId, folderName, tiles, relations, t
     if (!drag.moved) {
       if (Math.hypot(dx, dy) < 5) return;
       drag.moved = true;
+      takeCamera();
       suppressClick.current = true;
       event.currentTarget.setPointerCapture(event.pointerId);
     }
@@ -262,28 +292,23 @@ export function ProjectCanvas({ scope, folderId, folderName, tiles, relations, t
     if (drag.tile && drag.position) {
       void onPlace(drag.tile, drag.position, drag.target).finally(() => setDragged(undefined));
     } else {
-      saveProjectView(scope, folderId, view.current);
+      persistView();
       setDragged(undefined);
     }
   }
 
   function fit() {
     const host = element.current!;
-    const box = tiles.reduce<{ x: number; y: number; right: number; bottom: number } | null>((area, { position: p }) => ({
-      x: Math.min(p.x, area?.x ?? p.x),
-      y: Math.min(p.y, area?.y ?? p.y),
-      right: Math.max(p.x + TILE_WIDTH, area?.right ?? p.x + TILE_WIDTH),
-      bottom: Math.max(p.y + TILE_HEIGHT, area?.bottom ?? p.y + TILE_HEIGHT),
-    }), null);
+    const box = cardBounds([...tiles.map(tilePosition), ...branches.map(branch => branch.point)]);
     const next = box
       ? fitToBounds(
-        { x: box.x, y: box.y, width: box.right - box.x, height: box.bottom - box.y },
+        box,
         { width: host.clientWidth, height: host.clientHeight },
         { minZoom: 0.15, maxZoom: 1, fitPadding: 52 },
       )
       : { ...IDENTITY_VIEWPORT };
     setView(next);
-    saveProjectView(scope, folderId, next);
+    persistView();
   }
 
   const sourceBox = connection && folders.get(connection.from)?.box;
@@ -306,6 +331,9 @@ export function ProjectCanvas({ scope, folderId, folderName, tiles, relations, t
           gesture.current = undefined;
           if (event.currentTarget.hasPointerCapture(pointer)) event.currentTarget.releasePointerCapture(pointer);
           setConnection(undefined);
+        } else if (event.key === 'Escape' && selected && !editingName && !disabled) {
+          event.stopPropagation();
+          close();
         }
       }}
       onContextMenu={event => { if (!disabled) onMenu(event); }}
@@ -318,6 +346,11 @@ export function ProjectCanvas({ scope, folderId, folderName, tiles, relations, t
               <path d="M 1 1 L 9 5 L 1 9 Z" fill="currentColor" />
             </marker>
           </defs>
+          {branches.map(({ owner, tile, box, point, opacity }) => {
+            const spoke = previewSpoke(box, tile, point);
+            return spoke && <line key={`${owner}:${tileKey(tile)}`} className="project-preview-spoke" aria-hidden="true"
+              x1={spoke.start.x} y1={spoke.start.y} x2={spoke.end.x} y2={spoke.end.y} opacity={opacity} />;
+          })}
           {laidRelations.map(({ key, relation, geometry: { d }, name }) => {
             return (
               <g key={key} className="project-relation" data-from={relation.from} data-to={relation.to}>
@@ -349,27 +382,37 @@ export function ProjectCanvas({ scope, folderId, folderName, tiles, relations, t
           const moving = dragged?.id === tile.row.id && dragged.kind === tile.kind;
           const point = tilePosition(tile);
           const folder = tile.kind === 'project';
-          const cover = coverPreset(tile.coverId);
+          const expanded = folder && tile.row.id === selected;
           return (
             <div
-              key={`${tile.kind}:${tile.row.id}`}
-              className={`project-tile is-${tile.kind}${moving ? ' is-moving' : ''}${dragged?.target === tile.row.id && folder ? ' is-drop-project' : ''}${connection?.target === tile.row.id && folder ? ' is-connection-target' : ''}${tile.favorite ? ' is-favorite' : ''}`}
-              style={{ left: point.x, top: point.y, width: TILE_WIDTH, minHeight: TILE_HEIGHT }}
+              key={tileKey(tile)}
+              className={`project-tile is-${tile.kind}${expanded ? ' is-expanded' : ''}${moving ? ' is-moving' : ''}${dragged?.target === tile.row.id && folder ? ' is-drop-project' : ''}${connection?.target === tile.row.id && folder ? ' is-connection-target' : ''}${tile.favorite ? ' is-favorite' : ''}`}
+              style={{ transform: `translate3d(${point.x}px,${point.y}px,0)`, width: TILE_WIDTH, minHeight: TILE_HEIGHT }}
               data-project-folder={folder ? tile.row.id : undefined}
               onContextMenu={event => { if (!disabled) onMenu(event, tile); }}
             >
               <button
                 type="button" disabled={disabled} className="project-tile-open"
                 data-kind={tile.kind} data-id={tile.row.id}
-                aria-label={tile.row.name} title={tile.row.name}
-                onClick={event => { if (!suppressClick.current || event.detail === 0) onOpen(tile); }}
-                onKeyDown={event => { if (event.key === 'ContextMenu' || (event.shiftKey && event.key === 'F10')) event.currentTarget.dispatchEvent(new window.MouseEvent('contextmenu', { bubbles: true })); }}
+                aria-label={tile.row.name} aria-expanded={folder ? expanded : undefined}
+                aria-busy={expanded && message === '正在读取…' ? true : undefined}
+                title={folder ? `${tile.row.name} · 单击预览 · 双击进入` : tile.row.name}
+                onClick={event => {
+                  if (event.detail > 0 && suppressClick.current) return;
+                  if (!folder || event.detail === 0) onOpen(tile);
+                  else if (event.detail === 1) toggle(tile.row.id);
+                }}
+                onDoubleClick={() => { if (folder && !suppressClick.current) onOpen(tile); }}
+                onKeyDown={event => {
+                  if (folder && event.key === ' ') {
+                    event.preventDefault();
+                    if (!event.repeat) toggle(tile.row.id);
+                  } else if (event.key === 'ContextMenu' || (event.shiftKey && event.key === 'F10')) {
+                    event.currentTarget.dispatchEvent(new window.MouseEvent('contextmenu', { bubbles: true }));
+                  }
+                }}
               >
-                <span className="project-tile-visual" aria-hidden="true" data-drop-project={folder ? tile.row.id : undefined}>
-                  <ProjectTileArtwork kind={tile.kind} cover={cover} />
-                </span>
-                <span className="project-tile-title">{tile.row.name}</span>
-                <TagDots tags={tags.filter(tag => tile.tagIds.includes(tag.id))} />
+                <TileContent tile={tile} tags={tags} drop={folder ? tile.row.id : undefined} />
               </button>
               {folder && <button
                 type="button" disabled={disabled} className="project-connect-port" data-connect-project={tile.row.id}
@@ -381,8 +424,27 @@ export function ProjectCanvas({ scope, folderId, folderName, tiles, relations, t
                 aria-label={`收藏置顶${folder ? '项目' : '白板'}：${tile.row.name}`}
                 title={tile.favorite ? '取消收藏' : '收藏并置顶'} onClick={() => onFavorite(tile)}
               ><Star size={15} fill={tile.favorite ? 'currentColor' : 'none'} /></button>
+              {expanded && message !== undefined && <span className="project-preview-status" role="status">
+                {message || (filtering ? '此项目中没有匹配的内容' : '此项目为空')}
+              </span>}
             </div>
           );
+        })}
+        {branches.map(({ owner, tile, point, opacity }) => {
+          const shown = owner === selected && opacity >= 0.72;
+          const folder = tile.kind === 'project';
+          return <div key={`${owner}:${tileKey(tile)}`} className={`project-tile is-${tile.kind} is-preview-tile`}
+            style={{ transform: `translate3d(${point.x}px,${point.y}px,0)`, width: TILE_WIDTH, minHeight: TILE_HEIGHT, opacity }}
+            data-preview-owner={owner} aria-hidden={!shown}>
+            <button type="button" className="project-tile-open project-preview-open" data-id={tile.row.id} disabled={disabled || !shown}
+              aria-label={tile.row.name} title={folder ? `${tile.row.name} · 双击进入` : tile.row.name}
+              onPointerDown={event => { if (event.button === 0) suppressClick.current = false; }}
+              onClick={event => { if (!folder || event.detail === 0) onOpen(tile, owner); }}
+              onDoubleClick={() => { if (folder) onOpen(tile, owner); }}
+              onContextMenu={event => { event.preventDefault(); event.stopPropagation(); }}>
+              <TileContent tile={tile} tags={tags} />
+            </button>
+          </div>;
         })}
       </div>
       <div className="edge-label-layer project-relation-names">
