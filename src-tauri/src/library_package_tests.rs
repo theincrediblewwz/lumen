@@ -11,13 +11,15 @@ fn setup() -> (PathBuf, String, String) {
 
 #[test]
 fn project_package_keeps_its_nested_subtree_positions_and_materials() {
-    let (root, parent, _) = setup();
+    let (root, parent, parent_board) = setup();
     let child = crate::project_canvas::create_child(&root, "Nested project", &parent).unwrap();
     let grandchild = crate::project_canvas::create_child(&root, "Grandchild", &child.id).unwrap();
     let other =
         crate::project_canvas::create_child(&root, "Folder outside the subtree", &parent).unwrap();
     let sibling = crate::project_canvas::create_child(&root, "Related folder", &child.id).unwrap();
     let board = storage::create_board(&root, &grandchild.id, "Nested board").unwrap();
+    let first = storage::create_board(&root, &child.id, "First board").unwrap();
+    let second = storage::create_board(&root, &child.id, "Second board").unwrap();
     let doc = storage::write_doc(
         &root,
         &grandchild.id,
@@ -30,9 +32,16 @@ fn project_package_keeps_its_nested_subtree_positions_and_materials() {
     let mut raw: Value = serde_json::from_slice(&fs::read(&layout_path).unwrap()).unwrap();
     raw["projects"][&child.id]["position"] = json!({ "x":135.5, "y":-42.0 });
     raw["boards"][&grandchild.id][&board.id] = json!({ "x":70, "y":320 });
-    let complete_edge =
-        json!({ "from": &grandchild.id, "to": &sibling.id, "label": r"用于论文 $\nu$" });
-    raw["relations"] = json!([complete_edge.clone(), { "from": &child.id, "to": &other.id }]);
+    let complete_edges = json!([
+        { "from": &grandchild.id, "to": &sibling.id, "label": r"用于论文 $\nu$" },
+        { "from": format!("{}/{}", child.id, first.id), "to": format!("{}/{}", child.id, second.id), "label": "继续阅读" },
+        { "from": &grandchild.id, "to": format!("{}/{}", child.id, first.id), "label": "收录结论" }
+    ]);
+    raw["relations"] = complete_edges.clone();
+    raw["relations"].as_array_mut().unwrap().extend([
+        json!({ "from": &child.id, "to": &other.id }),
+        json!({ "from": &child.id, "to": format!("{parent}/{parent_board}") }),
+    ]);
     let board_key = format!("{}/{}", grandchild.id, board.id);
     raw["tags"] = json!({
         "definitions": {
@@ -69,7 +78,7 @@ fn project_package_keeps_its_nested_subtree_positions_and_materials() {
         restored_layout["boards"][&grandchild.id][&board.id]["y"].as_f64(),
         Some(320.0)
     );
-    assert_eq!(restored_layout["relations"], json!([complete_edge]));
+    assert_eq!(restored_layout["relations"], complete_edges);
     assert_eq!(
         restored_layout["tags"]["definitions"],
         json!({"tag_review":{"name":"复核","color":"#31804d"}})

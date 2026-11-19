@@ -4,6 +4,7 @@ import { pinnedFirst } from '../favorites';
 import { EMPTY_COVERS, readCover, type CoverStore } from './covers';
 import { assignedTags, type TagStore } from './tags';
 
+/** Endpoints are project IDs or board IDs qualified by their owning project. */
 export type ProjectRelation = { from: string; to: string; label?: string };
 
 export type ProjectLayout = {
@@ -23,8 +24,11 @@ export const TILE_HEIGHT = 116;
 
 export type CatalogTile = (
   | { kind: 'project'; row: ProjectMeta }
-  | { kind: 'board'; row: BoardMeta }
+  | { kind: 'board'; row: BoardMeta; projectId: string }
 ) & { position: Vec2; favorite: boolean; tagIds: string[]; coverId?: string | null };
+
+export const boardCardId = (projectId: string, boardId: string) => `${projectId}/${boardId}`;
+export const relationEndpoint = (tile: CatalogTile) => tile.kind === 'project' ? tile.row.id : boardCardId(tile.projectId, tile.row.id);
 
 function own<T>(rows: Record<string, T>, key: string): T | undefined {
   return Object.prototype.hasOwnProperty.call(rows, key) ? rows[key] : undefined;
@@ -66,7 +70,7 @@ export function catalogTiles(
       coverId: readCover(covers, { kind: 'project', id: row.id }),
     })),
     ...pinnedFirst(folderId ? boards : [], favorites.boards).map(row => ({
-      kind: 'board' as const, row, position: own(boardPositions, row.id),
+      kind: 'board' as const, row, projectId: folderId!, position: own(boardPositions, row.id),
       favorite: favorites.boards.includes(row.id),
       tagIds: assignedTags(layout.tags, { kind: 'board', projectId: folderId!, id: row.id }),
       coverId: readCover(covers, { kind: 'board', projectId: folderId!, id: row.id }),

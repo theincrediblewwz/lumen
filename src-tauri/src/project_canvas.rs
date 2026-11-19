@@ -43,6 +43,7 @@ pub(crate) struct Placement {
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct Relation {
+    // A project uses its existing id. A board uses the same owner/id key as tags and pins.
     pub(crate) from: String,
     pub(crate) to: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -122,6 +123,7 @@ impl Layout {
     pub(crate) fn forget_board(&mut self, project: &str, board: &str) {
         if let Some(positions) = self.boards.get_mut(project) { positions.remove(board); }
         let key = format!("{project}/{board}");
+        self.relations.retain(|edge| edge.from != key && edge.to != key);
         self.tags.remove_tree(&key);
         self.pins.remove(&key);
     }
@@ -166,7 +168,7 @@ impl Layout {
         self.projects.retain(|id, _| ids.contains(id));
         self.boards.retain(|id, _| ids.contains(id));
         self.relations
-            .retain(|edge| ids.contains(&edge.from) && ids.contains(&edge.to));
+            .retain(|edge| ids.contains(endpoint_project(&edge.from)) && ids.contains(endpoint_project(&edge.to)));
         self.tags.retain_projects(ids);
         self.pins.retain(|key, _| ids.contains(key.split('/').next().unwrap_or_default()));
         for placement in self.projects.values_mut() {
@@ -185,6 +187,9 @@ impl Layout {
             positions.retain(|id, _| owners.get(id) == Some(owner));
             !positions.is_empty()
         });
+        self.relations.retain(|edge| [&edge.from, &edge.to].into_iter().all(|endpoint| {
+            endpoint.split_once('/').is_none_or(|(project, board)| owners.get(board).is_some_and(|owner| owner == project))
+        }));
         self.tags.retain_boards(owners);
         self.pins.retain(|id, _| id.split_once('/').is_none_or(|(project, board)| owners.get(board).is_some_and(|owner| owner == project)));
     }
@@ -232,8 +237,8 @@ impl Layout {
         }
         let mut pairs = BTreeSet::new();
         for edge in &self.relations {
-            storage::safe_id(&edge.from)?;
-            storage::safe_id(&edge.to)?;
+            check_endpoint(&edge.from)?;
+            check_endpoint(&edge.to)?;
             if edge.from == edge.to || !pairs.insert((&edge.from, &edge.to)) {
                 return Err("项目连线的端点无效或重复".into());
             }
@@ -249,6 +254,18 @@ impl Layout {
     }
 }
 
+fn endpoint_project(endpoint: &str) -> &str {
+    endpoint.split_once('/').map_or(endpoint, |(project, _)| project)
+}
+
+fn check_endpoint(endpoint: &str) -> Result<(), String> {
+    storage::safe_id(endpoint_project(endpoint))?;
+    if let Some((_, board)) = endpoint.split_once('/') {
+        storage::safe_id(board)?;
+    }
+    Ok(())
+}
+
 pub(crate) fn read(root: &Path, index: &storage::IndexFile) -> Result<Layout, String> {
     let path = safety::checked_path(root, FILE)?;
     if !path.exists() {
@@ -257,7 +274,19 @@ pub(crate) fn read(root: &Path, index: &storage::IndexFile) -> Result<Layout, St
     if fs::metadata(&path).map_err(|e| e.to_string())?.len() > MAX_FILE_BYTES {
         return Err("项目画布文件过大".into());
     }
-    parse(&fs::read(path).map_err(|e| e.to_string())?, index)
+    let mut layout = parse(&fs::read(path).map_err(|e| e.to_string())?, index)?;
+    // Like deleted projects, removed boards disappear from the live canvas on read.
+    // If a project record is unavailable, preserve its links for recovery.
+    let mut board_ids = BTreeMap::new();
+    layout.relations.retain(|edge| [&edge.from, &edge.to].into_iter().all(|endpoint| {
+        let Some((owner, board)) = endpoint.split_once('/') else { return true; };
+        board_ids.entry(owner.to_owned()).or_insert_with(|| {
+            safety::checked_path(root, &format!("{owner}/project.json")).ok()?;
+            let project = storage::read_project(root, owner).ok()?;
+            Some(project.boards.into_iter().map(|row| row.id).collect::<BTreeSet<_>>())
+        }).as_ref().is_none_or(|boards| boards.contains(board))
+    }));
+    Ok(layout)
 }
 
 pub(crate) fn parse(bytes: &[u8], index: &storage::IndexFile) -> Result<Layout, String> {
@@ -367,6 +396,21 @@ enum RelationChange {
     Label(Option<String>),
 }
 
+fn endpoint_layer<'a>(
+    root: &Path,
+    index: &storage::IndexFile,
+    layout: &'a Layout,
+    endpoint: &'a str,
+) -> Result<Option<&'a str>, String> {
+    if let Some((owner, board)) = endpoint.split_once('/') {
+        require_board(root, index, owner, board)?;
+        Ok(Some(owner))
+    } else {
+        require_project(index, endpoint)?;
+        Ok(layout.parent(endpoint))
+    }
+}
+
 fn change_relation(
     root: &Path,
     project: Option<&str>,
@@ -375,11 +419,12 @@ fn change_relation(
     change: RelationChange,
 ) -> Result<Layout, String> {
     let index = storage::read_index(root)?;
-    require_project(&index, &from)?;
-    require_project(&index, &to)?;
     let mut layout = read(root, &index)?;
-    if from == to || layout.parent(&from) != project || layout.parent(&to) != project {
-        return Err("请选择同一画布上的两个项目建立连线".into());
+    if from == to
+        || endpoint_layer(root, &index, &layout, &from)? != project
+        || endpoint_layer(root, &index, &layout, &to)? != project
+    {
+        return Err("请选择同一画布上的两张项目或白板卡片建立连线".into());
     }
     let position = layout
         .relations

@@ -30,7 +30,7 @@ import {exportLibraryPackage,restoreLibraryPackage,applyLibraryPreferences} from
 
 import { applyPins, loadFavorites, saveFavorites } from './favorites';
 import type { BoardAppearance } from './canvas/presentation';
-import { catalogTiles, EMPTY_PROJECT_LAYOUT, parentProject, projectPath, type CatalogTile, type ProjectLayoutSnapshot, type ProjectRelation } from './projectCanvas/layout';
+import { boardCardId, catalogTiles, EMPTY_PROJECT_LAYOUT, parentProject, projectPath, relationEndpoint, type CatalogTile, type ProjectLayoutSnapshot, type ProjectRelation } from './projectCanvas/layout';
 import { EMPTY_COVERS, readCover, type CoverTarget } from './projectCanvas/covers';
 import { allTags, assignedTags, colorTag, NO_TAGS, tagKey, type TagDefinition, type TagTarget } from './projectCanvas/tags';
 
@@ -583,7 +583,7 @@ export default function App() {
     });
   };
 
-  const relateProjects = (relation: ProjectRelation, present: boolean) => void withBusy(async () => {
+  const relateCards = (relation: ProjectRelation, present: boolean) => void withBusy(async () => {
     if (!canvasScope) throw new Error('请先恢复项目画布，再编辑连线。');
     setLayout(await api.projectCanvasRelate(activeProject?.id ?? null, relation, present, canvasScope));
   });
@@ -774,6 +774,18 @@ export default function App() {
     };
   };
 
+  const linkMenu = (from: string): ContextMenuState['items'] => {
+    const linked = new Set(layout.relations?.filter(edge => edge.from === from).map(edge => edge.to));
+    const groups = activeProject ? ['project', 'board'] as const : ['project'] as const;
+    return groups.map(kind => {
+      const items = tiles.filter(tile => tile.kind === kind).flatMap(tile => {
+        const to = relationEndpoint(tile);
+        return to === from || linked.has(to) ? [] : [{ type: 'item' as const, label: tile.row.name, onClick: () => relateCards({ from, to }, true) }];
+      });
+      return { type: 'group', label: kind === 'project' ? '连到项目…' : '连到白板…', disabled: !items.length || !canvasScope, items };
+    });
+  };
+
   const projectItemMenu = (e: React.MouseEvent, p: ProjectMeta) => {
     const sourceParent = parentProject(layout, p.id);
     const destinations = projects.flatMap(project => {
@@ -785,9 +797,6 @@ export default function App() {
         onClick: () => void moveProject(p.id, project.id),
       }];
     });
-    const linked = new Set(layout.relations?.filter(edge => edge.from === p.id).map(edge => edge.to));
-    const linkTargets = projects.filter(row => row.id !== p.id && parentProject(layout, row.id) === sourceParent && !linked.has(row.id))
-      .map(row => ({ type: 'item' as const, label: row.name, onClick: () => relateProjects({ from: p.id, to: row.id }, true) }));
     if (sourceParent) destinations.unshift({ type: 'item', label: '项目首页', onClick: () => void moveProject(p.id, null) });
     const hasChildren = projects.some(row => parentProject(layout, row.id) === p.id);
     openAt(e, [
@@ -795,7 +804,7 @@ export default function App() {
       coverMenuItem(e, { kind: 'project', id: p.id }, p.name),
       {type:'item',label:favorites.projects.includes(p.id)?'取消收藏置顶':'收藏并置顶',onClick:()=>toggleFavorite('projects',p.id)},
       { type: 'item', label: '编辑标签…', onClick: () => setTagEdit({ target: { kind: 'project', id: p.id }, name: p.name }) },
-      { type: 'group', label: '连到项目…', disabled: !linkTargets.length || !canvasScope, items: linkTargets },
+      ...linkMenu(p.id),
       { type: 'group', label: '移到项目…', disabled: !destinations.length || !canvasScope, items: destinations },
       { type: 'item', label: '导出完整项目资料包…', onClick: () => exportLibrary(p) },
       {
@@ -816,6 +825,7 @@ export default function App() {
       { type: 'item', label: '编辑标签…', onClick: () => {
         if (activeProject) setTagEdit({ target: { kind: 'board', id: b.id, projectId: activeProject.id }, name: b.name });
       } },
+      ...(activeProject ? linkMenu(boardCardId(activeProject.id, b.id)) : []),
       { type:'item',label:'导入对话生成树…',onClick:()=>activeProject&&leaveKnowledge(()=>setImportTarget({projectId:activeProject.id,boardId:b.id,boardName:b.name})) },
       {
         type: 'item',
@@ -952,17 +962,17 @@ export default function App() {
             disabled={busy || syncLocked || !!editing || !!coverEdit}
             readBoards={api.boardsList}
             previewTiles={previewTiles}
-            onOpen={(tile, owner = activeProject?.id) => {
+            onOpen={tile => {
               if (tile.kind === 'project') navigateProject(tile.row.id);
-              else if (owner) openBoard(owner, tile.row.id);
+              else openBoard(tile.projectId, tile.row.id);
             }}
             onPlace={placeTile}
-            onConnect={relation => relateProjects(relation, true)}
+            onConnect={relation => relateCards(relation, true)}
             onLabel={(relation, label) => saveCatalog(async () => {
               setLayout(await api.projectCanvasLabel(activeProject?.id ?? null, relation, label, canvasScope));
             })}
             onRelationMenu={(event, relation) => openAt(event, [
-              { type: 'item', label: '删除连线', danger: true, onClick: () => relateProjects(relation, false) },
+              { type: 'item', label: '删除连线', danger: true, onClick: () => relateCards(relation, false) },
             ], true)}
             onFavorite={tile => toggleFavorite(tile.kind === 'project' ? 'projects' : 'boards', tile.row.id)}
             onWorkspaceAi={() => setWorkspaceAiOpen(true)}

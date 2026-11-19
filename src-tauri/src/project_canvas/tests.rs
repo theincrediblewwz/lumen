@@ -1,5 +1,46 @@
 use super::*;
 
+#[test]
+fn boards_and_folders_share_named_directional_links_on_the_same_level() {
+    let library = Library::new();
+    let root = &library.0;
+    let owner = storage::create_project(root, "研究项目").unwrap();
+    let folder = create_child(root, "理论", &owner.id).unwrap();
+    let other = storage::create_project(root, "其他项目").unwrap();
+    let first = storage::create_board(root, &owner.id, "论文甲").unwrap();
+    let second = storage::create_board(root, &owner.id, "论文乙").unwrap();
+    let outside = storage::create_board(root, &other.id, "外部白板").unwrap();
+    let a = format!("{}/{}", owner.id, first.id);
+    let b = format!("{}/{}", owner.id, second.id);
+    let outside_key = format!("{}/{}", other.id, outside.id);
+    let link = |layer, from: &str, to: &str, change| change_relation(root, layer, from.into(), to.into(), change);
+    let layer = Some(owner.id.as_str());
+    let label = r"用于对照 $\nu^2$";
+
+    link(layer, &a, &b, RelationChange::Add).unwrap();
+    link(layer, &folder.id, &a, RelationChange::Add).unwrap();
+    link(layer, &b, &folder.id, RelationChange::Add).unwrap();
+    let named = link(layer, &a, &b, RelationChange::Label(Some(label.into()))).unwrap();
+    assert_eq!(named.relations[0].label.as_deref(), Some(label));
+    let durable = fs::read(root.join(FILE)).unwrap();
+    assert_eq!(link(layer, &a, &b, RelationChange::Add).unwrap(), named);
+    for invalid in [&a, &outside_key, &format!("{}/{}", owner.id, outside.id), &format!("{}/../{}", owner.id, second.id)] {
+        assert!(link(layer, &a, invalid, RelationChange::Add).is_err());
+    }
+    assert!(link(None, &folder.id, &a, RelationChange::Add).is_err());
+    assert_eq!(fs::read(root.join(FILE)).unwrap(), durable);
+
+    let moved = move_project(root, &folder.id, layer, Some(other.id.clone())).unwrap();
+    assert_eq!(moved.relations, named.relations);
+    assert!(link(layer, &folder.id, &a, RelationChange::Remove).is_err());
+    move_project(root, &folder.id, Some(&other.id), Some(owner.id.clone())).unwrap();
+    assert_eq!(link(layer, &folder.id, &a, RelationChange::Remove).unwrap().relations.len(), 2);
+    storage::delete_board(root, &owner.id, &second.id).unwrap();
+    let current = read(root, &storage::read_index(root).unwrap()).unwrap();
+    assert!(current.relations.is_empty());
+    assert_eq!(storage::read_project(root, &owner.id).unwrap().boards[0].id, first.id);
+}
+
 pub(super) struct Library(pub(super) std::path::PathBuf);
 
 impl Library {

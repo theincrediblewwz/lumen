@@ -319,6 +319,10 @@
 .project-tile-open:hover .project-board-icon {
   box-shadow: 0 4px 9px rgb(27 100 45 / 0.18);
 }
+.project-tile.is-connection-target .project-board-icon {
+  outline: 2px solid var(--project-green);
+  outline-offset: 3px;
+}
 
 .project-tile-title {
   display: block;
@@ -377,6 +381,7 @@
   box-shadow: 0 0 0 1px currentColor;
 }
 
+.project-tile.is-board .project-connect-port { left: 128px; }
 .project-tile:hover .project-connect-port,
 .project-tile:focus-within .project-connect-port { opacity: 1; }
 .is-dragging .project-connect-port,

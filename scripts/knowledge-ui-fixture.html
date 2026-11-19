@@ -224,7 +224,10 @@ window.__TAURI_INTERNALS__={metadata:{currentWindow:{label:'main'},currentWebvie
     const siblings = new Set(fixtureProjects.filter(row =>
       (fixtureLayout.projects[row.id]?.parentId ?? null) === args.projectId
     ).map(row => row.id));
-    if (args.from === args.to || !siblings.has(args.from) || !siblings.has(args.to)) throw Error('请选择同一画布上的两个项目');
+    for (const board of fixtureBoards.filter(row => row.projectId === args.projectId)) {
+      siblings.add(`${board.projectId}/${board.id}`);
+    }
+    if (args.from === args.to || !siblings.has(args.from) || !siblings.has(args.to)) throw Error('请选择同一画布上的两张项目或白板卡片');
     const previous = fixtureLayout.relations ?? [];
     const exists = previous.some(edge => edge.from === args.from && edge.to === args.to);
     fixtureLayout.relations = args.present ? (exists ? previous : [...previous, { from: args.from, to: args.to }]) :

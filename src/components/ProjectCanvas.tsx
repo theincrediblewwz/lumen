@@ -5,7 +5,7 @@ import { fitToBounds, IDENTITY_VIEWPORT, screenToWorld, worldToScreen, zoomByFac
 import { bentGeometry, borderPoint, boxCenter, edgeGeometry, straightPath, type Box } from '../canvas/geometry';
 import { coverPreset } from '../projectCanvas/coverPresets';
 import { cardBounds, translate } from '../projectCanvas/expansion';
-import { TILE_HEIGHT, TILE_WIDTH, type CatalogTile, type ProjectRelation } from '../projectCanvas/layout';
+import { relationEndpoint, TILE_HEIGHT, TILE_WIDTH, type CatalogTile, type ProjectRelation } from '../projectCanvas/layout';
 import type { CatalogTag } from '../projectCanvas/tags';
 import { tileKey, useExpansion } from '../projectCanvas/useExpansion';
 import { EdgeLabel } from './EdgeLabel';
@@ -35,7 +35,7 @@ type Props = {
   disabled: boolean;
   readBoards: (projectId: string) => Promise<BoardMeta[]>;
   previewTiles: (projectId: string, boards: BoardMeta[]) => CatalogTile[];
-  onOpen: (tile: CatalogTile, owner?: string) => void;
+  onOpen: (tile: CatalogTile) => void;
   onPlace: (tile: CatalogTile, point: Vec2, target?: string) => Promise<void>;
   onConnect: (relation: ProjectRelation) => void;
   onLabel: (relation: ProjectRelation, label: string) => Promise<void>;
@@ -51,11 +51,15 @@ function folderBox(position: Vec2): Box {
   return { x: position.x + 22, y: position.y + 10, w: 110, h: 71 };
 }
 
+function tileBox(tile: CatalogTile, position: Vec2): Box {
+  return tile.kind === 'project' ? folderBox(position) : { x: position.x + 12, y: position.y + 8, w: 130, h: 74 };
+}
+
 function previewSpoke(parent: Box, tile: CatalogTile, position: Vec2) {
   // Include captions in the mask so a spoke never crosses a translucent icon or its text.
   const source = { ...parent, h: TILE_HEIGHT - 10 };
-  const target = tile.kind === 'project' ? { ...folderBox(position), h: TILE_HEIGHT - 10 }
-    : { x: position.x + 12, y: position.y + 8, w: 130, h: TILE_HEIGHT - 8 };
+  const target = tileBox(tile, position);
+  target.h = TILE_HEIGHT - (target.y - position.y);
   const from = boxCenter(source), to = boxCenter(target);
   const start = borderPoint(source, to), end = borderPoint(target, from);
   if ((end.x - start.x) * (to.x - from.x) + (end.y - start.y) * (to.y - from.y) <= 0) return null;
@@ -151,17 +155,17 @@ export function ProjectCanvas({ scope, folderId, folderName, tiles, relations, t
     return offset ? translate(point, offset) : point;
   }
 
-  const folders = new Map(tiles.filter(tile => tile.kind === 'project').map(tile => [
-    tile.row.id, { name: tile.row.name, position: tile.position, box: folderBox(tilePosition(tile)) },
+  const endpoints = new Map(tiles.map(tile => [
+    relationEndpoint(tile), { name: tile.row.name, position: tile.position, box: tileBox(tile, tilePosition(tile)) },
   ]));
   const branches = scene.branches.map(branch => {
-    const owner = folders.get(branch.owner);
+    const owner = endpoints.get(branch.owner);
     const drag = dragged?.kind === 'project' && dragged.id === branch.owner ? dragged.position : undefined;
     const point = owner && drag ? translate(branch.point, { x: drag.x - owner.position.x, y: drag.y - owner.position.y }) : branch.point;
     return { ...branch, point, box: owner?.box ?? folderBox(branch.origin) };
   });
   const laidRelations = (relations ?? []).flatMap(relation => {
-    const from = folders.get(relation.from), to = folders.get(relation.to);
+    const from = endpoints.get(relation.from), to = endpoints.get(relation.to);
     return from && to ? [{
       relation, key: `${relation.from}:${relation.to}`,
       name: `${from.name} → ${to.name}`, geometry: namedGeometry(from.box, to.box, relation.label),
@@ -194,12 +198,12 @@ export function ProjectCanvas({ scope, folderId, folderName, tiles, relations, t
     suppressClick.current = false;
     const hit = event.target as Element;
     if (event.button === 0 && hit.closest('.project-preview-open')) return;
-    const port = hit.closest<HTMLButtonElement>('[data-connect-project]');
+    const port = hit.closest<HTMLButtonElement>('[data-connect-card]');
     if (port) {
       if (event.button !== 0) return;
       gesture.current = {
         pointer: event.pointerId, start: { x: event.clientX, y: event.clientY },
-        view: view.current, from: port.dataset.connectProject, moved: false,
+        view: view.current, from: port.dataset.connectCard, moved: false,
       };
       event.currentTarget.setPointerCapture(event.pointerId);
       return;
@@ -218,14 +222,14 @@ export function ProjectCanvas({ scope, folderId, folderName, tiles, relations, t
     const point = screenToWorld(view.current, { x: event.clientX - rect.left, y: event.clientY - rect.top });
     const hit = document.elementFromPoint(event.clientX, event.clientY);
     const tile = hit?.closest<HTMLElement>('.project-tile');
-    const direct = tile?.dataset.projectFolder;
+    const direct = tile?.dataset.relationEndpoint;
     if (tile || !hit || !event.currentTarget.contains(hit) || hit.closest('button')) {
-      return { from, point, target: direct !== from && direct && folders.has(direct) ? direct : undefined };
+      return { from, point, target: direct !== from && direct && endpoints.has(direct) ? direct : undefined };
     }
     // A small margin in screen pixels keeps the drop forgiving at any zoom.
     let target: string | undefined;
     let nearest = 12 / view.current.zoom;
-    for (const [id, { box }] of folders) {
+    for (const [id, { box }] of endpoints) {
       if (id === from) continue;
       const distance = Math.hypot(
         Math.max(box.x - point.x, point.x - box.x - box.w, 0),
@@ -311,8 +315,8 @@ export function ProjectCanvas({ scope, folderId, folderName, tiles, relations, t
     persistView();
   }
 
-  const sourceBox = connection && folders.get(connection.from)?.box;
-  const targetBox = connection?.target ? folders.get(connection.target)?.box : undefined;
+  const sourceBox = connection && endpoints.get(connection.from)?.box;
+  const targetBox = connection?.target ? endpoints.get(connection.target)?.box : undefined;
   const draftPath = connection && sourceBox && (targetBox
     ? edgeGeometry(sourceBox, targetBox).d
     : straightPath(borderPoint(sourceBox, connection.point), connection.point));
@@ -383,12 +387,13 @@ export function ProjectCanvas({ scope, folderId, folderName, tiles, relations, t
           const point = tilePosition(tile);
           const folder = tile.kind === 'project';
           const expanded = folder && tile.row.id === selected;
+          const endpoint = relationEndpoint(tile);
           return (
             <div
               key={tileKey(tile)}
-              className={`project-tile is-${tile.kind}${expanded ? ' is-expanded' : ''}${moving ? ' is-moving' : ''}${dragged?.target === tile.row.id && folder ? ' is-drop-project' : ''}${connection?.target === tile.row.id && folder ? ' is-connection-target' : ''}${tile.favorite ? ' is-favorite' : ''}`}
+              className={`project-tile is-${tile.kind}${expanded ? ' is-expanded' : ''}${moving ? ' is-moving' : ''}${dragged?.target === tile.row.id && folder ? ' is-drop-project' : ''}${connection?.target === endpoint ? ' is-connection-target' : ''}${tile.favorite ? ' is-favorite' : ''}`}
               style={{ transform: `translate3d(${point.x}px,${point.y}px,0)`, width: TILE_WIDTH, minHeight: TILE_HEIGHT }}
-              data-project-folder={folder ? tile.row.id : undefined}
+              data-relation-endpoint={endpoint}
               onContextMenu={event => { if (!disabled) onMenu(event, tile); }}
             >
               <button
@@ -414,11 +419,11 @@ export function ProjectCanvas({ scope, folderId, folderName, tiles, relations, t
               >
                 <TileContent tile={tile} tags={tags} drop={folder ? tile.row.id : undefined} />
               </button>
-              {folder && <button
-                type="button" disabled={disabled} className="project-connect-port" data-connect-project={tile.row.id}
-                aria-label={`从${tile.row.name}拉出项目连线`} title="拖到同层的项目建立连线"
+              <button
+                type="button" disabled={disabled} className="project-connect-port" data-connect-card={endpoint}
+                aria-label={`从${tile.row.name}拉出${folder ? '项目' : '白板'}连线`} title="拖到同层的项目或白板建立连线"
                 onClick={event => { if (event.detail === 0) onMenu(event, tile); }}
-              ><span aria-hidden="true" /></button>}
+              ><span aria-hidden="true" /></button>
               <button
                 type="button" disabled={disabled} className="project-tile-star" aria-pressed={tile.favorite}
                 aria-label={`收藏置顶${folder ? '项目' : '白板'}：${tile.row.name}`}
@@ -439,8 +444,8 @@ export function ProjectCanvas({ scope, folderId, folderName, tiles, relations, t
             <button type="button" className="project-tile-open project-preview-open" data-id={tile.row.id} disabled={disabled || !shown}
               aria-label={tile.row.name} title={folder ? `${tile.row.name} · 双击进入` : tile.row.name}
               onPointerDown={event => { if (event.button === 0) suppressClick.current = false; }}
-              onClick={event => { if (!folder || event.detail === 0) onOpen(tile, owner); }}
-              onDoubleClick={() => { if (folder) onOpen(tile, owner); }}
+              onClick={event => { if (!folder || event.detail === 0) onOpen(tile); }}
+              onDoubleClick={() => { if (folder) onOpen(tile); }}
               onContextMenu={event => { event.preventDefault(); event.stopPropagation(); }}>
               <TileContent tile={tile} tags={tags} />
             </button>
