@@ -18,6 +18,8 @@ const evidence = path.resolve(process.env.LSQ_UI_EVIDENCE || 'mac-ui-evidence');
   const board = name => page.locator('.project-tile.is-board').getByRole('button', { name, exact: true });
   const port = (name, kind = '项目') => page.getByRole('button', { name: `从${name}拉出${kind}连线`, exact: true });
   const arrow = (from, to) => page.getByRole('button', { name: `${from} → ${to}`, exact: true });
+  // A horizontal or vertical SVG path has zero height or width before its stroke is applied.
+  const waitArrow = line => line.waitFor({ state: 'attached' });
   const crumb = name => page.getByRole('navigation', { name: '项目路径' }).getByRole('button', { name, exact: true });
   const canvas = () => page.locator('.project-canvas');
   const trail = () => page.locator('.project-path [aria-current=page]').innerText();
@@ -36,17 +38,17 @@ const evidence = path.resolve(process.env.LSQ_UI_EVIDENCE || 'mac-ui-evidence');
   const watchPreview = () => page.evaluate(() => new Promise(resolve => {
     const frames = [], end = performance.now() + 770;
     function read(now) {
-      const tile = document.querySelector('.project-tile.is-preview-tile');
-      const line = document.querySelector('.project-preview-spoke');
+      const tile = document.querySelector('.project-tile.is-preview-tile.is-board');
+      const line = tile && document.querySelector(`.project-preview-spoke[data-preview-child="${tile.dataset.previewEndpoint}"]`);
       if (tile && line) {
         const point = new DOMMatrixReadOnly(tile.style.transform);
         const from = ['x1', 'y1'].map(key => Number(line.getAttribute(key)));
         const to = ['x2', 'y2'].map(key => Number(line.getAttribute(key)));
-        const dx = Math.abs(to[0] - (point.m41 + 77)), dy = Math.abs(to[1] - (point.m42 + 62));
+        const dx = Math.abs(to[0] - (point.m41 + 77)), dy = Math.abs(to[1] - (point.m42 + 45));
         frames.push({
           clock: now, alpha: Number(tile.style.opacity), to,
           length: Math.hypot(to[0] - from[0], to[1] - from[1]),
-          endpointError: Math.abs(Math.max(dx / 65, dy / 54) - 1),
+          endpointError: Math.abs(Math.max(dx / 65, dy / 37) - 1),
         });
       }
       if (now < end) requestAnimationFrame(read); else resolve(frames);
@@ -62,6 +64,11 @@ const evidence = path.resolve(process.env.LSQ_UI_EVIDENCE || 'mac-ui-evidence');
     await page.mouse.move(from.x, from.y); await page.mouse.down();
     await page.mouse.move(to.x, to.y, { steps: 12 }); await page.mouse.up();
   };
+  const onPath = (line, fraction = 0.5) => line.evaluate((el, ratio) => {
+    const p = el.getPointAtLength(el.getTotalLength() * ratio).matrixTransform(el.getScreenCTM());
+    return { x: p.x, y: p.y };
+  }, fraction);
+  const straightPath = /^M [-\d.e+]+ [-\d.e+]+ L [-\d.e+]+ [-\d.e+]+$/i;
   const checkNameDialog = async (dialog, screenshot) => {
     await dialog.waitFor();
     const { background, insets } = await dialog.evaluate(form => {
@@ -181,22 +188,35 @@ const evidence = path.resolve(process.env.LSQ_UI_EVIDENCE || 'mac-ui-evidence');
     await page.locator('.project-tile.is-connection-target').filter({ hasText: '另一项目' }).waitFor();
     await page.mouse.up();
     const rootArrow = arrow('桌面夹', '另一项目');
-    await rootArrow.waitFor();
+    await waitArrow(rootArrow);
     assert.deepEqual((await saved()).layout.relations, [{ from: 'project', to: 'project-other' }]);
     assert.equal(await trail(), '项目首页');
     const firstPath = await rootArrow.getAttribute('d');
+    assert.match(firstPath, straightPath);
     await drag(target, { x: target.x + 96, y: target.y + 155 });
     await page.waitForFunction(d => document.querySelector('.project-relation-hit')?.getAttribute('d') !== d, firstPath);
     await page.waitForFunction(() => JSON.parse(localStorage.getItem('lumen.fixture-navigation')).layout.projects['project-other']?.position?.y > 200);
     assert.equal(await rootArrow.getAttribute('d') === firstPath, false);
+    const unbent = await rootArrow.getAttribute('d'), middle = await onPath(rootArrow);
+    await drag(middle, { x: middle.x + 72, y: middle.y - 90 });
+    await page.waitForFunction(() => JSON.parse(localStorage.getItem('lumen.fixture-navigation')).layout.relations[0]?.bend != null);
+    assert.match(await rootArrow.getAttribute('d'), / Q /);
+    const corner = await page.locator('.project-relation-handle').evaluate(el => {
+      const p = new DOMPoint(el.cx.baseVal.value, el.cy.baseVal.value).matrixTransform(el.getScreenCTM());
+      return { x: p.x, y: p.y };
+    });
+    await drag(corner, middle);
+    await page.waitForFunction(() => !JSON.parse(localStorage.getItem('lumen.fixture-navigation')).layout.relations[0]?.bend);
+    assert.equal(await rootArrow.getAttribute('d'), unbent);
+    assert.equal(await page.getByRole('textbox', { name: '项目连线名称' }).count(), 0);
     await page.mouse.move(960, 155);
     await page.screenshot({ path: path.join(evidence, 'project-canvas-relations.png'), animations: 'disabled' });
-    check('dragging from the folder port previews a directional arrow, snaps to the target, and follows its new position');
+    check('folder arrows are straight by default and follow moved cards; the line can bend and snap back to straight');
 
     await port('另一项目').press('Enter');
     await menuItem('连到项目…').click(); await menuItem('桌面夹').click();
     const reverse = arrow('另一项目', '桌面夹');
-    await reverse.waitFor();
+    await waitArrow(reverse);
     assert.notEqual(await rootArrow.getAttribute('d'), await reverse.getAttribute('d'));
     await reverse.press('Shift+F10'); await menuItem('删除连线').click();
     await reverse.waitFor({ state: 'detached' });
@@ -208,16 +228,17 @@ const evidence = path.resolve(process.env.LSQ_UI_EVIDENCE || 'mac-ui-evidence');
     await newItem('project', '阅读资料');
     await newItem('board', '补充白板');
     await drag(await point(port('阅读资料'), null), await point(board('补充白板')));
-    await arrow('阅读资料', '补充白板').waitFor();
+    await waitArrow(arrow('阅读资料', '补充白板'));
     await drag(await point(port('合成学习白板', '白板'), null), await point(board('补充白板')));
     const boardArrow = arrow('合成学习白板', '补充白板');
-    await boardArrow.waitFor();
+    await waitArrow(boardArrow);
     const boardPath = await boardArrow.getAttribute('d');
+    assert.match(boardPath, straightPath);
     await port('补充白板', '白板').press('Enter');
     await menuItem('连到项目…').click();
     await menuItem('阅读资料').click();
     const reverseMixed = arrow('补充白板', '阅读资料');
-    await reverseMixed.waitFor();
+    await waitArrow(reverseMixed);
     await reverseMixed.press('Shift+F10');
     await menuItem('删除连线').click();
     await reverseMixed.waitFor({ state: 'detached' });
@@ -239,6 +260,10 @@ const evidence = path.resolve(process.env.LSQ_UI_EVIDENCE || 'mac-ui-evidence');
     assert.ok(boardPosition.x > 400 && boardPosition.y > 350);
     assert.deepEqual((await saved()).boards.find(row => row.id === 'board'), originalBoard);
     assert.notEqual(await boardArrow.getAttribute('d'), boardPath);
+    const childStraight = await onPath(boardArrow, 0.72);
+    await drag(childStraight, { x: childStraight.x + 104, y: childStraight.y + 50 });
+    await page.waitForFunction(() => JSON.parse(localStorage.getItem('lumen.fixture-navigation')).layout.relations.find(edge => edge.from === 'project/board')?.bend != null);
+    assert.match(await boardArrow.getAttribute('d'), / Q /);
     await page.screenshot({ path: path.join(evidence, 'project-canvas-board-relations.png') });
     check('folder-to-board, board-to-folder and board-to-board arrows support labels, selection, deletion and movement without editing board contents');
 
@@ -261,6 +286,13 @@ const evidence = path.resolve(process.env.LSQ_UI_EVIDENCE || 'mac-ui-evidence');
     await folder('桌面夹').click();
     await settled('project');
     assert.equal(await branches('project').locator('.project-preview-open').count(), 4);
+    const projection = page.locator('.project-preview-arrow[data-from="project/board"]');
+    await projection.waitFor();
+    assert.match(await projection.getAttribute('d'), / Q /);
+    assert.match(await projection.getAttribute('marker-end'), /^url\(#.+\)$/);
+    await page.locator('[data-preview-label="project"] .katex').waitFor();
+    assert.equal(await page.locator('.project-preview-arrow[data-preview-owner="project"]').count(), 2);
+    await page.screenshot({ path: path.join(evidence, 'project-preview-labelled-arrows.png') });
     await branches('project').getByRole('button', { name: '阅读资料', exact: true }).dblclick();
     await folder('第三层').waitFor();
     assert.equal(await trail(), '阅读资料');
@@ -269,7 +301,7 @@ const evidence = path.resolve(process.env.LSQ_UI_EVIDENCE || 'mac-ui-evidence');
     assert.equal(await allBranches().count(), 0);
     await folder('桌面夹').dblclick();
     await folder('阅读资料').waitFor();
-    check('previews include both subprojects and boards, and double-clicking a projected folder enters its real path');
+    check('project previews show saved directional arrows, bends and rendered names; double-clicking opens the real folder');
 
     await crumb('项目首页').click();
     const moving = await point(folder('另一项目')), destination = await point(folder('桌面夹'));
@@ -281,7 +313,7 @@ const evidence = path.resolve(process.env.LSQ_UI_EVIDENCE || 'mac-ui-evidence');
     assert.equal(await rootArrow.count(), 0);
     await folder('桌面夹').dblclick(); await folder('另一项目').waitFor();
     await drag(await point(port('阅读资料'), null), await point(folder('另一项目')));
-    await arrow('阅读资料', '另一项目').waitFor();
+    await waitArrow(arrow('阅读资料', '另一项目'));
     await folder('另一项目').dblclick(); await board('另一项目的白板').waitFor();
     check('reparenting preserves content and hides arrows across levels; folders can also connect inside a project');
 
@@ -290,7 +322,7 @@ const evidence = path.resolve(process.env.LSQ_UI_EVIDENCE || 'mac-ui-evidence');
     await menuItem('移到项目…').click(); await menuItem('项目首页').click();
     await folder('另一项目').waitFor({ state: 'detached' });
     await crumb('项目首页').click(); await folder('另一项目').waitFor();
-    await rootArrow.waitFor();
+    await waitArrow(rootArrow);
     await folder('桌面夹').click({ button: 'right' });
     assert.equal(await menuItem('先移出子项目再删除').isEnabled(), false);
     await menuItem('移到项目…').click();
@@ -307,11 +339,12 @@ const evidence = path.resolve(process.env.LSQ_UI_EVIDENCE || 'mac-ui-evidence');
     await page.reload({ waitUntil: 'domcontentloaded' });
     await folder('第三个项目').waitFor();
     assert.equal(await trail(), '项目首页');
-    await rootArrow.waitFor();
+    await waitArrow(rootArrow);
     assert.deepEqual(await point(folder('第三个项目')), restartPoint);
     await folder('桌面夹').dblclick();
-    await arrow('阅读资料', '补充白板').waitFor();
-    await arrow('合成学习白板', '补充白板').waitFor();
+    await waitArrow(arrow('阅读资料', '补充白板'));
+    await waitArrow(boardArrow);
+    assert.match(await boardArrow.getAttribute('d'), / Q /);
     await page.locator('.project-relation-names .katex').waitFor();
     await folder('阅读资料').dblclick(); await folder('第三层').dblclick();
     await board('最深白板').waitFor();

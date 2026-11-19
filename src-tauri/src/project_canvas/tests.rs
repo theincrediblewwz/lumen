@@ -184,6 +184,7 @@ fn directed_relations_are_idempotent_and_keep_their_endpoints_when_folders_move(
         from: theory.id.clone(),
         to: paper.id.clone(),
         label: None,
+        bend: None,
     };
     let added = relate(root, None, theory.id.clone(), paper.id.clone(), true).unwrap();
     assert_eq!(added.relations, vec![edge.clone()]);
@@ -208,6 +209,16 @@ fn directed_relations_are_idempotent_and_keep_their_endpoints_when_folders_move(
     assert_eq!(named.relations[0].label.as_deref(), Some(label));
     assert!(relation_label(&"a".repeat(241)).is_err());
     assert!(relation_label("两\n行").is_err());
+    let bend = |value| change_relation(root, None, theory.id.clone(), paper.id.clone(), RelationChange::Bend(value));
+    let control = Some(RelationBend { along: 0.32, offset: -0.4 });
+    let bent = bend(control).unwrap();
+    assert_eq!(bent.relations[0].bend, control);
+    assert_eq!(bent.relations[0].label.as_deref(), Some(label));
+    assert_eq!(read(root, &storage::read_index(root).unwrap()).unwrap(), bent);
+    let with_bend = fs::read(root.join(FILE)).unwrap();
+    assert!(bend(Some(RelationBend { along: 0.5, offset: 17.0 })).is_err());
+    assert_eq!(fs::read(root.join(FILE)).unwrap(), with_bend);
+    assert_eq!(bend(None).unwrap(), named);
     let moved = move_project(root, &paper.id, None, Some(folder.id.clone())).unwrap();
     assert_eq!(moved.relations, named.relations);
     assert!(relate(root, None, theory.id.clone(), paper.id.clone(), false).is_err());

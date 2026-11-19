@@ -7,6 +7,7 @@ import { MarkdownView } from './MarkdownView';
 import { isQuestionDoc } from '../canvas/presentation';
 import { TagDots } from './CatalogTags';
 import { SYSTEM_TAGS, type CatalogTag } from '../projectCanvas/tags';
+import { useSelectionHighlight } from './SelectionHighlight';
 
 /** 可选的节点颜色标记（左边框色条），null = 默认（用主题强调色） */
 const COLOR_SWATCHES: { id: string | null; label: string; color: string }[] = [
@@ -28,6 +29,8 @@ function GrowArea({
 }) {
   const ref = useRef<HTMLTextAreaElement>(null);
   const [draft,setDraft]=useState(value);
+  const change = (text: string) => { setDraft(text); onCommit(text); };
+  const highlight = useSelectionHighlight(change);
   const grow = () => {
     const el = ref.current;
     if (!el) return;
@@ -38,12 +41,13 @@ function GrowArea({
     grow();
   }, [value]);
   useEffect(()=>{if(document.activeElement!==ref.current)setDraft(value);},[value]);
-  return (
+  return <>
     <textarea
       ref={ref}
       className={className}
       value={draft}
-      onChange={e=>{setDraft(e.target.value);onCommit(e.target.value);}}
+      onChange={e=>change(e.target.value)}
+      onMouseUp={highlight.onMouseUp}
       placeholder={placeholder}
       rows={1}
       onInput={grow}
@@ -52,7 +56,8 @@ function GrowArea({
         if (e.key === 'Escape') (e.target as HTMLTextAreaElement).blur();
       }}
     />
-  );
+    {highlight.menu}
+  </>;
 }
 
 /**

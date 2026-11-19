@@ -5,7 +5,8 @@ import { EMPTY_COVERS, readCover, type CoverStore } from './covers';
 import { assignedTags, type TagStore } from './tags';
 
 /** Endpoints are project IDs or board IDs qualified by their owning project. */
-export type ProjectRelation = { from: string; to: string; label?: string };
+export type RelationBend = { along: number; offset: number };
+export type ProjectRelation = { from: string; to: string; label?: string; bend?: RelationBend };
 
 export type ProjectLayout = {
   version: 1;

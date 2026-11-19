@@ -2,10 +2,11 @@ import { Check, Plus, Sparkles, Star, X } from 'lucide-react';
 import { memo, useEffect, useId, useRef, useState, type MouseEvent, type PointerEvent } from 'react';
 import type { BoardMeta, Viewport } from '../api';
 import { fitToBounds, IDENTITY_VIEWPORT, screenToWorld, worldToScreen, zoomByFactor, type Vec2 } from '../canvas/CanvasEngine';
-import { bentGeometry, borderPoint, boxCenter, edgeGeometry, straightPath, type Box } from '../canvas/geometry';
+import { straightPath } from '../canvas/geometry';
 import { coverPreset } from '../projectCanvas/coverPresets';
 import { cardBounds, translate } from '../projectCanvas/expansion';
-import { relationEndpoint, TILE_HEIGHT, TILE_WIDTH, type CatalogTile, type ProjectRelation } from '../projectCanvas/layout';
+import { relationEndpoint, TILE_HEIGHT, TILE_WIDTH, type CatalogTile, type ProjectRelation, type RelationBend } from '../projectCanvas/layout';
+import { bendAt, projectPort, relationGeometry, relationKey, relationLabelPoint, spaceBetweenCards, type ProjectBox } from '../projectCanvas/relations';
 import type { CatalogTag } from '../projectCanvas/tags';
 import { tileKey, useExpansion } from '../projectCanvas/useExpansion';
 import { EdgeLabel } from './EdgeLabel';
@@ -19,6 +20,7 @@ type Drag = {
   view: Viewport;
   tile?: CatalogTile;
   from?: string;
+  relation?: { edge: ProjectRelation; grip: Vec2 };
   position?: Vec2;
   target?: string;
   moved: boolean;
@@ -38,6 +40,7 @@ type Props = {
   onOpen: (tile: CatalogTile) => void;
   onPlace: (tile: CatalogTile, point: Vec2, target?: string) => Promise<void>;
   onConnect: (relation: ProjectRelation) => void;
+  onBend: (relation: ProjectRelation, bend: RelationBend | null) => Promise<void>;
   onLabel: (relation: ProjectRelation, label: string) => Promise<void>;
   onRelationMenu: (event: MouseEvent, relation: ProjectRelation) => void;
   onFavorite: (tile: CatalogTile) => void;
@@ -46,40 +49,18 @@ type Props = {
   onWorkspaceAi: () => void;
 };
 
-// Include the folder tab so arrowheads stay visible above the icon.
-function folderBox(position: Vec2): Box {
-  return { x: position.x + 22, y: position.y + 10, w: 110, h: 71 };
+function folderBox(position: Vec2): ProjectBox {
+  return { x: position.x + 23, y: position.y + 25, w: 108, h: 55, folder: true };
 }
 
-function tileBox(tile: CatalogTile, position: Vec2): Box {
+function tileBox(tile: CatalogTile, position: Vec2): ProjectBox {
   return tile.kind === 'project' ? folderBox(position) : { x: position.x + 12, y: position.y + 8, w: 130, h: 74 };
 }
 
-function previewSpoke(parent: Box, tile: CatalogTile, position: Vec2) {
-  // Include captions in the mask so a spoke never crosses a translucent icon or its text.
-  const source = { ...parent, h: TILE_HEIGHT - 10 };
-  const target = tileBox(tile, position);
-  target.h = TILE_HEIGHT - (target.y - position.y);
-  const from = boxCenter(source), to = boxCenter(target);
-  const start = borderPoint(source, to), end = borderPoint(target, from);
-  if ((end.x - start.x) * (to.x - from.x) + (end.y - start.y) * (to.y - from.y) <= 0) return null;
-  return { start, end };
-}
-
-function namedGeometry(from: Box, to: Box, label?: string) {
-  const curve = edgeGeometry(from, to);
-  if (!label) return curve;
-  const { x, y } = curve.mid;
-  const halfWidth = Math.min(180, Array.from(label).length * 4.8);
-  const coversFolder = (box: Box) => x + halfWidth > box.x && x - halfWidth < box.x + box.w
-    && y + 11 > box.y && y - 11 < box.y + box.h;
-  if (!coversFolder(from) && !coversFolder(to)) return curve;
-  if (Math.abs(from.x - to.x) >= Math.abs(from.y - to.y)) {
-    const outsideY = from.x <= to.x ? Math.min(from.y, to.y) - 22 : Math.max(from.y, to.y) + from.h + 25;
-    return bentGeometry(from, to, { x, y: outsideY });
-  }
-  const outsideX = from.y <= to.y ? Math.max(from.x, to.x) + from.w + halfWidth + 10 : Math.min(from.x, to.x) - halfWidth - 10;
-  return bentGeometry(from, to, { x: outsideX, y });
+function previewSpoke(parent: ProjectBox, tile: CatalogTile, position: Vec2) {
+  const child = tileBox(tile, position);
+  const geometry = relationGeometry(parent, child);
+  return spaceBetweenCards(parent, child, geometry) ? geometry : null;
 }
 
 function RelationName({ relation, point, width, height, onClose, onSave }: {
@@ -134,7 +115,7 @@ const TileContent = memo(function TileContent({ tile, tags, drop }: { tile: Cata
   </>;
 });
 
-export function ProjectCanvas({ scope, folderId, folderName, tiles, relations, tags, filtering, disabled, readBoards, previewTiles, onOpen, onPlace, onConnect, onLabel, onRelationMenu, onFavorite, onMenu, onAdd, onWorkspaceAi }: Props) {
+export function ProjectCanvas({ scope, folderId, folderName, tiles, relations, tags, filtering, disabled, readBoards, previewTiles, onOpen, onPlace, onConnect, onBend, onLabel, onRelationMenu, onFavorite, onMenu, onAdd, onWorkspaceAi }: Props) {
   const element = useRef<HTMLElement>(null);
   const { viewport, view, setView, takeCamera, persistView, selected, scene, message, toggle, close } = useExpansion({
     host: element, scope, folderId, tiles, readBoards, previewTiles,
@@ -145,6 +126,7 @@ export function ProjectCanvas({ scope, folderId, folderName, tiles, relations, t
   const marker = useId();
   const [dragged, setDragged] = useState<{ id?: string; kind?: CatalogTile['kind']; position?: Vec2; target?: string }>();
   const [connection, setConnection] = useState<{ from: string; point: Vec2; target?: string }>();
+  const [bending, setBending] = useState<{ key: string; bend: RelationBend | null }>();
   const [editingName, setEditingName] = useState<string>();
 
   function tilePosition(tile: CatalogTile) {
@@ -164,13 +146,27 @@ export function ProjectCanvas({ scope, folderId, folderName, tiles, relations, t
     const point = owner && drag ? translate(branch.point, { x: drag.x - owner.position.x, y: drag.y - owner.position.y }) : branch.point;
     return { ...branch, point, box: owner?.box ?? folderBox(branch.origin) };
   });
+  const relationIndex = new Map((relations ?? []).map(edge => [relationKey(edge), edge]));
+  function layRelation(relation: ProjectRelation, from: { name: string; box: ProjectBox }, to: { name: string; box: ProjectBox }, preview = false) {
+    const key = relationKey(relation);
+    const bend = !preview && bending?.key === key ? bending.bend : relation.bend;
+    const reverse = relationIndex.get(relationKey({ from: relation.to, to: relation.from }));
+    const separation = reverse && !reverse.bend ? 8 / viewport.zoom : 0;
+    const geometry = relationGeometry(from.box, to.box, bend, separation);
+    return { relation, key, name: `${from.name} → ${to.name}`, geometry, labelPoint: relationLabelPoint(geometry, from.box, to.box, relation.label) };
+  }
   const laidRelations = (relations ?? []).flatMap(relation => {
     const from = endpoints.get(relation.from), to = endpoints.get(relation.to);
-    return from && to ? [{
-      relation, key: `${relation.from}:${relation.to}`,
-      name: `${from.name} → ${to.name}`, geometry: namedGeometry(from.box, to.box, relation.label),
-    }] : [];
+    return from && to ? [layRelation(relation, from, to)] : [];
   });
+  const projected = new Map(branches.map(branch => [relationEndpoint(branch.tile), {
+    owner: branch.owner, name: branch.tile.row.name, box: tileBox(branch.tile, branch.point), opacity: branch.opacity,
+  }]));
+  const previewRelations = branches.length ? (relations ?? []).flatMap(relation => {
+    const from = projected.get(relation.from), to = projected.get(relation.to);
+    if (!from || !to || from.owner !== to.owner || !spaceBetweenCards(from.box, to.box, relationGeometry(from.box, to.box))) return [];
+    return [{ ...layRelation(relation, from, to, true), owner: from.owner, opacity: Math.min(from.opacity, to.opacity) }];
+  }) : [];
   const named = laidRelations.find(edge => edge.key === editingName);
 
   useEffect(() => {
@@ -198,6 +194,17 @@ export function ProjectCanvas({ scope, folderId, folderName, tiles, relations, t
     suppressClick.current = false;
     const hit = event.target as Element;
     if (event.button === 0 && hit.closest('.project-preview-open')) return;
+    const line = hit.closest<SVGElement>('[data-relation-key]');
+    if (line) {
+      if (event.button !== 0) return;
+      const relation = laidRelations.find(edge => edge.key === line.dataset.relationKey);
+      if (!relation) return;
+      gesture.current = {
+        pointer: event.pointerId, start: { x: event.clientX, y: event.clientY }, view: view.current,
+        relation: { edge: relation.relation, grip: relation.geometry.mid }, moved: false,
+      };
+      return;
+    }
     const port = hit.closest<HTMLButtonElement>('[data-connect-card]');
     if (port) {
       if (event.button !== 0) return;
@@ -243,6 +250,18 @@ export function ProjectCanvas({ scope, folderId, folderName, tiles, relations, t
     return { from, point, target };
   }
 
+  function bendDuringDrag(drag: Drag, event: PointerEvent<HTMLElement>) {
+    if (!drag.relation) return null;
+    const { edge, grip } = drag.relation;
+    const from = endpoints.get(edge.from)?.box, to = endpoints.get(edge.to)?.box;
+    if (!from || !to) return null;
+    const point = {
+      x: grip.x + (event.clientX - drag.start.x) / drag.view.zoom,
+      y: grip.y + (event.clientY - drag.start.y) / drag.view.zoom,
+    };
+    return { key: relationKey(edge), bend: bendAt(from, to, point, view.current.zoom) };
+  }
+
   function track(event: PointerEvent<HTMLElement>) {
     const drag = gesture.current;
     if (!drag || drag.pointer !== event.pointerId || disabled) return;
@@ -256,6 +275,11 @@ export function ProjectCanvas({ scope, folderId, folderName, tiles, relations, t
     }
     if (drag.from) {
       setConnection(connectionPoint(event, drag.from));
+      return;
+    }
+    if (drag.relation) {
+      const draft = bendDuringDrag(drag, event);
+      if (draft) setBending(draft);
       return;
     }
     if (!drag.tile) {
@@ -280,6 +304,14 @@ export function ProjectCanvas({ scope, folderId, folderName, tiles, relations, t
     if (!drag || drag.pointer !== event.pointerId) return;
     gesture.current = undefined;
     if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
+    if (drag.relation) {
+      const draft = drag.moved && !cancel && !disabled ? bendDuringDrag(drag, event) : null;
+      if (draft) {
+        setBending(draft);
+        void onBend(drag.relation.edge, draft.bend).finally(() => setBending(undefined));
+      } else setBending(undefined);
+      return;
+    }
     if (drag.from) {
       setConnection(undefined);
       if (drag.moved && !cancel && !disabled) {
@@ -318,23 +350,24 @@ export function ProjectCanvas({ scope, folderId, folderName, tiles, relations, t
   const sourceBox = connection && endpoints.get(connection.from)?.box;
   const targetBox = connection?.target ? endpoints.get(connection.target)?.box : undefined;
   const draftPath = connection && sourceBox && (targetBox
-    ? edgeGeometry(sourceBox, targetBox).d
-    : straightPath(borderPoint(sourceBox, connection.point), connection.point));
+    ? relationGeometry(sourceBox, targetBox).d
+    : straightPath(projectPort(sourceBox, connection.point), connection.point));
 
   return (
     <main
-      ref={element} className={`board-canvas project-canvas${dragged ? ' is-dragging' : ''}${connection ? ' is-connecting' : ''}`}
+      ref={element} className={`board-canvas project-canvas${dragged ? ' is-dragging' : ''}${connection ? ' is-connecting' : ''}${bending ? ' is-bending' : ''}`}
       aria-label={folderName ? `${folderName}的项目画布` : '项目首页画布'}
       data-folder-id={folderId ?? ''} data-zoom={viewport.zoom}
       style={{ backgroundPosition: `${viewport.x}px ${viewport.y}px`, backgroundSize: `${26 * viewport.zoom}px ${26 * viewport.zoom}px` }}
       onPointerDown={begin} onPointerMove={track} onPointerUp={event => end(event)}
       onPointerCancel={event => end(event, true)} onLostPointerCapture={event => end(event, true)}
       onKeyDown={event => {
-        if (event.key === 'Escape' && gesture.current?.from) {
+        if (event.key === 'Escape' && (gesture.current?.from || gesture.current?.relation)) {
           const { pointer } = gesture.current;
           gesture.current = undefined;
           if (event.currentTarget.hasPointerCapture(pointer)) event.currentTarget.releasePointerCapture(pointer);
           setConnection(undefined);
+          setBending(undefined);
         } else if (event.key === 'Escape' && selected && !editingName && !disabled) {
           event.stopPropagation();
           close();
@@ -353,17 +386,22 @@ export function ProjectCanvas({ scope, folderId, folderName, tiles, relations, t
           {branches.map(({ owner, tile, box, point, opacity }) => {
             const spoke = previewSpoke(box, tile, point);
             return spoke && <line key={`${owner}:${tileKey(tile)}`} className="project-preview-spoke" aria-hidden="true"
-              x1={spoke.start.x} y1={spoke.start.y} x2={spoke.end.x} y2={spoke.end.y} opacity={opacity} />;
+              data-preview-child={relationEndpoint(tile)} x1={spoke.start.x} y1={spoke.start.y} x2={spoke.end.x} y2={spoke.end.y} opacity={opacity} />;
           })}
-          {laidRelations.map(({ key, relation, geometry: { d }, name }) => {
+          {previewRelations.map(({ owner, key, name, relation, geometry, opacity }) => (
+            <path key={`${owner}:${key}`} className="project-relation-line project-preview-arrow" d={geometry.d}
+              data-from={relation.from} data-to={relation.to} data-preview-owner={owner}
+              style={{ opacity }} markerEnd={`url(#${marker})`} role="img" aria-label={name}><title>{name}</title></path>
+          ))}
+          {laidRelations.map(({ key, relation, geometry: { d, mid }, name }) => {
             return (
-              <g key={key} className="project-relation" data-from={relation.from} data-to={relation.to}>
+              <g key={key} className={`project-relation${bending?.key === key ? ' is-bending' : ''}`} data-from={relation.from} data-to={relation.to}>
                 <path className="project-relation-line" d={d} markerEnd={`url(#${marker})`} aria-hidden="true" />
                 <path
                   className="project-relation-hit" d={d} role="button" tabIndex={disabled ? -1 : 0}
-                  aria-label={name} aria-disabled={disabled}
+                  aria-label={name} aria-disabled={disabled} data-relation-key={key}
                   onClick={event => {
-                    if (!disabled) { event.stopPropagation(); setEditingName(key); }
+                    if (!disabled && (!suppressClick.current || event.detail === 0)) { event.stopPropagation(); setEditingName(key); }
                   }}
                   onContextMenu={event => { if (!disabled) onRelationMenu(event, relation); }}
                   onKeyDown={event => {
@@ -376,7 +414,9 @@ export function ProjectCanvas({ scope, folderId, folderName, tiles, relations, t
                       event.currentTarget.dispatchEvent(new window.MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
                     }
                   }}
-                ><title>{name}</title></path>
+                ><title>{name} · 拖动调整弯折</title></path>
+                <circle className="project-relation-handle" data-relation-key={key} aria-hidden="true"
+                  cx={mid.x} cy={mid.y} r={6 / viewport.zoom} />
               </g>
             );
           })}
@@ -440,7 +480,7 @@ export function ProjectCanvas({ scope, folderId, folderName, tiles, relations, t
           const folder = tile.kind === 'project';
           return <div key={`${owner}:${tileKey(tile)}`} className={`project-tile is-${tile.kind} is-preview-tile`}
             style={{ transform: `translate3d(${point.x}px,${point.y}px,0)`, width: TILE_WIDTH, minHeight: TILE_HEIGHT, opacity }}
-            data-preview-owner={owner} aria-hidden={!shown}>
+            data-preview-owner={owner} data-preview-endpoint={relationEndpoint(tile)} aria-hidden={!shown}>
             <button type="button" className="project-tile-open project-preview-open" data-id={tile.row.id} disabled={disabled || !shown}
               aria-label={tile.row.name} title={folder ? `${tile.row.name} · 双击进入` : tile.row.name}
               onPointerDown={event => { if (event.button === 0) suppressClick.current = false; }}
@@ -453,12 +493,19 @@ export function ProjectCanvas({ scope, folderId, folderName, tiles, relations, t
         })}
       </div>
       <div className="edge-label-layer project-relation-names">
-        {laidRelations.map(({ key, relation, geometry }) => {
+        {previewRelations.map(({ owner, key, relation, labelPoint, opacity }) => {
+          if (!relation.label || opacity < 0.55) return null;
+          const at = worldToScreen(viewport, labelPoint);
+          return <div key={`${owner}:${key}`} data-preview-label={owner} style={{ opacity }}>
+            <EdgeLabel label={relation.label} x={at.x} y={at.y} zoom={viewport.zoom} />
+          </div>;
+        })}
+        {laidRelations.map(({ key, relation, labelPoint, geometry }) => {
           if (!relation.label || key === editingName) return null;
-          const { x, y } = worldToScreen(viewport, geometry.mid);
+          const { x, y } = worldToScreen(viewport, labelPoint);
           const edit = () => { if (!disabled) setEditingName(key); };
           return <div key={key} onContextMenu={event => { if (!disabled) onRelationMenu(event, relation); }}>
-            <EdgeLabel label={relation.label} x={x} y={y} zoom={viewport.zoom} onSelect={edit} onEdit={edit} />
+            <EdgeLabel label={relation.label} x={x} y={y - (bending?.key === key && geometry.mid === labelPoint ? 22 : 0)} zoom={viewport.zoom} onSelect={edit} onEdit={edit} />
           </div>;
         })}
         {named && <RelationName key={named.key} relation={named.relation} point={worldToScreen(viewport, named.geometry.mid)}

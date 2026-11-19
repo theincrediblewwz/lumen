@@ -202,6 +202,7 @@ pub fn run() {
             project_canvas::project_canvas_move,
             project_canvas::project_canvas_relate,
             project_canvas::project_canvas_label,
+            project_canvas::project_canvas_bend,
             project_canvas::project_canvas_pin,
             project_canvas::tags::project_canvas_tags,
             project_canvas::covers::project_canvas_cover,

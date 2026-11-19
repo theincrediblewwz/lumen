@@ -9,12 +9,36 @@ const breadcrumb=name=>page.getByRole('navigation',{name:'项目路径'}).getByR
 const boardTile=name=>page.locator('.project-tile.is-board').getByRole('button',{name,exact:true});
 const blank=async()=>{const p=await page.evaluate(()=>{const r=document.querySelector('.board-canvas-live').getBoundingClientRect();for(const[x,y]of[[r.x+30,r.y+75],[r.right-45,r.y+75],[r.x+30,r.bottom-90],[r.right-45,r.bottom-90]]){const el=document.elementFromPoint(x,y);if(el?.closest('.board-canvas-live')&&!el.closest('.node-panel,.node-card,.document-editor-modal,.board-appearance,button,input,textarea,.canvas-toolbar'))return{x,y};}throw Error('No unobstructed canvas point');});await page.mouse.click(p.x,p.y);};
 const saved=()=>page.getByRole('button',{name:'已保存',exact:true}).waitFor();
+const selectPhrase=(field,phrase)=>field.evaluate((el,text)=>{
+ const start=el.value.indexOf(text);if(start<0)throw Error(`Missing test text ${text}`);
+ el.focus();el.setSelectionRange(start,start+text.length);const rect=el.getBoundingClientRect();
+ el.dispatchEvent(new MouseEvent('mouseup',{bubbles:true,button:0,clientX:rect.left+45,clientY:rect.top+20}));
+},phrase);
 try{
  await page.goto(base+'/scripts/knowledge-ui-fixture.html?mode=main&platform=macos&nodes&captureQA&navigationQA',{waitUntil:'domcontentloaded',timeout:90000});await page.waitForFunction(()=>window.__fixtureReactMounted);await openBoard();
  assert.match(await page.title(),/知识库合成页面验收/);assert.equal(new URL(page.url()).pathname,'/scripts/knowledge-ui-fixture.html');assert.equal(await page.locator('vite-error-overlay').count(),0);
  assert.equal(await page.locator('.canvas-toolbar button').count(),4);assert.equal(await page.locator('.canvas-toolbar [aria-label="放大"],.canvas-toolbar [aria-label="缩小"]').count(),0);assert.equal(await page.locator('.canvas-zoom-label').evaluate(e=>getComputedStyle(e).backgroundColor),'rgba(0, 0, 0, 0)');checks.push('only undo/redo/arrange/fit at top-left, bare percent at bottom-left');
  await page.locator('.node-card').first().click();await page.locator('.np-title').fill('标题含 \\nu 与 $x^2$');assert.equal(await page.locator('.node-panel .markdown-editor').count(),0);assert.equal(await page.locator('.node-panel .np-markdown-open').count(),1);assert.equal(await page.locator('.np-title-preview').count(),0);assert.equal(await page.getByText('完整问题 · Markdown文档',{exact:true}).count(),0);await page.locator('.np-markdown-open').click();await page.getByRole('textbox',{name:'完整问题Markdown',exact:true}).fill('# 完整问题\n\n这是 **加粗** 和 \\nu。\n\n| A | B |\n|---|---|\n| 1 | 2 |');await blank();await saved();let state=await capture();assert.equal(state.boards.board.nodes[0].title,'标题含 \\nu 与 $x^2$');assert.ok(state.boards.board.nodes[0].summary.includes('**加粗**'));assert.ok(await page.locator('.node-title .katex').count());assert.ok(await page.locator('.node-question strong').count());checks.push('one clean Markdown entry opens a dedicated editor; clicking outside saves; title and question render Markdown / bare TeX');
- await page.reload({waitUntil:'domcontentloaded'});await page.waitForFunction(()=>window.__fixtureReactMounted);await openBoard();assert.ok((await page.locator('.node-title').first().innerText()).includes('标题含'));checks.push('edits persist after full app reload');
+ await page.locator('.node-card').first().click();
+ await selectPhrase(page.locator('.np-title'),'标题');
+ await page.getByRole('button',{name:'高亮颜色',exact:true}).click();
+ await page.getByRole('button',{name:'荧光绿',exact:true}).click();
+ await page.getByRole('button',{name:'高亮',exact:true}).click();
+ await saved();
+ const titleMark=page.locator('.node-title mark.lumen-highlight').first();
+ assert.equal(await titleMark.textContent(),'标题');
+ assert.deepEqual(await titleMark.evaluate(el=>[getComputedStyle(el).color,el.style.getPropertyValue('--highlight-ink')]),['rgb(0, 0, 0)','#82FF6B']);
+ assert.match((await capture()).boards.board.nodes[0].title,/^==\{#82FF6B\}标题==含/);
+ await page.locator('.np-markdown-open').click();
+ await selectPhrase(page.getByRole('textbox',{name:'完整问题Markdown',exact:true}),'加粗');
+ await page.getByRole('button',{name:'高亮',exact:true}).click();
+ await page.locator('.md-editor-preview strong mark[data-lumen-highlight="#82FF6B"]').waitFor();
+ await page.screenshot({path:out+'/markdown-fluorescent-highlight.png'});
+ await page.getByRole('button',{name:'保存并关闭',exact:true}).click();await saved();
+ assert.ok((await capture()).boards.board.nodes[0].summary.includes('**=={#82FF6B}加粗==**'));
+ await page.reload({waitUntil:'domcontentloaded'});await page.waitForFunction(()=>window.__fixtureReactMounted);await openBoard();assert.ok((await page.locator('.node-title').first().innerText()).includes('标题含'));
+ await titleMark.waitFor();await page.locator('.node-question mark[data-lumen-highlight="#82FF6B"]').waitFor();
+ checks.push('selection opens a color menu, one color is reused across title and Markdown editors, and black lettering with glow survives a full reload');
  await page.locator('.node-card').first().click();await page.evaluate(()=>window.__fixtureFailBoardSave=true);await page.locator('.np-title').fill('标题含 \\nu 与 $x^2$ · 自动保存重试');await blank();await page.locator('.board-save-state.is-error').waitFor();assert.ok((await page.locator('.node-title').first().innerText()).includes('自动保存重试'));await page.evaluate(()=>window.__fixtureFailBoardSave=false);await page.locator('.board-save-state').click();await saved();assert.ok((await capture()).boards.board.nodes[0].title.includes('自动保存重试'));checks.push('failed board save remains visibly dirty, retains edits, and explicit retry persists them');
  await breadcrumb('项目首页').click();
  await page.getByRole('button',{name:'收藏置顶项目：另一项目',exact:true}).click();assert.equal(await page.locator('.project-tile.is-project .project-tile-title').first().innerText(),'另一项目');

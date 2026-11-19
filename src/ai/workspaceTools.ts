@@ -29,7 +29,7 @@ const route = { oneOf: [
   variant('kind', 'straight', {}),
   variant('kind', 'bent', { control: position }),
 ] };
-const edgeStyle = { directed: flag, label: text, route };
+const edgeOptions = { directed: flag, label: text, route };
 const node = { board, nodeId: text };
 const doc = { ...node, documentId: text };
 const op = (name: string, fields: Record<string, Schema>, required: string[]) => variant('op', name, fields, required);
@@ -45,8 +45,8 @@ const operations = [
   op('create_node', { key: text, board, fields }, ['key', 'board', 'fields']),
   op('update_node', { ...node, fields }, ['board', 'nodeId', 'fields']),
   op('remove_node', { ...node, includeFlow: flag }, ['board', 'nodeId']),
-  op('connect_nodes', { board, key: text, from: text, to: text, ...edgeStyle }, ['board', 'from', 'to']),
-  op('update_edge', { board, edgeId: text, ...edgeStyle }, ['board', 'edgeId']),
+  op('connect_nodes', { board, key: text, from: text, to: text, ...edgeOptions }, ['board', 'from', 'to']),
+  op('update_edge', { board, edgeId: text, ...edgeOptions }, ['board', 'edgeId']),
   op('remove_edge', { board, edgeId: text }, ['board', 'edgeId']),
   op('set_flow', { board, ownerId: text, stepIds: ids }, ['board', 'ownerId', 'stepIds']),
   op('add_markdown', { ...node, title: text, markdown: text }, ['board', 'nodeId', 'title', 'markdown']),

@@ -12,6 +12,7 @@
  * 纯函数：`slugify` / `renderMarkdown` 可脱离浏览器测试。
  */
 import MarkdownIt from 'markdown-it';
+import { highlightPlugin } from './highlight';
 
 // @types/markdown-it 用 `export =` 导出，命名空间类型无法经默认导入取到，
 // 这里用宽松别名（token/state 均为运行时结构，逐字段访问已在下方各处收敛）。
@@ -558,6 +559,7 @@ export function createEngine(allowSanitizedHtml = false): MD {
     typographer: true,
   });
   md.use(mathPlugin);
+  md.use(highlightPlugin);
   if(!allowSanitizedHtml)md.renderer.rules.image=(tokens,index)=>`<span class="document-image-missing" role="img">${escapeAttr(tokens[index].content||'图片')}（请导入含图片的 ZIP）</span>`;
   return md;
 }

@@ -48,6 +48,24 @@ pub(crate) struct Relation {
     pub(crate) to: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) label: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) bend: Option<RelationBend>,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct RelationBend {
+    along: f64,
+    offset: f64,
+}
+
+impl RelationBend {
+    fn check(self) -> Result<(), String> {
+        if [self.along, self.offset].iter().any(|value| !value.is_finite() || value.abs() > 16.0) {
+            return Err("连线弯折超出范围".into());
+        }
+        Ok(())
+    }
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
@@ -135,7 +153,7 @@ impl Layout {
         let label = label.as_deref().map(relation_label).transpose()?;
         let position = self.relations.iter().position(|edge| edge.from == from && edge.to == to);
         match (present, position) {
-            (true, None) => self.relations.push(Relation { from, to, label: label.flatten() }),
+            (true, None) => self.relations.push(Relation { from, to, label: label.flatten(), bend: None }),
             (true, Some(index)) => {
                 if let Some(label) = label { self.relations[index].label = label; }
             }
@@ -243,6 +261,7 @@ impl Layout {
                 return Err("项目连线的端点无效或重复".into());
             }
             relation_label(edge.label.as_deref().unwrap_or(""))?;
+            if let Some(bend) = edge.bend { bend.check()?; }
         }
         for id in self.pins.keys() {
             if let Some((project, board)) = id.split_once('/') {
@@ -394,6 +413,7 @@ enum RelationChange {
     Add,
     Remove,
     Label(Option<String>),
+    Bend(Option<RelationBend>),
 }
 
 fn endpoint_layer<'a>(
@@ -435,12 +455,17 @@ fn change_relation(
             from,
             to,
             label: None,
+            bend: None,
         }),
         (RelationChange::Remove, Some(index)) => {
             layout.relations.remove(index);
         }
         (RelationChange::Label(label), Some(index)) => layout.relations[index].label = label,
-        (RelationChange::Label(_), None) => return Err("项目连线已移除".into()),
+        (RelationChange::Bend(bend), Some(index)) if layout.relations[index].bend != bend => {
+            if let Some(bend) = bend { bend.check()?; }
+            layout.relations[index].bend = bend;
+        }
+        (RelationChange::Label(_) | RelationChange::Bend(_), None) => return Err("项目连线已移除".into()),
         _ => return Ok(layout),
     }
     write(root, &layout)?;
@@ -616,6 +641,20 @@ pub fn project_canvas_label(
         to,
         RelationChange::Label(relation_label(&label)?),
     )
+}
+
+#[tauri::command]
+pub fn project_canvas_bend(
+    project_id: Option<String>,
+    from: String,
+    to: String,
+    bend: Option<RelationBend>,
+    expected_scope: String,
+) -> Result<Layout, String> {
+    let _guard = sync::IO_LOCK.lock().map_err(|e| e.to_string())?;
+    let root = commands::root()?;
+    safety::ensure_scope(&root, &expected_scope)?;
+    change_relation(&root, project_id.as_deref(), from, to, RelationChange::Bend(bend))
 }
 
 #[cfg(test)]

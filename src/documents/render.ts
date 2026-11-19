@@ -5,6 +5,7 @@ import {
   type RenderResult,
 } from "../reader/engine";
 import { imageAlias, type DocumentMetadata } from "./core";
+import { restoreHighlightColor } from "../reader/highlight";
 /** Bundle HTML supports the exporter's complex tables, never scripts, styles or network images. */
 export function renderRichMarkdown(
   markdown: string,
@@ -27,6 +28,7 @@ export function renderRichMarkdown(
     }
   });
   purifier.addHook("afterSanitizeAttributes", (node) => {
+    if (node.nodeName === "MARK") restoreHighlightColor(node as Element);
     if (node.nodeName === "IMG" && !(node as Element).hasAttribute("src"))
       (node as Element).setAttribute(
         "alt",

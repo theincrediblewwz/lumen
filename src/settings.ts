@@ -11,9 +11,6 @@ export type ThemeName = 'light' | 'paper' | 'dark';
 
 export type GlassMode = 'native' | 'css' | 'off';
 
-/** 连线视觉样式（与 canvas/geometry 的 EdgeStyle 对应） */
-export type EdgeStyle = 'curved' | 'straight' | 'stepped';
-
 export interface Settings {
   theme: ThemeName;
   glass: boolean;
@@ -25,8 +22,6 @@ export interface Settings {
   glassBlur: number;
   /** 动画特效开关 */
   motion: boolean;
-  /** 连线样式：曲线 / 直线 / 折线 */
-  edgeStyle: EdgeStyle;
   /** 阅读器：对无分界符但明显是数学的内容进行猜测渲染（M4） */
   guessMath: boolean;
 }
@@ -38,18 +33,29 @@ export const DEFAULT_SETTINGS: Settings = {
   glassClarity: 55,
   glassBlur: 60,
   motion: true,
-  edgeStyle: 'curved',
   guessMath: true,
 };
 
 const KEY = 'lumen.settings.v2';
+
+export function cleanSettings(value: Partial<Settings>): Settings {
+  return {
+    theme: ['light', 'paper', 'dark'].includes(value.theme ?? '') ? value.theme! : DEFAULT_SETTINGS.theme,
+    glass: typeof value.glass === 'boolean' ? value.glass : DEFAULT_SETTINGS.glass,
+    glassMode: ['native', 'css', 'off'].includes(value.glassMode ?? '') ? value.glassMode! : DEFAULT_SETTINGS.glassMode,
+    glassClarity: Number.isFinite(value.glassClarity) ? Math.max(0, Math.min(100, value.glassClarity!)) : DEFAULT_SETTINGS.glassClarity,
+    glassBlur: Number.isFinite(value.glassBlur) ? Math.max(0, Math.min(100, value.glassBlur!)) : DEFAULT_SETTINGS.glassBlur,
+    motion: typeof value.motion === 'boolean' ? value.motion : DEFAULT_SETTINGS.motion,
+    guessMath: typeof value.guessMath === 'boolean' ? value.guessMath : DEFAULT_SETTINGS.guessMath,
+  };
+}
 
 export function loadSettings(): Settings {
   try {
     const raw = localStorage.getItem(KEY);
     if (!raw) return { ...DEFAULT_SETTINGS };
     const parsed = JSON.parse(raw) as Partial<Settings>;
-    return { ...DEFAULT_SETTINGS, ...parsed };
+    return cleanSettings(parsed);
   } catch {
     return { ...DEFAULT_SETTINGS };
   }

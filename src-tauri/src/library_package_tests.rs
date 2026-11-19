@@ -58,7 +58,7 @@ fn project_package_keeps_its_nested_subtree_positions_and_materials() {
     raw["boards"][&grandchild.id][&board.id] = json!({ "x":70, "y":320 });
     let complete_edges = json!([
         { "from": &grandchild.id, "to": &sibling.id, "label": r"用于论文 $\nu$" },
-        { "from": format!("{}/{}", child.id, first.id), "to": format!("{}/{}", child.id, second.id), "label": "继续阅读" },
+        { "from": format!("{}/{}", child.id, first.id), "to": format!("{}/{}", child.id, second.id), "label": "继续阅读", "bend": { "along": 0.4, "offset": 0.32 } },
         { "from": &grandchild.id, "to": format!("{}/{}", child.id, first.id), "label": "收录结论" }
     ]);
     raw["relations"] = complete_edges.clone();

@@ -2,22 +2,10 @@ import { invoke } from '@tauri-apps/api/core';
 import { open, save } from '@tauri-apps/plugin-dialog';
 import { loadWritePolicy } from './ai/boardOperations';
 import { requestEditorFlush, releaseEditorLock } from './sync/events';
-import { DEFAULT_SETTINGS, loadSettings, saveSettings, type Settings } from './settings';
+import { cleanSettings, loadSettings, saveSettings, type Settings } from './settings';
 import { loadPrefs, savePrefs } from './reader/readerPrefs';
 
 export type LibraryRestore = { root: string; preferences: { ui?: Partial<Settings>; reader?: ReturnType<typeof loadPrefs>; progress?: Record<string, number> }; files: number };
-function cleanSettings(value: Partial<Settings>): Settings {
-  return {
-    theme: ['light', 'paper', 'dark'].includes(value.theme ?? '') ? value.theme! : DEFAULT_SETTINGS.theme,
-    glass: typeof value.glass === 'boolean' ? value.glass : DEFAULT_SETTINGS.glass,
-    glassMode: ['native', 'css', 'off'].includes(value.glassMode ?? '') ? value.glassMode! : DEFAULT_SETTINGS.glassMode,
-    glassClarity: Number.isFinite(value.glassClarity) ? Math.max(0, Math.min(100, value.glassClarity!)) : DEFAULT_SETTINGS.glassClarity,
-    glassBlur: Number.isFinite(value.glassBlur) ? Math.max(0, Math.min(100, value.glassBlur!)) : DEFAULT_SETTINGS.glassBlur,
-    motion: typeof value.motion === 'boolean' ? value.motion : DEFAULT_SETTINGS.motion,
-    edgeStyle: ['curved', 'straight', 'stepped'].includes(value.edgeStyle ?? '') ? value.edgeStyle! : DEFAULT_SETTINGS.edgeStyle,
-    guessMath: typeof value.guessMath === 'boolean' ? value.guessMath : DEFAULT_SETTINGS.guessMath,
-  };
-}
 function preferences() {
   const current = loadSettings();
   const ui = cleanSettings(current);

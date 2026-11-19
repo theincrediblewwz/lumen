@@ -1,6 +1,6 @@
 import { invoke } from '@tauri-apps/api/core';
 import { open } from '@tauri-apps/plugin-dialog';
-import type { ProjectLayout, ProjectLayoutSnapshot, ProjectRelation } from './projectCanvas/layout';
+import type { ProjectLayout, ProjectLayoutSnapshot, ProjectRelation, RelationBend } from './projectCanvas/layout';
 import type { CoverStore, CoverTarget } from './projectCanvas/covers';
 import type { TagDefinition, TagTarget } from './projectCanvas/tags';
 
@@ -126,6 +126,8 @@ export const api = {
     invoke<ProjectLayout>('project_canvas_relate', { projectId, from: relation.from, to: relation.to, present, expectedScope }),
   projectCanvasLabel: (projectId: string | null, relation: ProjectRelation, label: string, expectedScope: string) =>
     invoke<ProjectLayout>('project_canvas_label', { projectId, from: relation.from, to: relation.to, label, expectedScope }),
+  projectCanvasBend: (projectId: string | null, relation: ProjectRelation, bend: RelationBend | null, expectedScope: string) =>
+    invoke<ProjectLayout>('project_canvas_bend', { projectId, from: relation.from, to: relation.to, bend, expectedScope }),
   projectCanvasTags: (target: TagTarget, assigned: string[], newTags: Record<string, TagDefinition>, expectedScope: string) =>
     invoke<ProjectLayout>('project_canvas_tags', { target, assigned, newTags, expectedScope }),
   projectCanvasCover: (target: CoverTarget, coverId: string | null, expectedCoverId: string | null, expectedScope: string) =>

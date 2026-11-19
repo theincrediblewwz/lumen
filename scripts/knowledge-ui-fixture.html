@@ -196,12 +196,15 @@ window.__TAURI_INTERNALS__={metadata:{currentWindow:{label:'main'},currentWebvie
     saveNavigation();
     return structuredClone(fixtureCovers);
   }
-  if (command === 'project_canvas_label') {
+  if (command === 'project_canvas_label' || command === 'project_canvas_bend') {
     if (args.expectedScope !== fixtureCanvasScope()) throw Error('资料库已变化');
     if (window.__fixtureNavigationFailure) throw Error('合成磁盘写入失败');
     const relation = fixtureLayout.relations?.find(edge => edge.from === args.from && edge.to === args.to);
     if (!relation) throw Error('项目连线已移除');
-    if (args.label.trim()) relation.label = args.label.trim();
+    if (command === 'project_canvas_bend') {
+      if (args.bend) relation.bend = args.bend;
+      else delete relation.bend;
+    } else if (args.label.trim()) relation.label = args.label.trim();
     else delete relation.label;
     saveNavigation();
     return structuredClone(fixtureLayout);

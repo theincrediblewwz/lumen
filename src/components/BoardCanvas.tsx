@@ -11,7 +11,7 @@ import {
   canRedo,
   type History,
 } from '../canvas/history';
-import { edgeGeometry, bentGeometry, distanceToSegment, straightPath, boxContains, type Box, type EdgeStyle } from '../canvas/geometry';
+import { nearStraightLine, straightPath, boxContains, type Box } from '../canvas/geometry';
 import { computeTreeLayout } from '../canvas/autoLayout';
 import {routeBoardEdges,edgeLabelLines} from '../canvas/edgeRouting';
 import { descendantIds,translateFromBaseline } from '../canvas/subtree';
@@ -57,14 +57,13 @@ const FALLBACK_NODE_H = 64;
  * BoardCanvas（M2 + M3）：白板画布
  * - 视口：滚轮缩放（光标锚点不动）、空白拖拽平移
  * - 节点：右键/双击空白新建；拖拽移动、双击改标题、右键删除
- * - 连线（M3）：节点四周锚点拖出 → 落到目标节点建立；贝塞尔曲线 + 箭头 + 端点吸附边框；
+ * - 连线（M3）：节点四周锚点拖出 → 落到目标节点建立；直线、手动弯折、箭头与端点吸附边框；
  *   选中/删除、有向⇄无向、标签；删除节点级联清理其连线
  * - 命令栈：以上结构变更均可撤销/重做（Ctrl+Z / Ctrl+Shift+Z / Ctrl+Y）
  */
 export function BoardCanvas({
   board,
   onChange, onFlush, saveState,
-  edgeStyle = 'curved',
   guessMath = false,
   focusNode = null,
   tags, tagStore, tagFilter, onEditTags,
@@ -73,7 +72,6 @@ export function BoardCanvas({
   onFlush:()=>Promise<void>; saveState:'saved'|'dirty'|'saving'|'error';
   board: BoardFile;
   onChange: (nodes: BoardNode[], edges: BoardEdge[], viewport: Viewport, appearance?:BoardAppearance) => void;
-  edgeStyle?: EdgeStyle;
   guessMath?: boolean;
   /** AI 引用跳转目标（M5-6）：居中并闪烁高亮该节点。nonce 变化即重新触发。 */
   focusNode?: { id: string; nonce: number } | null;
@@ -416,8 +414,8 @@ export function BoardCanvas({
       const boxes=new Map(g.nodes.map(n=>[n.id,{x:n.x,y:n.y,w:sizesRef.current[n.id]?.w??(n.w||240),h:sizesRef.current[n.id]?.h??n.h??96}]));
       const detailedFit=Math.min((r.width-96)/Math.max(1,maxX-minX),(r.height-96)/Math.max(1,maxY-minY))>=0.35;
       if(detailedFit&&g.nodes.length*g.edges.length<=200000){
-        const routes=routeBoardEdges(boxes,g.edges,edgeStyle);
-        for(const edge of g.edges){const route=routes.get(edge.id);if(!route)continue;const lines=edgeLabelLines(edge.label??''),width=Math.max(24,...lines.map(s=>Array.from(s).length*12))+16,height=Math.max(24,lines.length*16+12);minX=Math.min(minX,route.mid.x-width/2);maxX=Math.max(maxX,route.mid.x+width/2);minY=Math.min(minY,route.mid.y-height/2);maxY=Math.max(maxY,route.mid.y+height/2);}
+        const routes=routeBoardEdges(boxes,g.edges);
+        for(const edge of g.edges){const route=routes.get(edge.id);if(!route)continue;const lines=edgeLabelLines(edge.label??''),width=Math.max(24,...lines.map(s=>Array.from(s).length*12))+16,height=Math.max(24,lines.length*16+12);minX=Math.min(minX,route.mid.x,route.labelPoint.x-width/2);maxX=Math.max(maxX,route.mid.x,route.labelPoint.x+width/2);minY=Math.min(minY,route.mid.y,route.labelPoint.y-height/2);maxY=Math.max(maxY,route.mid.y,route.labelPoint.y+height/2);}
       }
 
       engine.fit(
@@ -427,7 +425,7 @@ export function BoardCanvas({
     }
     rerender();
     onChange(graphRef.current.nodes, graphRef.current.edges, engine.viewport);
-  }, [engine, onChange, rerender,edgeStyle]);
+  }, [engine, onChange, rerender]);
 
   /** 在视口中心新建节点（键盘 N）。 */
   const addNodeAtCenter = useCallback(() => {
@@ -1196,17 +1194,12 @@ export function BoardCanvas({
     const ids=new Set(candidates.flatMap(e=>[e.from,e.to]));
     const boxes=new Map(mainNodes.filter(n=>ids.has(n.id)).map(n=>[n.id,screenBoxOf(n)]));
     const screenEdges=candidates.map(e=>e.route?.control?{...e,route:{...e.route,control:engine.toScreen(e.route.control)}}:e);
-    const routed=boxes.size*candidates.length<=200000?routeBoardEdges(boxes,screenEdges,edgeStyle,engine.viewport.zoom):new Map(screenEdges.map(e=>[e.id,e.route?.kind==='bent'&&e.route.control?bentGeometry(boxes.get(e.from)!,boxes.get(e.to)!,e.route.control):edgeGeometry(boxes.get(e.from)!,boxes.get(e.to)!,e.route?.kind==='straight'?'straight':edgeStyle)]));
-    return candidates
-      .map((e) => {
-        const a = nodeById[e.from];
-        const b = nodeById[e.to];
-        if (!a || !b) return null;
-        const g = routed.get(e.id)!;
-        return { edge: e, geo: g };
-      })
-      .filter((x): x is { edge: BoardEdge; geo: ReturnType<typeof edgeGeometry> } => x !== null);
-  }, [mainEdges, nodeById, screenBoxOf, sizesVer, vpSig, edgeStyle,heatMode,canvasSize]);
+    const routed=routeBoardEdges(boxes,screenEdges,engine.viewport.zoom);
+    return candidates.flatMap(edge => {
+      const geo = routed.get(edge.id);
+      return geo ? [{ edge, geo }] : [];
+    });
+  }, [mainEdges, nodeById, screenBoxOf, sizesVer, vpSig, heatMode, canvasSize]);
 
   useEffect(()=>{
     if(!flowOwnerId||!canvasSize.width)return;const owner=graphRef.current.nodes.find(n=>n.id===flowOwnerId);if(!owner)return;
@@ -1246,7 +1239,8 @@ export function BoardCanvas({
     const start={x:event.clientX,y:event.clientY},pointer=event.pointerId;let moved=false;
     const preview=(e:PointerEvent)=>{if(e.pointerId!==pointer)return;if(!moved&&Math.hypot(e.clientX-start.x,e.clientY-start.y)<3)return;moved=true;
       const r=rect(),point=engine.toWorld({x:e.clientX-r.left,y:e.clientY-r.top}),from=graphRef.current.nodes.find(n=>n.id===edge.from),to=graphRef.current.nodes.find(n=>n.id===edge.to);if(!from||!to)return;
-      const straight=edgeGeometry(boxOf(from),boxOf(to),'straight'),route:NonNullable<BoardEdge['route']>=distanceToSegment(point,straight.start,straight.end)*engine.viewport.zoom<18?{kind:'straight'}:{kind:'bent',control:point};
+      const route: NonNullable<BoardEdge['route']> = nearStraightLine(boxOf(from), boxOf(to), point, engine.viewport.zoom)
+        ? { kind: 'straight' } : { kind: 'bent', control: point };
       const next=replacePresent(historyRef.current,{...historyRef.current.present,edges:historyRef.current.present.edges.map(e=>e.id===id?{...e,route}:e)});historyRef.current=next;graphRef.current=next.present;setHistory(next);
     };
     const clean=()=>{window.removeEventListener('pointermove',preview);window.removeEventListener('pointerup',up);window.removeEventListener('pointercancel',cancel);window.removeEventListener('blur',cancel);window.removeEventListener('lumen:sync-edit-lock',cancel);edgeRouteCleanup.current=null;setDraggingNodes(false);if(wrapRef.current?.hasPointerCapture(pointer))wrapRef.current.releasePointerCapture(pointer);};
@@ -1345,7 +1339,7 @@ export function BoardCanvas({
                 onContextMenu={(e) => onEdgeContextMenu(e, edge.id)}
                 onPointerDown={(e) => e.stopPropagation()}
               />
-              {/* 可见曲线 */}
+              {/* 可见连线 */}
               <path
                 className="edge-line"
                 d={geo.d}
@@ -1365,7 +1359,7 @@ export function BoardCanvas({
         )}
       </svg>
 
-      <div className="edge-label-layer">{overviewLabels.map(h=><EdgeLabel key={h.id} label={h.count>1?`${h.count}条连线含说明；${h.label}`:h.label} x={h.x} y={h.y} zoom={zoom} onSelect={()=>{setSelectedEdge(h.id);zoomCenter(2);}} onEdit={()=>zoomCenter(2)}/>)}{laidEdges.map(({edge,geo})=>edge.label&&editingEdge!==edge.id?<EdgeLabel key={edge.id} label={edge.label} x={geo.mid.x} y={geo.mid.y-(selectedEdge===edge.id?24:0)} zoom={zoom} onSelect={()=>{setSelectedEdge(edge.id);setSelected(null);}} onEdit={()=>startEdgeLabel(edge.id)}/>:null)}</div>
+      <div className="edge-label-layer">{overviewLabels.map(h=><EdgeLabel key={h.id} label={h.count>1?`${h.count}条连线含说明；${h.label}`:h.label} x={h.x} y={h.y} zoom={zoom} onSelect={()=>{setSelectedEdge(h.id);zoomCenter(2);}} onEdit={()=>zoomCenter(2)}/>)}{laidEdges.map(({edge,geo})=>edge.label&&editingEdge!==edge.id?<EdgeLabel key={edge.id} label={edge.label} x={geo.labelPoint.x} y={geo.labelPoint.y-(selectedEdge===edge.id&&geo.labelPoint===geo.mid?24:0)} zoom={zoom} onSelect={()=>{setSelectedEdge(edge.id);setSelected(null);}} onEdit={()=>startEdgeLabel(edge.id)}/>:null)}</div>
       {/* 世界层：只改 transform（DESIGN §5.4） */}
       <div className={`canvas-world${arranging ? ' is-arranging' : ''}`} style={{ transform: engine.transform, transformOrigin: '0 0', ...glowVars }}>
         {visibleNodes.map((n) => (

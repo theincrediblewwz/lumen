@@ -1,6 +1,6 @@
 import { useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
-import type { Settings, ThemeName, GlassMode, EdgeStyle } from '../settings';
+import type { Settings, ThemeName, GlassMode } from '../settings';
 import { SyncSettings } from './SyncSettings';
 import { BoardWriteSettings } from './BoardWriteSettings';
 
@@ -14,12 +14,6 @@ const GLASS_MODES: { id: GlassMode; label: string }[] = [
   { id: 'native', label: '原生' },
   { id: 'css', label: '网页' },
   { id: 'off', label: '关闭' },
-];
-
-const EDGE_STYLES: { id: EdgeStyle; label: string }[] = [
-  { id: 'curved', label: '曲线' },
-  { id: 'straight', label: '直线' },
-  { id: 'stepped', label: '折线' },
 ];
 
 /**
@@ -158,23 +152,6 @@ export function SettingsPanel({
             </div>
           </div>
         </details>
-
-        <section className="settings-section">
-          <h3 className="settings-label">连线样式</h3>
-          <div className="seg" role="group" aria-label="连线样式">
-            {EDGE_STYLES.map((s) => (
-              <button
-                key={s.id}
-                type="button"
-                aria-pressed={(settings.edgeStyle ?? 'curved') === s.id}
-                className={`seg-btn${(settings.edgeStyle ?? 'curved') === s.id ? ' is-active' : ''}`}
-                onClick={() => onChange({ edgeStyle: s.id })}
-              >
-                {s.label}
-              </button>
-            ))}
-          </div>
-        </section>
 
         <section className="settings-section">
           <div className="settings-row">

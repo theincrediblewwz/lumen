@@ -141,10 +141,10 @@
 .project-relation-hit {
   fill: none;
   stroke: transparent;
-  stroke-width: 15;
+  stroke-width: 18;
   vector-effect: non-scaling-stroke;
   pointer-events: stroke;
-  cursor: pointer;
+  cursor: grab;
   outline: none;
 }
 
@@ -157,7 +157,24 @@
   opacity: 1;
 }
 
+.project-relation-handle {
+  fill: var(--bg-node);
+  stroke: var(--project-green);
+  stroke-width: 1.6;
+  vector-effect: non-scaling-stroke;
+  opacity: 0;
+  pointer-events: none;
+  cursor: grab;
+}
+.project-relation:hover .project-relation-handle,
+.project-relation:focus-within .project-relation-handle,
+.project-relation.is-bending .project-relation-handle { opacity: 1; }
+.project-canvas.is-bending,
+.project-relation.is-bending :is(.project-relation-hit, .project-relation-handle) { cursor: grabbing; }
+.project-canvas.is-connecting .project-relation-handle { opacity: 0; pointer-events: none; }
+
 .project-relation-draft { stroke-dasharray: 4 4; opacity: 1; }
+.project-preview-arrow { pointer-events: none; }
 
 .project-preview-spoke {
   stroke: color-mix(in srgb, var(--project-green) 46%, var(--bg-canvas));
@@ -333,6 +350,10 @@
   font-size: 14px;
   font-weight: 620;
   line-height: 1.45;
+}
+.project-tile.is-preview-tile .project-tile-title,
+.project-tile.is-expanded .project-tile-title {
+  text-shadow: 0 0 2px var(--bg-canvas), 0 0 4px var(--bg-canvas);
 }
 
 .project-tile-star {

@@ -19,39 +19,19 @@ export interface Box {
   h: number;
 }
 
-/** 连线视觉样式：曲线（贝塞尔）/ 直线 / 折线（正交直角） */
-export type EdgeStyle = 'curved' | 'straight' | 'stepped';
-
 export function boxCenter(b: Box): Pt {
   return { x: b.x + b.w / 2, y: b.y + b.h / 2 };
 }
 
-function len(x: number, y: number): number {
-  return Math.hypot(x, y) || 1;
-}
-
-/**
- * 从矩形中心朝 target 方向，求射线与矩形边框的交点（端点吸附到边框而非中心）。
- * 用「按半宽/半高归一化取较大者」的经典方法，天然处理四条边。
- */
-export function borderPoint(b: Box, target: Pt): Pt {
-  const c = boxCenter(b);
-  const dx = target.x - c.x;
-  const dy = target.y - c.y;
-  if (dx === 0 && dy === 0) return { x: c.x, y: b.y }; // 退化：取上边中点
-  const hw = b.w / 2;
-  const hh = b.h / 2;
-  // 需要的缩放 t，使 c + t*(dx,dy) 落在边框上
-  const scale = 1 / Math.max(Math.abs(dx) / hw, Math.abs(dy) / hh);
-  return { x: c.x + dx * scale, y: c.y + dy * scale };
-}
-
-/** 三次贝塞尔在 t=0.5 处的点 */
-function bezierMid(p0: Pt, p1: Pt, p2: Pt, p3: Pt): Pt {
-  return {
-    x: (p0.x + 3 * p1.x + 3 * p2.x + p3.x) / 8,
-    y: (p0.y + 3 * p1.y + 3 * p2.y + p3.y) / 8,
-  };
+/** Find the card border along a ray starting inside it. */
+export function borderPoint(box: Box, target: Pt, origin = boxCenter(box)): Pt {
+  const dx = target.x - origin.x;
+  const dy = target.y - origin.y;
+  if (!dx && !dy) return { x: origin.x, y: box.y };
+  const x = dx > 0 ? box.x + box.w : box.x;
+  const y = dy > 0 ? box.y + box.h : box.y;
+  const t = Math.min(dx ? (x - origin.x) / dx : Infinity, dy ? (y - origin.y) / dy : Infinity);
+  return { x: origin.x + dx * t, y: origin.y + dy * t };
 }
 
 export interface EdgeGeometry {
@@ -65,65 +45,19 @@ export interface EdgeGeometry {
   mid: Pt;
 }
 
-/**
- * 计算两个矩形之间的连线路径，按 style 决定形状：
- * - 端点始终吸附到各自边框（朝对方中心方向）
- * - curved：三次贝塞尔，控制柄沿离开各自节点的方向伸出，得到自然弧线
- * - straight：两吸附点之间直线
- * - stepped：正交折线（沿主导轴走一半再拐直角），中点取拐点
- */
-export function edgeGeometry(a: Box, b: Box, style: EdgeStyle = 'curved'): EdgeGeometry {
-  const ca = boxCenter(a);
-  const cb = boxCenter(b);
-  const start = borderPoint(a, cb);
-  const end = borderPoint(b, ca);
-
-  if (style === 'straight') {
-    const mid = { x: (start.x + end.x) / 2, y: (start.y + end.y) / 2 };
-    return { d: `M ${start.x} ${start.y} L ${end.x} ${end.y}`, start, end, mid };
-  }
-
-  if (style === 'stepped') {
-    const dx = end.x - start.x;
-    const dy = end.y - start.y;
-    // 主导轴：水平差更大则先水平走到中点 x，再竖直，再水平（H-V-H）；否则竖直优先
-    let waypoints: Pt[];
-    if (Math.abs(dx) >= Math.abs(dy)) {
-      const mx = start.x + dx / 2;
-      waypoints = [start, { x: mx, y: start.y }, { x: mx, y: end.y }, end];
-    } else {
-      const my = start.y + dy / 2;
-      waypoints = [start, { x: start.x, y: my }, { x: end.x, y: my }, end];
-    }
-    const d =
-      `M ${waypoints[0].x} ${waypoints[0].y} ` +
-      waypoints.slice(1).map((p) => `L ${p.x} ${p.y}`).join(' ');
-    return { d, start, end, mid: waypoints[1] === undefined ? start : waypoints[Math.floor(waypoints.length / 2)] };
-  }
-
-  // curved（默认）：一条干净、对称的单拱弧线。
-  // 做法：取弦中点，朝弦的垂直方向抬起一个「拱高」得到拱顶，用一条二次贝塞尔
-  // 穿过该拱顶，再精确升阶成三次贝塞尔输出（保持 SVG 'C' 命令）。
-  // 相比旧的「1/3、2/3 各偏移」画法，中段不再是平顶大肚，弧线更自然；且始终
-  // 有垂直分量，任意摆放都不会退化成直线。
-  const dx = end.x - start.x;
-  const dy = end.y - start.y;
-  const dist = len(dx, dy);
-  // 弦的垂直单位向量
-  const px = -dy / dist;
-  const py = dx / dist;
-  // 拱高：随距离自适应，短线含蓄、长线不过分（比旧算法更收敛）
-  const bow = Math.max(14, Math.min(dist * 0.14, 60));
-  const chordMid = { x: (start.x + end.x) / 2, y: (start.y + end.y) / 2 };
-  // 二次贝塞尔控制点：使曲线在 t=0.5 恰好抬起 bow（B(0.5)=chordMid+perp*bow）
-  const q: Pt = { x: chordMid.x + px * bow * 2, y: chordMid.y + py * bow * 2 };
-  // 二次 → 三次 升阶（等价曲线）：C1 = P0 + 2/3(Q-P0)，C2 = P2 + 2/3(Q-P2)
-  const c1: Pt = { x: start.x + (2 / 3) * (q.x - start.x), y: start.y + (2 / 3) * (q.y - start.y) };
-  const c2: Pt = { x: end.x + (2 / 3) * (q.x - end.x), y: end.y + (2 / 3) * (q.y - end.y) };
-
-  const mid = bezierMid(start, c1, c2, end);
-  const d = `M ${start.x} ${start.y} C ${c1.x} ${c1.y} ${c2.x} ${c2.y} ${end.x} ${end.y}`;
-  return { d, start, end, mid };
+/** Parallel spacing keeps opposing arrows individually reachable. */
+export function edgeGeometry(a: Box, b: Box, separation = 0, port = borderPoint): EdgeGeometry {
+  const ca = boxCenter(a), cb = boxCenter(b);
+  const dx = cb.x - ca.x, dy = cb.y - ca.y;
+  const length = Math.hypot(dx, dy) || 1;
+  const shift = Math.sign(separation) * Math.min(Math.abs(separation), Math.min(a.w, a.h, b.w, b.h) / 4);
+  const from = { x: ca.x - dy / length * shift, y: ca.y + dx / length * shift };
+  const to = { x: cb.x - dy / length * shift, y: cb.y + dx / length * shift };
+  const start = port(a, to, from), end = port(b, from, to);
+  return {
+    d: straightPath(start, end), start, end,
+    mid: { x: (start.x + end.x) / 2, y: (start.y + end.y) / 2 },
+  };
 }
 
 /** 直线路径（拖拽创建连线时的临时预览） */
@@ -137,8 +71,8 @@ export function boxContains(b: Box, p: Pt): boolean {
 }
 
 /** Rounded, freely positioned elbow; endpoints always approach the correct card side. */
-export function bentGeometry(a:Box,b:Box,control:Pt,scale=1):EdgeGeometry {
-  const start=borderPoint(a,control),end=borderPoint(b,control),r=Math.min(10*scale,Math.hypot(control.x-start.x,control.y-start.y)/3,Math.hypot(end.x-control.x,end.y-control.y)/3);
+export function bentGeometry(a:Box,b:Box,control:Pt,scale=1,port=borderPoint):EdgeGeometry {
+  const start=port(a,control),end=port(b,control),r=Math.min(10*scale,Math.hypot(control.x-start.x,control.y-start.y)/3,Math.hypot(end.x-control.x,end.y-control.y)/3);
   const beforeLength=Math.hypot(control.x-start.x,control.y-start.y)||1,afterLength=Math.hypot(end.x-control.x,end.y-control.y)||1;
   const before={x:control.x+(start.x-control.x)*r/beforeLength,y:control.y+(start.y-control.y)*r/beforeLength},after={x:control.x+(end.x-control.x)*r/afterLength,y:control.y+(end.y-control.y)*r/afterLength};
   return {start,end,mid:control,d:`M ${start.x} ${start.y} L ${before.x} ${before.y} Q ${control.x} ${control.y} ${after.x} ${after.y} L ${end.x} ${end.y}`};
@@ -146,6 +80,11 @@ export function bentGeometry(a:Box,b:Box,control:Pt,scale=1):EdgeGeometry {
 export function distanceToSegment(p:Pt,a:Pt,b:Pt):number {
   const dx=b.x-a.x,dy=b.y-a.y,length=dx*dx+dy*dy,t=length?Math.max(0,Math.min(1,((p.x-a.x)*dx+(p.y-a.y)*dy)/length)):0;
   return Math.hypot(p.x-a.x-t*dx,p.y-a.y-t*dy);
+}
+
+export function nearStraightLine(a: Box, b: Box, point: Pt, zoom: number): boolean {
+  const { start, end } = edgeGeometry(a, b);
+  return distanceToSegment(point, start, end) * zoom < 18;
 }
 export function segmentHitsBox(a:Pt,b:Pt,box:Box,margin=0):boolean {
   let low=0,high=1;const dx=b.x-a.x,dy=b.y-a.y;

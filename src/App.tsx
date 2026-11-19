@@ -30,7 +30,7 @@ import {exportLibraryPackage,restoreLibraryPackage,applyLibraryPreferences} from
 
 import { applyPins, loadFavorites, saveFavorites } from './favorites';
 import type { BoardAppearance } from './canvas/presentation';
-import { boardCardId, catalogTiles, EMPTY_PROJECT_LAYOUT, parentProject, projectPath, relationEndpoint, type CatalogTile, type ProjectLayoutSnapshot, type ProjectRelation } from './projectCanvas/layout';
+import { boardCardId, catalogTiles, EMPTY_PROJECT_LAYOUT, parentProject, projectPath, relationEndpoint, type CatalogTile, type ProjectLayoutSnapshot, type ProjectRelation, type RelationBend } from './projectCanvas/layout';
 import { EMPTY_COVERS, readCover, type CoverTarget } from './projectCanvas/covers';
 import { allTags, assignedTags, colorTag, NO_TAGS, tagKey, type TagDefinition, type TagTarget } from './projectCanvas/tags';
 
@@ -588,6 +588,11 @@ export default function App() {
     setLayout(await api.projectCanvasRelate(activeProject?.id ?? null, relation, present, canvasScope));
   });
 
+  const bendRelation = (relation: ProjectRelation, bend: RelationBend | null) => withBusy(async () => {
+    if (!canvasScope) throw new Error('请先恢复项目画布，再编辑连线。');
+    setLayout(await api.projectCanvasBend(activeProject?.id ?? null, relation, bend, canvasScope));
+  });
+
   const saveCatalog = async (apply: () => Promise<void>) => {
     let saved = false;
     let error = '有一项保存尚未完成，请稍后再试。';
@@ -937,7 +942,6 @@ export default function App() {
             key={`${activeBoard.id}:${boardGeneration}`}
             board={activeBoard}
             onChange={onCanvasChange} onFlush={flushBoards} saveState={saveState}
-            edgeStyle={settings.edgeStyle ?? 'curved'}
             guessMath={settings.guessMath}
             tags={tags}
             tagStore={layout.tags}
@@ -967,10 +971,12 @@ export default function App() {
             }}
             onPlace={placeTile}
             onConnect={relation => relateCards(relation, true)}
+            onBend={bendRelation}
             onLabel={(relation, label) => saveCatalog(async () => {
               setLayout(await api.projectCanvasLabel(activeProject?.id ?? null, relation, label, canvasScope));
             })}
             onRelationMenu={(event, relation) => openAt(event, [
+              ...(relation.bend ? [{ type: 'item' as const, label: '拉直连线', onClick: () => void bendRelation(relation, null) }] : []),
               { type: 'item', label: '删除连线', danger: true, onClick: () => relateCards(relation, false) },
             ], true)}
             onFavorite={tile => toggleFavorite(tile.kind === 'project' ? 'projects' : 'boards', tile.row.id)}

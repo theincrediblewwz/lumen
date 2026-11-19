@@ -20,7 +20,7 @@ const base=process.env.LSQ_UI_URL||'http://127.0.0.1:5198',out=path.resolve(proc
  try{
   await seed([{id:'owner',title:'解方程'},{id:'right',title:'右侧节点',x:900}],[{id:'relation',from:'owner',to:'right',label:'要代入 OS，先作用一个 \\Lambda_c'}]);
   await page.locator('.edge-label-rendered .katex').waitFor();assert.equal(await page.locator('.edge-label-rendered .katex-error').count(),0);
-  const ports=await page.locator('.edge-line').evaluate(e=>{const a=e.getPointAtLength(0),b=e.getPointAtLength(e.getTotalLength());return{a:{x:a.x,y:a.y},b:{x:b.x,y:b.y},d:e.getAttribute('d')};});assert.ok(Math.abs(ports.a.y-ports.b.y)<1);assert.ok(!ports.d.includes('Q'));check('horizontal neighbors connect side-to-side; relationship labels render full TeX');
+  const ports=await page.locator('.edge-line').evaluate(e=>{const a=e.getPointAtLength(0),b=e.getPointAtLength(e.getTotalLength());return{a:{x:a.x,y:a.y},b:{x:b.x,y:b.y},d:e.getAttribute('d')};});assert.ok(Math.abs(ports.a.y-ports.b.y)<1);assert.match(ports.d,/^M [-\d.e+]+ [-\d.e+]+ L [-\d.e+]+ [-\d.e+]+$/i);check('horizontal neighbors connect side-to-side with one straight segment; relationship labels render full TeX');
   // Enlarged transparent connection pad is exercised 18 pixels outside the node.
   let b=await card('owner').boundingBox();await card('owner').locator('.node-anchor').hover({position:{x:40,y:22}});await page.mouse.down();await page.mouse.move(b.x+b.width+65,b.y+b.height/2+40,{steps:5});assert.equal(await page.locator('.edge-preview').count(),1);await page.keyboard.press('Escape');await page.mouse.up();check('connection handle activates 18 screen pixels beyond the visible node edge');
   // Straight -> bend -> straighten, one undo per completed gesture.

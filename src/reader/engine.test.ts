@@ -37,6 +37,15 @@ describe('slugify', () => {
 });
 
 describe('renderMarkdown - 基础', () => {
+  it('在标题内保留荧光标记、强调和公式，行内代码与普通等号照常显示', () => {
+    const { html } = renderMarkdown('**=={#82ff6b}起点 $\\nu$==**，`=={#82FF6B}代码==`，a == b');
+    expect(html).toContain('<strong><mark class="lumen-highlight" data-lumen-highlight="#82FF6B"');
+    expect(html).toContain('data-tex="\\nu"></span></mark></strong>');
+    expect(html).toContain('<code>=={#82FF6B}代码==</code>');
+    expect(html).toContain('a == b');
+    expect(renderMarkdown('=={#bad-color}正文==').html).not.toContain('<mark');
+  });
+
   it('渲染段落与强调', () => {
     const { html } = renderMarkdown('这是 **粗体** 与 *斜体*。');
     expect(html).toContain('<strong>粗体</strong>');

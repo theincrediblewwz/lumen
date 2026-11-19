@@ -5,7 +5,9 @@
 
 ## 当前版本
 
-[下载 Mac 0.4.0](https://github.com/theincrediblewwz/lumen/releases/tag/mac-v0.4.0) · [AI 工作区](./docs/WORKSPACE_AI.md) · [白板编辑与保存](./docs/CANVAS_AUTHORING.md)
+[0.4.1 源码预览](https://github.com/theincrediblewwz/lumen/releases/tag/mac-v0.4.1) · [下载 Mac 0.4.0 安装包](https://github.com/theincrediblewwz/lumen/releases/tag/mac-v0.4.0) · [白板编辑与保存](./docs/CANVAS_AUTHORING.md)
+
+**0.4.1 直线与荧光高亮。** 项目画布和白板默认使用直线，拖动可弯折。展开文件夹可见内部箭头、名称和公式。节点标题及 Markdown 编辑器支持选中文字后添加荧光高亮。[项目画布](./docs/PROJECT_CANVAS.md) · [高亮与素材预览](./docs/MATERIAL_PREVIEWS.md)
 
 **0.4.0 项目画布与资料恢复。** 文件夹支持原地展开，项目与白板卡片可以互连。附件用双箭头跨素材。项目包和全库包可恢复当前嵌套结构。 [项目与恢复](./docs/PROJECT_CANVAS.md) · [素材预览](./docs/MATERIAL_PREVIEWS.md)
 
@@ -21,7 +23,7 @@
 
 **0.1.16 已完成构建和验收。** 新增节点内线性流程、框内右侧编号和右下悬浮追加、局部可见步骤直接选择、流畅拖动换位；画布/面板粘贴、多图文资源与首位预览、Answer Export ZIP；内容自适应、关系公式与三点提示、可拖动直弯连线。详见[子流程与内容组合](./docs/FLOW_COMPOSITION.md)。0.1.15的收藏、独立Markdown编辑器、自动保存与分级热力图继续保留。
 
-桌面源码 **0.2.1**，技术栈 Tauri 2 + React 18 + TypeScript + Vite。最新更新包括长 Markdown 顺序分批分析、上游临时满载自动重试，以及两种对话导入方式：
+桌面使用 Tauri 2、React 18、TypeScript 和 Vite，支持长 Markdown 分批分析、临时满载重试与两种对话导入方式。
 
 - **AI 重构图谱**：按主题重新组织问题树，各批结果在本机合并。
 - **忠实逐轮图谱**：每条 AI 回答保留为一个节点；新 AI 只生成概括标题、简短导读和建议层级，原回答由本机逐字保留。支持分享对话、明确问答标题和“第 N 条回答”导出；长回答分片分析后仍保留为同一节点。
@@ -65,7 +67,7 @@ Android 源码同步至 **2.1.0-preview.8 / versionCode 23**，包名仍为 `com
 
 | 能力 | 说明 |
 | --- | --- |
-| 白板画布 | 自研引擎：DOM 节点层 + SVG 贝塞尔连线层；平移 / 缩放 / 撤销重做 / 树状自动布局 |
+| 白板画布 | DOM 节点层及 SVG 连线层，支持平移、缩放、撤销重做、手动弯折和树状自动布局 |
 | 内容与阅读 | Markdown 导入、离线 KaTeX 公式渲染、独立阅读窗（连续 / 单页 / 双页 / 全屏）、PDF 系统打开 |
 | AI 助手 | OpenAI 兼容连接、多套模型设置、白板工具调用、节点引用回链、对话历史与凭据保护 |
 | 对话导入 | AI 重构 / 忠实逐轮；长 Markdown 分批、进度与取消、临时满载重试、确认后写入 |
