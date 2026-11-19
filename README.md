@@ -5,7 +5,9 @@
 
 ## 当前版本
 
-[下载 Mac 0.2.2](https://github.com/theincrediblewwz/lumen/releases/tag/mac-v0.2.2) · [白板编辑与保存](./docs/CANVAS_AUTHORING.md) · [导入与恢复](./docs/LONG_MARKDOWN_AND_FAITHFUL_IMPORT.md)
+[下载 Mac 0.3.0](https://github.com/theincrediblewwz/lumen/releases/tag/mac-v0.3.0) · [AI 工作区](./docs/WORKSPACE_AI.md) · [白板编辑与保存](./docs/CANVAS_AUTHORING.md)
+
+**0.3.0 AI 工作区。** 可通过聊天在指定上级项目下新建子项目和白板，组织主题、分支、标签与子流程。整批预览后应用，也可以撤销。
 
 **0.2.2 项目与白板封面。** 右键卡片可选择 38 张图片和 6 款简约样式。文件夹照片连贯铺满页签与正面，半透明高光和投影区分层次。新建和重命名弹窗增加了内容留白。 [项目画布指南](./docs/PROJECT_CANVAS.md)
 
