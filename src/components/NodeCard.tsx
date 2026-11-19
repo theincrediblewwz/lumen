@@ -123,8 +123,9 @@ export const NodeCard = memo(function NodeCard({
   const nodeDimensions=useRef({w:node.w,h:node.h});nodeDimensions.current={w:node.w,h:node.h};
   const onPresentation=useCallback((value:PreviewPresentation)=>setPresentation(old=>old?.resourceKey===value.resourceKey&&old.image===value.image&&old.navigated===value.navigated&&old.title===value.title&&old.dimensions?.width===value.dimensions?.width&&old.dimensions?.height===value.dimensions?.height?old:{...value,baseWidth:nodeDimensions.current.w,baseHeight:nodeDimensions.current.h}),[]);
   const heading=nodeHeading(node), docs=contentDocs(node), primary=docs[0];
-  const pureImage=!previewCollapsed&&!heading.trim()&&(presentation?.image??(!node.summary&&imageOnly(node)));
-  const contentOnly=!heading.trim()&&(!node.summary?.trim()||!!presentation)&&!!primary;
+  const hasQuestion = !!node.summary?.trim();
+  const pureImage = !previewCollapsed && !heading.trim() && !hasQuestion && !!primary && (presentation?.image ?? imageOnly(node));
+  const contentOnly = !heading.trim() && !hasQuestion && !!primary;
   const automaticView=presentation?.navigated&&presentation.baseWidth===node.w&&presentation.baseHeight===node.h;
   const automatic=automaticView&&presentation?.image&&presentation.dimensions?materialImageSize(presentation.dimensions.width,presentation.dimensions.height):undefined;
   const width=automatic?.w??node.w,aspect=presentation?.image&&presentation.dimensions?presentation.dimensions.width/presentation.dimensions.height:node.imageAspect||node.w/(node.h||node.w);

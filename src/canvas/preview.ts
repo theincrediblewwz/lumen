@@ -7,7 +7,8 @@ export function stepPreview(position: PreviewPosition, counts: number[], directi
   if (direction > 0) return page + 1 < counts[resource] ? { resource, page: page + 1 }
     : { resource: (resource + 1) % counts.length, page: 0 };
   if (page > 0) return { resource, page: page - 1 };
-  const previous = (resource + counts.length - 1) % counts.length;
+  if (resource === 0) return { resource, page };
+  const previous = resource - 1;
   return { resource: previous, page: Math.max(1, counts[previous]) - 1 };
 }
 /** High-resolution slides receive a larger, ratio-preserving canvas footprint. */

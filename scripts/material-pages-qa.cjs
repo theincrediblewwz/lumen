@@ -26,6 +26,18 @@ const base=process.env.LSQ_UI_URL||'http://127.0.0.1:5198',out=path.resolve(proc
   assert.match(await page.title(),/知识库合成页面验收/);assert.equal(await page.locator('vite-error-overlay').count(),0);await card('materials').locator('[data-content-status="ready"]').first().waitFor();
   await page.waitForFunction(()=>Number(document.querySelector('[data-node-id="materials"] .node-preview').dataset.previewPages)>1);await page.waitForFunction(()=>!document.querySelector('[data-node-id="materials"] .math[data-tex]:not([data-done])'));
   await fit();const original=(await state()).boards.board.nodes;const count=Number(await preview().getAttribute('data-preview-pages'));assert.ok(count>3);
+  const previous=()=>preview().getByRole('button',{name:'上一页',exact:true});
+  const next=()=>preview().getByRole('button',{name:'下一页',exact:true});
+  assert.equal(await previous().count(),0);
+  await next().click();
+  assert.equal(await preview().getAttribute('data-preview-page'),'1');
+  const pagerStyle=button=>button.evaluate(e=>{const s=getComputedStyle(e);return {width:s.width,height:s.height,radius:s.borderRadius,bottom:s.bottom,left:s.left,right:s.right};});
+  const left=await pagerStyle(previous()),right=await pagerStyle(next());
+  assert.deepEqual([left.width,left.height,left.radius,left.bottom,left.left],['24px','24px','6px','4px','4px']);
+  assert.deepEqual([right.width,right.height,right.radius,right.bottom,right.right],['24px','24px','6px','4px','4px']);
+  await previous().focus();await previous().press('Enter');assert.equal(await preview().getAttribute('data-preview-page'),'0');
+  assert.equal(await previous().count(),0);assert.equal(await next().evaluate(e=>document.activeElement===e),true);
+  check('small rounded controls sit in opposite bottom corners; Previous appears after page one and returns keyboard focus on the first page');
   await page.locator('.board-settings-fab').click();const font=page.getByRole('slider',{name:'文档预览字号',exact:true});await font.focus();await font.press('End');await page.waitForFunction(previous=>Number(document.querySelector('[data-node-id="materials"] .node-preview').dataset.previewPages)>previous,count);await font.press('Home');for(let i=0;i<3;i++)await font.press('ArrowRight');await page.waitForFunction(previous=>Number(document.querySelector('[data-node-id="materials"] .node-preview').dataset.previewPages)===previous,count);await page.getByRole('button',{name:'关闭白板设置',exact:true}).click();check('font-size changes recalculate every page so later text remains reachable');
   assert.match(await preview().innerText(),/END_OF_DOCUMENT/);assert.equal(await preview().locator('.katex-error').count(),0);check('full Markdown beyond the old 1600-character limit renders as multiple pages with complete math and code');
   const seen=new Set();let end=false;
@@ -39,6 +51,11 @@ const base=process.env.LSQ_UI_URL||'http://127.0.0.1:5198',out=path.resolve(proc
   assert.equal(seen.size,45);assert.ok(end);check('walking every page visits all 45 paragraphs and the final marker without dropping content');
   await preview().getByRole('button',{name:'下一页',exact:true}).click();await card('materials').locator('.sticker-image').waitFor();await page.waitForFunction(()=>document.querySelector('[data-node-id="materials"] img')?.naturalWidth===320);await page.waitForTimeout(150);
   const small=await card('materials').boundingBox();assert.ok(small.width<430);check('the last document page advances to the next image in original attachment order');
+  await previous().click();await preview().locator('[data-content-status="ready"]').waitFor();
+  assert.equal(await preview().getAttribute('data-preview-resource'),'docs/pages.md');
+  assert.equal(await preview().getAttribute('data-preview-page'),String(count-1));
+  await next().click();await card('materials').locator('.sticker-image').waitFor();
+  check('Previous from an image returns to the last page of the preceding document');
   await preview().getByRole('button',{name:'下一页',exact:true}).click();await page.waitForFunction(()=>document.querySelector('[data-node-id="materials"] img')?.naturalWidth===2400);await page.waitForTimeout(150);const large=await card('materials').boundingBox();assert.ok(large.width>small.width*2);
   const ratio=await card('materials').locator('img').evaluate(e=>e.getBoundingClientRect().width/e.getBoundingClientRect().height);assert.ok(Math.abs(ratio-2)<.01);check('high-resolution next image grows proportionally instead of inheriting the smaller slide footprint');
   await fit();await preview().getByRole('button',{name:'下一页',exact:true}).click();await preview().locator('.node-document-opening[data-content-status="ready"]').waitFor();assert.match(await preview().innerText(),/SECOND_DOCUMENT/);check('image navigation continues to the next Markdown document');
@@ -66,7 +83,26 @@ const base=process.env.LSQ_UI_URL||'http://127.0.0.1:5198',out=path.resolve(proc
   const firstCanvas=await card('pdf').locator('canvas').evaluate(e=>e.toDataURL());await card('pdf').getByRole('button',{name:'下一页',exact:true}).click();await card('pdf').locator('canvas[aria-label="PDF 第2页"]').waitFor();await card('pdf').locator('.node-pdf-page[data-content-status="ready"]').waitFor();assert.notEqual(await card('pdf').locator('canvas').evaluate(e=>e.toDataURL()),firstCanvas);check('offline PDF previews render the distinct original first and second pages');
   await page.screenshot({path:path.join(out,'material-pdf.png')});
   // Promoting a document must still select it even when a full-question resource exists.
-  await page.evaluate(()=>{const s=JSON.parse(localStorage.getItem('lumen.fixture-capture'));s.boards.board.nodes=[{id:'promote',title:'首位素材',summary:'完整问题仍然保留',x:100,y:140,w:420,docs:[{path:'docs/pages.md',title:'分页文档'},{path:'docs/short.md',title:'下一篇文档'}],created_at:'',updated_at:''}];localStorage.setItem('lumen.fixture-capture',JSON.stringify(s));});await page.reload({waitUntil:'domcontentloaded'});await page.waitForFunction(()=>window.__fixtureReactMounted);await page.getByText('桌面夹',{exact:true}).click();await page.getByText('分页与子流程',{exact:true}).click();await card('promote').click();await page.locator('.doc-card').last().hover();await page.getByRole('button',{name:'在白板预览：下一篇文档',exact:true}).click();await page.waitForFunction(()=>document.querySelector('[data-node-id="promote"] .node-preview')?.dataset.previewResource==='docs/short.md');await card('promote').locator('.node-document-opening[data-content-status="ready"]').waitFor();assert.match(await card('promote').innerText(),/SECOND_DOCUMENT/);assert.equal((await state()).boards.board.nodes[0].summary,'完整问题仍然保留');check('promoting a resource selects it without losing the separate full-question document');await page.locator('.np-close').click();
+  await page.evaluate(()=>{const s=JSON.parse(localStorage.getItem('lumen.fixture-capture'));s.boards.board.nodes=[{id:'promote',title:'首位素材',summary:'完整问题仍然保留，公式 $\\nu$。',x:100,y:140,w:420,docs:[{path:'docs/question_promote.md',title:'完整问题'},{path:'docs/pages.md',title:'分页文档'},{path:'docs/short.md',title:'下一篇文档'}],created_at:'',updated_at:''}];localStorage.setItem('lumen.fixture-capture',JSON.stringify(s));});
+  await page.reload({waitUntil:'domcontentloaded'});await page.waitForFunction(()=>window.__fixtureReactMounted);await page.getByText('桌面夹',{exact:true}).click();await page.getByText('分页与子流程',{exact:true}).click();
+  const mixed=card('promote'),question=mixed.getByRole('group',{name:'完整问题预览'}),attachment=mixed.getByRole('group',{name:'附件预览'});
+  await question.locator('[data-content-status="ready"]').waitFor();await attachment.locator('[data-content-status="ready"]').waitFor();
+  assert.equal(await mixed.locator('.node-preview').count(),2);
+  assert.match(await question.innerText(),/完整问题仍然保留/);
+  assert.equal(await question.locator('.katex').count(),1);
+  assert.equal(await attachment.getAttribute('data-preview-resource'),'docs/pages.md');
+  assert.match(await attachment.innerText(),/段落0/);
+  assert.equal(await mixed.getByRole('button',{name:'上一页',exact:true}).count(),0);
+  await attachment.getByRole('button',{name:'下一页',exact:true}).click();
+  assert.equal(await attachment.getAttribute('data-preview-page'),'1');
+  assert.equal(await question.getAttribute('data-preview-page'),'0');
+  await page.screenshot({path:path.join(out,'material-question-and-attachment.png')});
+  check('title, question formula and the first attached Markdown are visible together while only the attachment turns');
+  await mixed.click();await page.locator('.doc-card').last().hover();await page.getByRole('button',{name:'在白板预览：下一篇文档',exact:true}).click();
+  await attachment.locator('[data-content-status="ready"]').waitFor();assert.equal(await attachment.getAttribute('data-preview-resource'),'docs/short.md');
+  assert.match(await attachment.innerText(),/SECOND_DOCUMENT/);
+  assert.equal((await state()).boards.board.nodes[0].summary,'完整问题仍然保留，公式 $\\nu$。');
+  check('promoting an attachment selects it while the separate full-question document stays visible');await page.locator('.np-close').click();
   // A large Markdown resource remains completely accessible within bounded-height pages.
   await page.evaluate(()=>{const s=JSON.parse(localStorage.getItem('lumen.fixture-capture'));s.documents['docs/large.md']=Array.from({length:2400},(_,i)=>`段落 ${i} `+'大文档分页保持正文完整，翻页浏览而不是裁掉后半篇。'.repeat(6)).join('\n\n')+'\n\nLARGE_DOCUMENT_END';s.boards.board.nodes=[{id:'huge',title:'大文档分页',x:100,y:140,w:480,docs:[{path:'docs/large.md',title:'完整大文档'}],created_at:'',updated_at:''}];localStorage.setItem('lumen.fixture-capture',JSON.stringify(s));});
   const started=Date.now();await page.reload({waitUntil:'domcontentloaded'});await page.waitForFunction(()=>window.__fixtureReactMounted);await page.getByText('桌面夹',{exact:true}).click();await page.getByText('分页与子流程',{exact:true}).click();await card('huge').locator('[data-content-status="ready"]').waitFor();const hugePages=Number(await card('huge').locator('.node-preview').getAttribute('data-preview-pages'));assert.ok(hugePages>100);assert.ok((await card('huge').boundingBox()).height<400);assert.match(await card('huge').innerText(),/LARGE_DOCUMENT_END/);assert.equal(await card('huge').locator('.node-page-columns p').count(),2401);check('large Markdown retains every paragraph and its last marker while rendering a bounded-height first page');
