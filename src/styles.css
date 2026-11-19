@@ -338,8 +338,17 @@ html.glass-on body {
 .ctx-group-toggle { display: flex; align-items: center; justify-content: space-between; gap: 24px; }
 .ctx-menu.has-groups { min-width: min(264px, calc(100vw - 16px)); }
 .ctx-group-items { margin: 2px 0 5px 9px; padding-left: 5px; border-left: 1px solid var(--border-color); }
-.action-confirm { max-width: 440px; padding: 24px; }
-.action-confirm p { margin: 0 0 24px; line-height: 1.8; }
+.settings-card.action-confirm {
+  width: min(440px, 100%);
+  padding: 22px 24px 24px;
+  gap: 20px;
+  overflow-y: auto;
+  background: var(--bg-node);
+  border: 1px solid var(--border-color);
+  box-shadow: var(--shadow-node-hover);
+}
+.action-confirm p { margin: 0; line-height: 1.65; overflow-wrap: anywhere; }
+.action-confirm .action-confirm-buttons { flex-wrap: wrap; }
 .action-confirm-buttons { display: flex; justify-content: flex-end; gap: 10px; }
 .board-surface > .error-bar {
   position: absolute;

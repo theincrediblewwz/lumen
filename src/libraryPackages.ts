@@ -18,14 +18,14 @@ function cleanSettings(value: Partial<Settings>): Settings {
     guessMath: typeof value.guessMath === 'boolean' ? value.guessMath : DEFAULT_SETTINGS.guessMath,
   };
 }
-function preferences(projectId?: string) {
+function preferences() {
   const current = loadSettings();
   const ui = cleanSettings(current);
   let progress: Record<string, number> = {};
   try {
     const parsed = JSON.parse(localStorage.getItem('lumen.reader.progress.v1') || '{}');
     if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) progress = Object.fromEntries(Object.entries(parsed).filter(([key, value]) =>
-      key.length <= 4096 && (!projectId || key.startsWith(projectId + '/')) && typeof value === 'number' && Number.isFinite(value) && value >= 0 && value <= 1)) as Record<string, number>;
+      key.length <= 4096 && typeof value === 'number' && Number.isFinite(value) && value >= 0 && value <= 1)) as Record<string, number>;
   } catch { /* A malformed preference never becomes executable or credential data. */ }
   return { ui, reader: loadPrefs(), progress };
 }
@@ -55,7 +55,7 @@ export async function exportLibraryPackage(project: { id: string; name: string }
     await requestEditorFlush(); locked = true;
     try { const { listen } = await import('@tauri-apps/api/event'); off = await listen<{ done: number; total: number }>('lumen://archive-progress', event => onProgress(`正在打包 ${event.payload.done}/${event.payload.total} 个文件`)); } catch { /* The native command still reports errors. */ }
     onProgress('正在核对全部文档、原件和历史');
-    const result = await invoke<{ projects: number; boards: number; files: number }>('library_package_export', { projectId: project?.id ?? null, destination, expectedScope: scope, preferences: preferences(project?.id) });
+    const result = await invoke<{ projects: number; boards: number; files: number }>('library_package_export', { projectId: project?.id ?? null, destination, expectedScope: scope, preferences: preferences() });
     return { ...result, path: destination };
   } finally { off(); if (locked) await releaseEditorLock().catch(() => {}); }
 }

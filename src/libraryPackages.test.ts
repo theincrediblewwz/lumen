@@ -11,11 +11,12 @@ const values=new Map<string,string>();
 beforeEach(()=>{vi.resetAllMocks();values.clear();vi.stubGlobal('localStorage',{getItem:(key:string)=>values.get(key)??null,setItem:(key:string,value:string)=>values.set(key,value)});mocks.flush.mockResolvedValue(undefined);mocks.release.mockResolvedValue(undefined);mocks.listen.mockResolvedValue(mocks.off);mocks.save.mockResolvedValue('E:/synthetic/library.zip');mocks.invoke.mockResolvedValue({projects:2,boards:3,files:20});});
 afterEach(()=>vi.unstubAllGlobals());
 describe('library content portability boundary',()=>{
- it('exports only allowlisted preferences and project-scoped reading data; never reads or exports AI keys/connections',async()=>{
+ it('sends sanitized preferences to the scoped native export without putting AI connection settings into its request',async()=>{
   values.set('lumen.ai.v1',JSON.stringify({apiKey:'synthetic secret not portable',baseUrl:'https://synthetic.invalid'}));values.set('lumen.settings.v2',JSON.stringify({theme:'paper',apiKey:'extra field excluded'}));
-  values.set('lumen.reader.progress.v1',JSON.stringify({'p/b/docs/one.md':0.5,'other/b/docs/two.md':0.8}));
+  const progress = {'p/b/docs/one.md':0.5,'child/b/docs/two.md':0.8};
+  values.set('lumen.reader.progress.v1',JSON.stringify({...progress,'invalid':1.2}));
   await exportLibraryPackage({id:'p',name:'Project'},()=>{});
-  expect(mocks.invoke).toHaveBeenCalledOnce();const args=mocks.invoke.mock.calls[0][1];expect(args.expectedScope).toBe('library-scope');expect(args.projectId).toBe('p');expect(args.preferences.progress).toEqual({'p/b/docs/one.md':0.5});expect(args.preferences.ui.theme).toBe('paper');
+  expect(mocks.invoke).toHaveBeenCalledOnce();const args=mocks.invoke.mock.calls[0][1];expect(args.expectedScope).toBe('library-scope');expect(args.projectId).toBe('p');expect(args.preferences.progress).toEqual(progress);expect(args.preferences.ui.theme).toBe('paper');
   expect(JSON.stringify(args)).not.toMatch(/apiKey|baseUrl|synthetic secret|extra field/);expect(mocks.flush).toHaveBeenCalledOnce();expect(mocks.release).toHaveBeenCalledOnce();expect(mocks.off).toHaveBeenCalledOnce();
  });
  it('cancelled picking does no work; a failed write unlocks the editor and preserves the error',async()=>{

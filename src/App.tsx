@@ -739,7 +739,6 @@ export default function App() {
           if (knowledgeOpen) leaveKnowledge();
           else { setKnowledgeTarget({}); setKnowledgeOpen(true); }
         } },
-        ...(!activeBoard && !knowledgeOpen ? [{ type: 'group' as const, label: '新建', items: createItems() }] : []),
       ] : []),
       { type: 'group', label: '导入', items: [
         {type:'item',label:'项目/全库资料包（恢复到新目录）…',onClick:restoreLibrary},

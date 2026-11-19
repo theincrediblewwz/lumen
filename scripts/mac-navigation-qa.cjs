@@ -114,10 +114,21 @@ async function drag(dx, dy) {
   checks.push('deletion cancel preserves board, confirm removes it without leaving pending saves');
   await crumb('项目首页').click();
   await project('学习项目').click({ button: 'right' }); await page.getByRole('menuitem', { name: '删除项目', exact: true }).click();
+  const confirmation = page.getByRole('alertdialog');
+  const insets = await confirmation.evaluate(dialog => {
+    const frame = dialog.getBoundingClientRect();
+    return [...dialog.querySelectorAll('p, button')].map(item => {
+      const box = item.getBoundingClientRect();
+      return Math.min(box.left - frame.left, frame.right - box.right, box.top - frame.top, frame.bottom - box.bottom);
+    });
+  });
+  assert.equal(insets.length, 3);
+  assert.ok(insets.every(inset => inset >= 18), `Confirmation insets: ${insets}`);
+  await confirmation.screenshot({ path: path.join(output, 'project-delete-confirmation.png'), animations: 'disabled' });
   await page.getByRole('button', { name: '确认删除', exact: true }).click(); await project('学习项目').waitFor({ state: 'hidden' });
   assert.equal(await page.locator('.node-card').count(), 0); await project('另一项目').dblclick(); await board('另一项目的白板').click();
   await page.reload(); await project('另一项目').waitFor(); assert.equal(await project('学习项目').count(), 0);
-  checks.push('project deletion stays scoped and other saved folders remain reachable');
+  checks.push('project deletion keeps text and buttons away from the panel edges, stays scoped, and leaves other folders reachable');
   await page.getByRole('button', { name: '菜单', exact: true }).click(); await page.getByRole('menuitem', { name: '知识库', exact: true }).click(); await page.locator('.knowledge-reading article').waitFor();
   await page.evaluate(async () => { const { DEFAULT_SETTINGS, applySettings } = await import('/src/settings.ts'); applySettings({ ...DEFAULT_SETTINGS, theme: 'light', glassMode: 'native' }, 'macos'); });
   await page.screenshot({ path: path.join(output, 'mac-knowledge-reference.png'), animations: 'disabled' });

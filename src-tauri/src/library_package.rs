@@ -281,7 +281,7 @@ impl<'de> Visitor<'de> for HistoryText<'_> {
 fn collect(
     root: &Path,
     project: Option<&str>,
-    preferences: Value,
+    mut preferences: Value,
 ) -> Result<(BTreeMap<String, Source>, usize, usize), String> {
     safety::checked_path(root, "index.json")?;
     let mut index = storage::read_index(root)?;
@@ -465,6 +465,11 @@ fn collect(
             .any(|key| !["ui", "reader", "progress"].contains(&key.as_str()))
         {
             return Err("只允许备份显示和阅读偏好".into());
+        }
+        if project.is_some() {
+            if let Some(progress) = preferences.get_mut("progress").and_then(Value::as_object_mut) {
+                progress.retain(|key, _| key.split_once('/').is_some_and(|(id, _)| project_ids.contains(id)));
+            }
         }
         let bytes = serde_json::to_vec(&preferences).map_err(err)?;
         if bytes.len() > 16 * 1024 * 1024 {

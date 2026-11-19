@@ -1,6 +1,6 @@
 use crate::{documents, library_package::*, portable_documents, storage};
 use serde_json::{json, Value};
-use std::{fs, path::PathBuf};
+use std::{fs, path::{Path, PathBuf}};
 fn setup() -> (PathBuf, String, String) {
     let root = std::env::temp_dir().join(storage::new_id("library_package_test"));
     storage::ensure_storage(&root).unwrap();
@@ -28,6 +28,30 @@ fn project_package_keeps_its_nested_subtree_positions_and_materials() {
         "Original text",
     )
     .unwrap();
+    let board_path = storage::board_file(&root, &grandchild.id, &board.id);
+    let mut graph: Value = serde_json::from_slice(&fs::read(&board_path).unwrap()).unwrap();
+    let original_pdf = include_bytes!("../../scripts/fixtures/rich-print.pdf");
+    let pdf_hash = documents::hash(original_pdf);
+    let pdf_path = format!("docs/asset_{pdf_hash}.pdf");
+    fs::write(board_path.parent().unwrap().join(&pdf_path), original_pdf).unwrap();
+    let pdf_manifest = json!({"schema":"lumen-document/v1","kind":"pdf",
+        "original":{"path":pdf_path,"sha256":pdf_hash,"size":original_pdf.len(),"media_type":"application/pdf"},
+        "images":{},"pages":2,"extraction":"ready"});
+    let pdf = storage::write_doc(
+        &root, &grandchild.id, &board.id, "PDF attachment",
+        &format!("<!-- lumen-document/v1\n{pdf_manifest}\n-->\n\nPDF preview"),
+    ).unwrap();
+    let at = storage::now_iso();
+    graph["nodes"] = json!([
+        {"id":"owner","title":"推导","summary":r"完整问题 $\nu$","x":30,"y":80,"w":420,
+         "flow":{"nodeIds":["step-a","step-b"]},"docs":[doc,pdf],"created_at":at,"updated_at":at},
+        {"id":"step-a","title":"代入","flowOwnerId":"owner","x":0,"y":0,"created_at":at,"updated_at":at},
+        {"id":"step-b","title":"整理","flowOwnerId":"owner","x":0,"y":0,"created_at":at,"updated_at":at}
+    ]);
+    graph["edges"] = json!([{"id":"e_ab","from":"step-a","to":"step-b","directed":true,"created_at":at}]);
+    graph["appearance"] = json!({"fontFamily":"serif","fontSize":21,"previewFontSize":18,"zoomSensitivity":1.8});
+    let original_board = serde_json::to_vec(&graph).unwrap();
+    fs::write(&board_path, &original_board).unwrap();
     let layout_path = root.join(crate::project_canvas::FILE);
     let mut raw: Value = serde_json::from_slice(&fs::read(&layout_path).unwrap()).unwrap();
     raw["projects"][&child.id]["position"] = json!({ "x":135.5, "y":-42.0 });
@@ -43,6 +67,7 @@ fn project_package_keeps_its_nested_subtree_positions_and_materials() {
         json!({ "from": &child.id, "to": format!("{parent}/{parent_board}") }),
     ]);
     let board_key = format!("{}/{}", grandchild.id, board.id);
+    raw["pins"] = json!({(&child.id):true, (&board_key):true, (&other.id):true});
     raw["tags"] = json!({
         "definitions": {
             "tag_review": {"name":"复核","color":"#31804d"},
@@ -55,10 +80,17 @@ fn project_package_keeps_its_nested_subtree_positions_and_materials() {
     });
     let original_layout = serde_json::to_vec(&raw).unwrap();
     fs::write(&layout_path, &original_layout).unwrap();
+    let covers_path = root.join(crate::project_canvas::covers::FILE);
+    let covers = json!({(&child.id):"reed-morning-mist", (&board_key):"aurora-lake", (&other.id):"frost-river"});
+    let original_covers = serde_json::to_vec(&covers).unwrap();
+    fs::write(&covers_path, &original_covers).unwrap();
     let restores = root.with_extension("canvas-restores");
     fs::create_dir(&restores).unwrap();
     let archive = restores.join("nested.zip");
-    let result = export_at(&root, Some(&child.id), &archive, json!({}), |_, _| {}).unwrap();
+    let reading_key = format!("{board_key}/{}", doc.path);
+    let outside_reading = format!("{parent}/{parent_board}/docs/outside.md");
+    let prefs = json!({"progress": {(&reading_key):0.65, (&outside_reading):0.25}});
+    let result = export_at(&root, Some(&child.id), &archive, prefs.clone(), |_, _| {}).unwrap();
     assert_eq!(result["projects"], 3);
     let restored = restore_at(&archive, &restores).unwrap();
     let destination = PathBuf::from(restored["root"].as_str().unwrap());
@@ -79,6 +111,12 @@ fn project_package_keeps_its_nested_subtree_positions_and_materials() {
         Some(320.0)
     );
     assert_eq!(restored_layout["relations"], complete_edges);
+    assert_eq!(restored_layout["pins"], json!({(&child.id):true, (&board_key):true}));
+    let nested_covers = crate::project_canvas::covers::read(&destination).unwrap();
+    assert_eq!(nested_covers.get(&child.id).unwrap(), "reed-morning-mist");
+    assert_eq!(nested_covers.get(&board_key).unwrap(), "aurora-lake");
+    assert_eq!(nested_covers.len(), 2);
+    assert_eq!(restored["preferences"], json!({"progress":{(&reading_key):0.65}}));
     assert_eq!(
         restored_layout["tags"]["definitions"],
         json!({"tag_review":{"name":"复核","color":"#31804d"}})
@@ -87,11 +125,23 @@ fn project_package_keeps_its_nested_subtree_positions_and_materials() {
         restored_layout["tags"]["assignments"][&board_key],
         json!(["color_green", "tag_review"])
     );
-    let relative = PathBuf::from(grandchild.id).join(board.id).join(doc.path);
-    assert_eq!(
-        fs::read(destination.join(&relative)).unwrap(),
-        fs::read(root.join(relative)).unwrap()
-    );
+    let base = PathBuf::from(&grandchild.id).join(&board.id);
+    for relative in [Path::new("board.json"), Path::new(&doc.path), Path::new(&pdf.path), Path::new(&pdf_path)] {
+        let relative = base.join(relative);
+        assert_eq!(fs::read(destination.join(&relative)).unwrap(), fs::read(root.join(relative)).unwrap());
+    }
+    let full_archive = restores.join("full.zip");
+    export_at(&root, None, &full_archive, prefs.clone(), |_, _| {}).unwrap();
+    let full = restore_at(&full_archive, &restores).unwrap();
+    let full_root = PathBuf::from(full["root"].as_str().unwrap());
+    let full_layout = crate::project_canvas::read(&full_root, &storage::read_index(&full_root).unwrap()).unwrap();
+    assert_eq!(full_layout.parent(&child.id), Some(parent.as_str()));
+    assert_eq!(full_layout.relations().len(), 5);
+    assert_eq!(full["preferences"], prefs);
+    assert_eq!(fs::read(full_root.join(base).join("board.json")).unwrap(), original_board);
+    assert_eq!(serde_json::to_value(crate::project_canvas::covers::read(&full_root).unwrap()).unwrap(), covers);
+    assert_eq!(fs::read(board_path).unwrap(), original_board);
+    assert_eq!(fs::read(covers_path).unwrap(), original_covers);
     assert_eq!(fs::read(layout_path).unwrap(), original_layout);
     fs::remove_dir_all(root).unwrap();
     fs::remove_dir_all(restores).unwrap();

@@ -93,13 +93,17 @@ const evidence = path.resolve(process.env.LSQ_UI_EVIDENCE || 'mac-ui-evidence');
     assert.equal(await trail(), '项目首页');
     assert.equal(await page.locator('.project-tile.is-project').count(), 2);
     assert.equal(await page.locator('.project-tile.is-board, .sidebar').count(), 0);
+    await page.getByRole('button', { name: '菜单', exact: true }).click();
+    await menuItem('导入').waitFor();
+    assert.equal(await menuItem('新建').count(), 0);
+    await page.keyboard.press('Escape');
     await canvas().click({ button: 'right', position: { x: 800, y: 250 } });
     await menuItem('新建项目').waitFor();
     assert.equal(await menuItem('新建白板').count(), 0);
     await page.keyboard.press('Escape');
     await page.getByRole('button', { name: '设置', exact: true }).click();
     await page.locator('.settings-card').waitFor(); await page.keyboard.press('Escape');
-    check('legacy projects appear directly on root canvas with no sidebar or root board creation');
+    check('legacy projects appear on the root canvas; creation stays in the canvas and the top menu keeps import and export');
 
     await newItem('project', '第三个项目', true);
     const start = await point(folder('第三个项目'));
