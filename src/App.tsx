@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Sparkles } from 'lucide-react';
 import { api, pickStorageDir, type AppInfo, type BoardEdge, type BoardFile, type BoardMeta, type BoardNode, type ProjectMeta } from './api';
 import { ContextMenu, type ContextMenuState } from './components/ContextMenu';
 import { TitleBar } from './components/TitleBar';
@@ -960,6 +959,7 @@ export default function App() {
               { type: 'item', label: '删除连线', danger: true, onClick: () => relateProjects(relation, false) },
             ], true)}
             onFavorite={tile => toggleFavorite(tile.kind === 'project' ? 'projects' : 'boards', tile.row.id)}
+            onWorkspaceAi={() => setWorkspaceAiOpen(true)}
             onMenu={(event, tile) => {
               if (!tile) openAt(event, createItems());
               else if (tile.kind === 'project') projectItemMenu(event, tile.row);
@@ -1021,9 +1021,6 @@ export default function App() {
         suspended={knowledgeOpen || !activeBoard}
         onBoardSettings={()=>window.dispatchEvent(new CustomEvent('lumen:board-settings',{detail:activeBoard?.id}))}
       />
-      {!activeBoard && !knowledgeOpen && <button className="ai-fab" type="button" onClick={() => setWorkspaceAiOpen(true)}>
-        <Sparkles size={17} aria-hidden="true" />AI 工作区
-      </button>}
       <WorkspaceAssistant key={canvasScope} open={workspaceAiOpen} scope={canvasScope} onClose={() => setWorkspaceAiOpen(false)}
         context={{
           project: activeProject ? { id: activeProject.id, path: projectTrail.map(project => project.name).join(' / ') } : undefined,

@@ -352,19 +352,48 @@
 .is-dragging .project-connect-port,
 .is-connecting .project-connect-port { pointer-events: none; }
 
-.project-canvas-add,
+.project-canvas-actions,
 .project-canvas-fit {
   position: absolute;
   z-index: 5;
   bottom: 20px;
+}
+
+.project-canvas-add,
+.project-canvas-fit {
   display: inline-grid;
   place-items: center;
   font: inherit;
   cursor: pointer;
 }
 
-.project-canvas-add {
+.project-canvas-actions {
   right: 22px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.project-canvas-ai {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  height: 44px;
+  padding: 0 14px;
+  border: 1px solid var(--border-color);
+  border-radius: 15px;
+  box-shadow: var(--shadow-node);
+  background: var(--bg-node);
+  color: var(--accent);
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.project-canvas-ai:hover { background: var(--bg-hover); }
+.project-canvas-ai:disabled { opacity: .55; cursor: wait; }
+
+.project-canvas-add {
   width: 46px;
   height: 46px;
   padding: 0;

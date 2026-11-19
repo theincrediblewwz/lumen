@@ -1,4 +1,4 @@
-import { Check, Plus, Star, X } from 'lucide-react';
+import { Check, Plus, Sparkles, Star, X } from 'lucide-react';
 import { useEffect, useId, useRef, useState, type MouseEvent, type PointerEvent } from 'react';
 import type { Viewport } from '../api';
 import { fitToBounds, IDENTITY_VIEWPORT, screenToWorld, worldToScreen, zoomByFactor, type Vec2 } from '../canvas/CanvasEngine';
@@ -39,6 +39,7 @@ type Props = {
   onFavorite: (tile: CatalogTile) => void;
   onMenu: (event: MouseEvent, tile?: CatalogTile) => void;
   onAdd: (event: MouseEvent) => void;
+  onWorkspaceAi: () => void;
 };
 
 // Include the folder tab so arrowheads stay visible above the icon.
@@ -104,7 +105,7 @@ function RelationName({ relation, point, width, height, onClose, onSave }: {
   </form>;
 }
 
-export function ProjectCanvas({ scope, folderId, folderName, tiles, relations, tags, filtering, disabled, onOpen, onPlace, onConnect, onLabel, onRelationMenu, onFavorite, onMenu, onAdd }: Props) {
+export function ProjectCanvas({ scope, folderId, folderName, tiles, relations, tags, filtering, disabled, onOpen, onPlace, onConnect, onLabel, onRelationMenu, onFavorite, onMenu, onAdd, onWorkspaceAi }: Props) {
   const element = useRef<HTMLElement>(null);
   const [viewport, setViewport] = useState(() => readProjectView(scope, folderId));
   const view = useRef(viewport);
@@ -401,9 +402,14 @@ export function ProjectCanvas({ scope, folderId, folderName, tiles, relations, t
       <button className="project-canvas-fit" type="button" title="显示全部" aria-label={`显示全部 · 当前缩放 ${Math.round(viewport.zoom * 100)}%`} onClick={fit}>
         {Math.round(viewport.zoom * 100)}%
       </button>
-      <button className="project-canvas-add" type="button" title={folderId ? '新建' : '新建项目'} aria-label={folderId ? '新建' : '新建项目'} aria-haspopup={folderId ? 'menu' : undefined} disabled={disabled} onClick={onAdd}>
-        <Plus size={24} strokeWidth={2} aria-hidden="true" />
-      </button>
+      <div className="project-canvas-actions">
+        <button type="button" className="project-canvas-ai" disabled={disabled} onClick={onWorkspaceAi}>
+          <Sparkles size={17} aria-hidden="true" />AI 工作区
+        </button>
+        <button className="project-canvas-add" type="button" title={folderId ? '新建' : '新建项目'} aria-label={folderId ? '新建' : '新建项目'} aria-haspopup={folderId ? 'menu' : undefined} disabled={disabled} onClick={onAdd}>
+          <Plus size={24} strokeWidth={2} aria-hidden="true" />
+        </button>
+      </div>
     </main>
   );
 }

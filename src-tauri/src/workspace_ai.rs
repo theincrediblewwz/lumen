@@ -84,6 +84,8 @@ struct BeforeImage {
     path: String,
     before: Option<String>,
     after: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    board_content_after: Option<String>,
 }
 
 fn encode(value: &impl Serialize) -> Result<Vec<u8>, String> {
@@ -182,12 +184,21 @@ fn commit_at(root: &Path, prepared: &Prepared) -> Result<Applied, String> {
     let entries = prepared
         .files
         .iter()
-        .map(|(path, after)| BeforeImage {
-            path: path.clone(),
-            before: prepared.before[path].as_ref().map(|b| STANDARD.encode(b)),
-            after: documents::hash(after),
+        .map(|(path, after)| {
+            let board_content_after =
+                if path.split('/').count() == 3 && path.ends_with("/board.json") {
+                    Some(board_and_content_digest(after)?.1)
+                } else {
+                    None
+                };
+            Ok(BeforeImage {
+                path: path.clone(),
+                before: prepared.before[path].as_ref().map(|b| STANDARD.encode(b)),
+                after: documents::hash(after),
+                board_content_after,
+            })
         })
-        .collect();
+        .collect::<Result<Vec<_>, String>>()?;
     let mut files = prepared.files.clone();
     files.insert(
         history_path(&plan.id),
@@ -290,6 +301,40 @@ fn check_revisions(root: &Path, revisions: &Revisions, message: &str) -> Result<
     Ok(())
 }
 
+fn board_and_content_digest(raw: &[u8]) -> Result<(storage::Viewport, String), String> {
+    let mut board: storage::BoardFile =
+        serde_json::from_slice(raw).map_err(|error| format!("白板格式无效 · {error}"))?;
+    let viewport = std::mem::take(&mut board.viewport);
+    board.updated_at.clear();
+    board.extra.remove("_disk_revision");
+    let digest = documents::hash(&serde_json::to_vec(&board).map_err(|error| error.to_string())?);
+    Ok((viewport, digest))
+}
+
+fn undo_file(root: &Path, entry: &BeforeImage) -> Result<Option<Vec<u8>>, String> {
+    let conflict = "应用后资料已有新改动。撤销已停止，后续编辑保留";
+    let current = read_bytes(root, &entry.path)?.ok_or(conflict)?;
+    let mut before = entry
+        .before
+        .as_ref()
+        .map(|s| STANDARD.decode(s).map_err(|_| "撤销记录中的原始数据无效"))
+        .transpose()?;
+    if documents::hash(&current) == entry.after {
+        return Ok(before);
+    }
+    let expected = entry.board_content_after.as_ref().ok_or(conflict)?;
+    let (viewport, digest) = board_and_content_digest(&current)?;
+    if digest != *expected {
+        return Err(conflict.into());
+    }
+    if let Some(bytes) = &mut before {
+        let mut board: Value = serde_json::from_slice(bytes).map_err(|error| error.to_string())?;
+        board["viewport"] = serde_json::to_value(viewport).map_err(|error| error.to_string())?;
+        *bytes = encode(&board)?;
+    }
+    Ok(before)
+}
+
 fn undo_at(root: &Path, id: &str) -> Result<(), String> {
     if history_ids(root)?.first().is_none_or(|latest| latest != id) {
         return Err("最近的一批变更已变化，请重新打开 AI 工作区".into());
@@ -299,18 +344,7 @@ fn undo_at(root: &Path, id: &str) -> Result<(), String> {
     let mut directories = BTreeSet::new();
     for entry in receipt.entries {
         data_path(&entry.path)?;
-        if read_bytes(root, &entry.path)?
-            .as_deref()
-            .map(documents::hash)
-            .as_deref()
-            != Some(&entry.after)
-        {
-            return Err("应用后资料已有新改动。撤销已停止，后续编辑保留".into());
-        }
-        let before = entry
-            .before
-            .map(|s| STANDARD.decode(s).map_err(|_| "撤销记录中的原始数据无效"))
-            .transpose()?;
+        let before = undo_file(root, &entry)?;
         if before.is_none() {
             if let Some((dir, _)) = entry.path.rsplit_once('/') {
                 directories.insert(dir.to_owned());

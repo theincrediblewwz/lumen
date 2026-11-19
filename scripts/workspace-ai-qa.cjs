@@ -19,6 +19,9 @@ async function main() {
     await page.goto(fixture);
     const open = page.getByRole('button', { name: 'AI 工作区', exact: true });
     await open.waitFor();
+    const addBox = await page.getByRole('button', { name: '新建项目', exact: true }).boundingBox();
+    const openBox = await open.boundingBox();
+    assert.ok(openBox.x + openBox.width < addBox.x);
     await page.evaluate(() => {
       localStorage.setItem('lumen.ai.v1', JSON.stringify({
         kind: 'openai', baseUrl: 'http://127.0.0.1:1/v1', model: 'gpt-4o-mini',

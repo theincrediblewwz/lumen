@@ -68,7 +68,7 @@ fn previews_nested_project_board_graph_tags_cover_and_flow_and_undo_restores_ori
         Some("应用到 $\\nu$")
     );
     assert_eq!(layout.pins[&format!("{}/{bid}", work.project_id)], true);
-    let board = storage::load_board(&lib.0, &work.project_id, bid).unwrap();
+    let mut board = storage::load_board(&lib.0, &work.project_id, bid).unwrap();
     assert_eq!(board.name, "求解路径");
     assert_eq!(board.extra["appearance"]["zoomSensitivity"], 1.25);
     assert_eq!(board.nodes.len(), 4);
@@ -103,6 +103,8 @@ fn previews_nested_project_board_graph_tags_cover_and_flow_and_undo_restores_ori
     .unwrap();
     assert!(read::read_at(&lib.0, query, false).is_err());
     assert_eq!(latest_at(&lib.0).unwrap().unwrap().id, applied.id);
+    board.viewport.x += 123.0;
+    storage::save_board(&lib.0, &board).unwrap();
     undo_at(&lib.0, &applied.id).unwrap();
     assert_eq!(lib.read("index.json"), before);
     assert_eq!(lib.read(&format!("{}/project.json", folder.id)), parent);
@@ -230,6 +232,17 @@ fn removal_preserves_board_and_undo_checks_later_edits() {
     let receipt = commit_at(&lib.0, &draft).unwrap();
     let mut edited = storage::load_board(&lib.0, &child.id, &b.id).unwrap();
     edited.viewport.x = 80.0;
+    storage::save_board(&lib.0, &edited).unwrap();
+    undo_at(&lib.0, &receipt.id).unwrap();
+    let restored = storage::load_board(&lib.0, &child.id, &b.id).unwrap();
+    assert_eq!(restored.name, "原白板");
+    assert_eq!(restored.viewport.x, 80.0);
+    let draft = stage(&lib, json!([{"op":"update_board","board":{"projectId":child.id,"boardId":b.id},"name":"再次重命名"}])).unwrap();
+    let receipt = commit_at(&lib.0, &draft).unwrap();
+    let mut edited = storage::load_board(&lib.0, &child.id, &b.id).unwrap();
+    edited
+        .extra
+        .insert("appearance".into(), json!({"fontSize":22}));
     storage::save_board(&lib.0, &edited).unwrap();
     let edited = lib.read(&path);
     assert!(undo_at(&lib.0, &receipt.id).is_err());

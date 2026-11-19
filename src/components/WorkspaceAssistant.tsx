@@ -193,6 +193,7 @@ export function WorkspaceAssistant({ open, scope, context, onClose, onOpenLocati
       setPlan(undefined);
       setEntries(previous => [...previous, { role: 'assistant', text: '你已取消这批方案。' }]);
       setMessage('方案已取消');
+      textarea.current?.focus();
     } catch (error) { setMessage(messageOf(error)); }
     finally { setWorking(false); }
   }
@@ -212,6 +213,7 @@ export function WorkspaceAssistant({ open, scope, context, onClose, onOpenLocati
           role: 'assistant',
           text: `你已应用本批 ${receipt.changeCount} 项变更。${receipt.destinations.map(item => ` ${item.name}`).join('')}`,
         }]);
+        textarea.current?.focus();
         await notifyLibraryChanged().catch(() => setMessage('变更已保存，请重新打开相关白板刷新视图'));
       });
       setMessage(previous => previous === '正在应用变更' ? '' : previous);
@@ -230,6 +232,7 @@ export function WorkspaceAssistant({ open, scope, context, onClose, onOpenLocati
         setLatest(null);
         setEntries(previous => [...previous, { role: 'assistant', text: '你已撤销上一批工作区变更。' }]);
         setMessage('已撤销上一批变更');
+        textarea.current?.focus();
         await notifyLibraryChanged().catch(() => setMessage('变更已撤销，请重新打开相关白板刷新视图'));
       });
       setLatest(await workspaceApi.latest(scope));
