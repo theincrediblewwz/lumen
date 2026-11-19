@@ -118,6 +118,8 @@ export const api = {
   projectCanvasRead: () => invoke<ProjectLayoutSnapshot>('project_canvas_read'),
   projectCanvasPlace: (kind: 'project' | 'board', id: string, projectId: string | null, position: { x: number; y: number }, expectedScope: string) =>
     invoke<ProjectLayout>('project_canvas_place', { kind, id, projectId, position, expectedScope }),
+  projectCanvasPin: (kind: 'project' | 'board', id: string, projectId: string | null, pinned: boolean, expectedScope: string) =>
+    invoke<ProjectLayout>('project_canvas_pin', { kind, id, projectId, pinned, expectedScope }),
   projectCanvasMove: (id: string, expectedParentId: string | null, parentId: string | null, expectedScope: string) =>
     invoke<ProjectLayout>('project_canvas_move', { id, expectedParentId, parentId, expectedScope }),
   projectCanvasRelate: (projectId: string | null, relation: ProjectRelation, present: boolean, expectedScope: string) =>

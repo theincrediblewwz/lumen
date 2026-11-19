@@ -14,13 +14,14 @@ pub(crate) const FILE: &str = "project-canvas.json";
 const MAX_FILE_BYTES: u64 = 16 * 1024 * 1024;
 
 #[derive(Clone, Copy, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct Position {
-    x: f64,
-    y: f64,
+    pub(crate) x: f64,
+    pub(crate) y: f64,
 }
 
 impl Position {
-    fn check(self) -> Result<(), String> {
+    pub(crate) fn check(self) -> Result<(), String> {
         if [self.x, self.y]
             .iter()
             .any(|v| !v.is_finite() || v.abs() > 1_000_000.0)
@@ -41,11 +42,11 @@ pub(crate) struct Placement {
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
-struct Relation {
-    from: String,
-    to: String,
+pub(crate) struct Relation {
+    pub(crate) from: String,
+    pub(crate) to: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    label: Option<String>,
+    pub(crate) label: Option<String>,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
@@ -60,6 +61,8 @@ pub struct Layout {
     relations: Vec<Relation>,
     #[serde(default, skip_serializing_if = "tags::TagStore::is_empty")]
     pub(crate) tags: tags::TagStore,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub(crate) pins: BTreeMap<String, bool>,
 }
 
 impl Default for Layout {
@@ -70,6 +73,7 @@ impl Default for Layout {
             boards: BTreeMap::new(),
             relations: Vec::new(),
             tags: tags::TagStore::default(),
+            pins: BTreeMap::new(),
         }
     }
 }
@@ -77,6 +81,66 @@ impl Default for Layout {
 impl Layout {
     pub(crate) fn parent(&self, id: &str) -> Option<&str> {
         self.projects.get(id)?.parent_id.as_deref()
+    }
+
+    pub(crate) fn project_position(&self, id: &str) -> Option<Position> {
+        self.projects.get(id)?.position
+    }
+
+    pub(crate) fn board_position(&self, project: &str, board: &str) -> Option<Position> {
+        self.boards.get(project)?.get(board).copied()
+    }
+
+    pub(crate) fn relations(&self) -> &[Relation] {
+        &self.relations
+    }
+
+    pub(crate) fn reparent(&mut self, id: &str, parent: Option<String>) -> Result<(), String> {
+        if let Some(target) = parent.as_deref() {
+            if self.subtree(id).contains(target) {
+                return Err("不能将项目移入自身或它的子项目".into());
+            }
+        }
+        if self.parent(id) != parent.as_deref() {
+            self.projects.insert(id.into(), Placement { parent_id: parent, position: None });
+        }
+        Ok(())
+    }
+
+    pub(crate) fn place_project(&mut self, id: &str, position: Position) -> Result<(), String> {
+        position.check()?;
+        self.projects.entry(id.into()).or_default().position = Some(position);
+        Ok(())
+    }
+
+    pub(crate) fn place_board(&mut self, project: &str, board: &str, position: Position) -> Result<(), String> {
+        position.check()?;
+        self.boards.entry(project.into()).or_default().insert(board.into(), position);
+        Ok(())
+    }
+
+    pub(crate) fn forget_board(&mut self, project: &str, board: &str) {
+        if let Some(positions) = self.boards.get_mut(project) { positions.remove(board); }
+        let key = format!("{project}/{board}");
+        self.tags.remove_tree(&key);
+        self.pins.remove(&key);
+    }
+
+    pub(crate) fn put_relation(&mut self, from: String, to: String, present: bool, label: Option<String>) -> Result<(), String> {
+        if from == to || self.parent(&from) != self.parent(&to) {
+            return Err("请选择同一画布上的两个项目建立连线".into());
+        }
+        let label = label.as_deref().map(relation_label).transpose()?;
+        let position = self.relations.iter().position(|edge| edge.from == from && edge.to == to);
+        match (present, position) {
+            (true, None) => self.relations.push(Relation { from, to, label: label.flatten() }),
+            (true, Some(index)) => {
+                if let Some(label) = label { self.relations[index].label = label; }
+            }
+            (false, Some(index)) => { self.relations.remove(index); }
+            (false, None) => return Err("项目连线已移除".into()),
+        }
+        Ok(())
     }
 
     pub(crate) fn subtree(&self, id: &str) -> BTreeSet<String> {
@@ -104,6 +168,7 @@ impl Layout {
         self.relations
             .retain(|edge| ids.contains(&edge.from) && ids.contains(&edge.to));
         self.tags.retain_projects(ids);
+        self.pins.retain(|key, _| ids.contains(key.split('/').next().unwrap_or_default()));
         for placement in self.projects.values_mut() {
             if placement
                 .parent_id
@@ -121,6 +186,7 @@ impl Layout {
             !positions.is_empty()
         });
         self.tags.retain_boards(owners);
+        self.pins.retain(|id, _| id.split_once('/').is_none_or(|(project, board)| owners.get(board).is_some_and(|owner| owner == project)));
     }
 
     pub(crate) fn bytes(&self) -> Result<Vec<u8>, String> {
@@ -173,6 +239,12 @@ impl Layout {
             }
             relation_label(edge.label.as_deref().unwrap_or(""))?;
         }
+        for id in self.pins.keys() {
+            if let Some((project, board)) = id.split_once('/') {
+                storage::safe_id(project)?;
+                storage::safe_id(board)?;
+            } else { storage::safe_id(id)?; }
+        }
         self.tags.validate()
     }
 }
@@ -185,7 +257,12 @@ pub(crate) fn read(root: &Path, index: &storage::IndexFile) -> Result<Layout, St
     if fs::metadata(&path).map_err(|e| e.to_string())?.len() > MAX_FILE_BYTES {
         return Err("项目画布文件过大".into());
     }
-    let mut layout: Layout = serde_json::from_slice(&fs::read(path).map_err(|e| e.to_string())?)
+    parse(&fs::read(path).map_err(|e| e.to_string())?, index)
+}
+
+pub(crate) fn parse(bytes: &[u8], index: &storage::IndexFile) -> Result<Layout, String> {
+    if bytes.len() as u64 > MAX_FILE_BYTES { return Err("项目画布文件过大".into()); }
+    let mut layout: Layout = serde_json::from_slice(bytes)
         .map_err(|e| format!("无法读取项目画布：{e}"))?;
     layout.validate()?;
     layout.retain_projects(&index.projects.iter().map(|p| p.id.clone()).collect());
@@ -268,24 +345,15 @@ fn move_project(
     }
     if let Some(target) = parent.as_deref() {
         require_project(&index, target)?;
-        if layout.subtree(id).contains(target) {
-            return Err("不能将项目移入自身或它的子项目".into());
-        }
     }
     if layout.parent(id) != parent.as_deref() {
-        layout.projects.insert(
-            id.into(),
-            Placement {
-                parent_id: parent,
-                position: None,
-            },
-        );
+        layout.reparent(id, parent)?;
         write(root, &layout)?;
     }
     Ok(layout)
 }
 
-fn relation_label(value: &str) -> Result<Option<String>, String> {
+pub(crate) fn relation_label(value: &str) -> Result<Option<String>, String> {
     let value = value.trim();
     if value.chars().count() > 240 || value.chars().any(char::is_control) {
         return Err("连线名称最多 240 个字符，请写在同一行".into());
@@ -341,6 +409,26 @@ pub enum TileKind {
     Board,
 }
 
+#[tauri::command]
+pub fn project_canvas_pin(kind: TileKind, id: String, project_id: Option<String>, pinned: bool, expected_scope: String) -> Result<Layout, String> {
+    let _io = sync::IO_LOCK.lock().map_err(|error| error.to_string())?;
+    let root = commands::root()?;
+    safety::ensure_scope(&root, &expected_scope)?;
+    let index = storage::read_index(&root)?;
+    let key = match kind {
+        TileKind::Project => { require_project(&index, &id)?; id }
+        TileKind::Board => {
+            let owner = project_id.ok_or("请选择白板所属项目")?;
+            require_board(&root, &index, &owner, &id)?;
+            format!("{owner}/{id}")
+        }
+    };
+    let mut layout = read(&root, &index)?;
+    layout.pins.insert(key, pinned);
+    write(&root, &layout)?;
+    Ok(layout)
+}
+
 fn place(
     root: &Path,
     kind: TileKind,
@@ -357,16 +445,12 @@ fn place(
             if layout.parent(id) != project {
                 return Err("项目已移到另一层，请重新打开后再摆放".into());
             }
-            layout.projects.entry(id.into()).or_default().position = Some(position);
+            layout.place_project(id, position)?;
         }
         TileKind::Board => {
             let owner = project.ok_or("首页只能放项目")?;
             require_board(root, &index, owner, id)?;
-            layout
-                .boards
-                .entry(owner.into())
-                .or_default()
-                .insert(id.into(), position);
+            layout.place_board(owner, id, position)?;
         }
     }
     write(root, &layout)?;

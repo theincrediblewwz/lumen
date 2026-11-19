@@ -16,7 +16,16 @@ pub fn save_board(root: &Path, source: &storage::BoardFile) -> Result<(),String>
     let p=storage::safe_id(&source.project_id)?;let b=storage::safe_id(&source.id)?;
     let mut board=source.clone();board.extra.remove("_disk_revision");board.version=storage::FORMAT_VERSION;board.updated_at=storage::now_iso();
     let original=storage::load_board(root,p,b)?;
-    let previous=original.nodes.iter().map(|n|(n.id.as_str(),n)).collect::<BTreeMap<_,_>>();
+    let (mut files, changed_questions) = prepare_questions(root, &mut board, &original.nodes)?;
+    files.insert(format!("{p}/{b}/board.json"),serde_json::to_vec_pretty(&board).map_err(|e|e.to_string())?);
+    sync::transaction(root,files)?;
+    for path in changed_questions{prune_history(root,p,b,&path);}
+    Ok(())
+}
+
+pub(crate) fn prepare_questions(root: &Path, board: &mut storage::BoardFile, original: &[storage::BoardNode]) -> Result<(BTreeMap<String, Vec<u8>>, Vec<String>), String> {
+    let p=storage::safe_id(&board.project_id)?;let b=storage::safe_id(&board.id)?;
+    let previous=original.iter().map(|n|(n.id.as_str(),n)).collect::<BTreeMap<_,_>>();
     let mut files=BTreeMap::new();
     let mut changed_questions=Vec::new();
     for node in &mut board.nodes {
@@ -49,10 +58,7 @@ pub fn save_board(root: &Path, source: &storage::BoardFile) -> Result<(),String>
         let reference=storage::DocRef{path:path.clone(),title:"完整问题".into(),bytes:Some(content.len() as u64)};
         if let Some(old)=node.docs.iter_mut().find(|d|d.path==path){*old=reference;}else{node.docs.push(reference);}
     }
-    files.insert(format!("{p}/{b}/board.json"),serde_json::to_vec_pretty(&board).map_err(|e|e.to_string())?);
-    sync::transaction(root,files)?;
-    for path in changed_questions{prune_history(root,p,b,&path);}
-    Ok(())
+    Ok((files, changed_questions))
 }
 
 pub fn update_at(root:&Path,p:&str,b:&str,path:&str,content:&str,expected:&str)->Result<documents::Payload,String>{
@@ -60,9 +66,22 @@ pub fn update_at(root:&Path,p:&str,b:&str,path:&str,content:&str,expected:&str)-
     let target=documents::doc_path(root,p,b,path)?;
     if !path.ends_with(".md") && !path.ends_with(".markdown") {return Err("只能编辑Markdown文档".into());}
     let raw=String::from_utf8(fs::read(&target).map_err(|e|e.to_string())?).map_err(|_|"请先将非UTF-8文档另存为UTF-8，原件保留")?;
-    let (meta,body)=documents::split(&raw)?;
+    let files = prepare_markdown_update(root, p, b, path, &raw, content, expected)?;
+    if !files.is_empty() {
+        sync::transaction(root,files)?;
+        // One immutable first version and at most 19 recent edit versions per document.
+        prune_history(root,p,b,path);
+    }
+    documents::read_payload(root,p,b,path)
+}
+
+pub(crate) fn prepare_markdown_update(root:&Path,p:&str,b:&str,path:&str,raw:&str,content:&str,expected:&str)->Result<BTreeMap<String, Vec<u8>>,String>{
+    if content.len()>documents::LIMIT {return Err("Markdown最多32MiB".into());}
+    documents::doc_path(root,p,b,path)?;
+    if !path.ends_with(".md") && !path.ends_with(".markdown") {return Err("只能编辑Markdown文档".into());}
+    let (meta,body)=documents::split(raw)?;
     if meta.as_ref().is_some_and(|m|m.kind=="pdf"){return Err("PDF原件不能覆盖为Markdown".into());}
-    if body==content {return documents::read_payload(root,p,b,path);}
+    if body==content {return Ok(BTreeMap::new());}
     if body!=expected {return Err("文档已被其他窗口修改，当前草稿已保留，请重新打开后合并".into());}
     let prefix=&raw[..raw.len()-body.len()];
     let history=format!("{p}/{b}/.document-history/{}",documents::hash(path.as_bytes()));
@@ -71,11 +90,8 @@ pub fn update_at(root:&Path,p:&str,b:&str,path:&str,content:&str,expected:&str)-
         (format!("{history}/{}.md",documents::hash(raw.as_bytes())),raw.as_bytes().to_vec()),
         (format!("{p}/{b}/{path}"),format!("{prefix}{content}").into_bytes()),
     ]);
-    if !original.exists(){files.insert(format!("{history}/original.md"),raw.into_bytes());}
-    sync::transaction(root,files)?;
-    // One immutable first version and at most 19 recent edit versions per document.
-    prune_history(root,p,b,path);
-    documents::read_payload(root,p,b,path)
+    if !original.exists(){files.insert(format!("{history}/original.md"),raw.as_bytes().to_vec());}
+    Ok(files)
 }
 
 #[tauri::command]

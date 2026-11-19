@@ -47,7 +47,7 @@ fn public_share_readers_have_no_application_or_plugin_permissions() {
     let authority=context.runtime_authority_mut();
     for url in ["https://chat.deepseek.com/share/synthetic123","https://chatgpt.com/share/synthetic123","https://www.doubao.com/thread/synthetic123"] {
         let remote=Origin::Remote{url:url.parse().unwrap()};
-        for command in ["secret_get","doc_read","board_save","board_operations_apply","conversation_import_apply","library_package_export","library_package_restore","plugin:dialog|open","plugin:webview|create_webview_window"] {
+        for command in ["secret_get","doc_read","board_save","board_operations_apply","workspace_ai_read","workspace_ai_prepare","workspace_ai_apply","workspace_ai_undo","conversation_import_apply","library_package_export","library_package_restore","plugin:dialog|open","plugin:webview|create_webview_window"] {
             assert!(authority.resolve_access(command,"share-read-synthetic","share-read-synthetic",&remote).is_none(),"{command} must remain unavailable to the public share page");
         }
     }

@@ -9,6 +9,7 @@ mod storage;
 mod project_canvas;
 mod documents;
 mod workspace_editing;
+mod workspace_ai;
 mod portable_documents;
 mod library_package;
 #[cfg(test)]
@@ -161,6 +162,12 @@ pub fn run() {
             board_operations::board_operations_apply,
             board_operations::chat_document_attach,
             board_operations::chat_conversation_upsert,
+            workspace_ai::workspace_ai_prepare,
+            workspace_ai::workspace_ai_apply,
+            workspace_ai::workspace_ai_discard,
+            workspace_ai::workspace_ai_latest,
+            workspace_ai::workspace_ai_undo,
+            workspace_ai::read::workspace_ai_read,
             board_operations::board_backups_list,
             board_operations::board_backup_restore,
             board_operations::doc_export_markdown,
@@ -195,6 +202,7 @@ pub fn run() {
             project_canvas::project_canvas_move,
             project_canvas::project_canvas_relate,
             project_canvas::project_canvas_label,
+            project_canvas::project_canvas_pin,
             project_canvas::tags::project_canvas_tags,
             project_canvas::covers::project_canvas_cover,
             commands::boards_list,

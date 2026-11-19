@@ -86,21 +86,39 @@ pub fn recover(root: &Path) -> Result<(), String> {
 }
 
 pub(crate) fn transaction(root: &Path, files: BTreeMap<String, Vec<u8>>) -> Result<(), String> {
+    transaction_changes(root, files.into_iter().map(|(path, bytes)| (path, Some(bytes))).collect())
+}
+
+/// `None` removes a single file. The journal still stores its full before-image.
+pub(crate) fn transaction_changes(root: &Path, files: BTreeMap<String, Option<Vec<u8>>>) -> Result<(), String> {
     let mut names=BTreeMap::new();
     for path in files.keys(){safe_path(root,path)?;let mut prefix=String::new();for component in path.split('/'){if !prefix.is_empty(){prefix.push('/');}prefix.push_str(component);let key=prefix.nfc().collect::<String>().to_lowercase();if names.get(&key).is_some_and(|previous|previous!=&prefix){return Err("同步路径存在大小写或Unicode冲突，原文件未改动".into());}names.insert(key,prefix.clone());}}
     recover(root)?;
     let mut entries = Vec::new();
+    let mut removals = Vec::new();
     for (path, after) in files {
         let target = safe_path(root, &path)?;
         let before = if target.exists() { Some(fs::read(target).map_err(err)?) } else { None };
-        if before.as_ref() != Some(&after) { entries.push(WriteEntry { path, before, after }); }
+        if before == after { continue; }
+        if after.is_none() { removals.push(path.clone()); }
+        entries.push(WriteEntry { path, before, after: after.unwrap_or_default() });
     }
     if entries.is_empty() { return Ok(()); }
     let journal = safe_path(root, &format!("{META}/pending.json"))?;
     let mut record=Journal{committed:false,entries};
     atomic_bytes(&journal, &serde_json::to_vec(&record).map_err(err)?)?;
     for e in &record.entries {
-        if let Err(error) = safe_path(root, &e.path).and_then(|path|atomic_bytes(&path, &e.after)) {
+        let result = safe_path(root, &e.path).and_then(|path| {
+            if removals.contains(&e.path) {
+                fs::remove_file(&path).map_err(err)?;
+                #[cfg(unix)]
+                fs::File::open(path.parent().unwrap()).and_then(|f| f.sync_all()).map_err(err)?;
+                Ok(())
+            } else {
+                atomic_bytes(&path, &e.after)
+            }
+        });
+        if let Err(error) = result {
             recover(root).map_err(|rollback| format!("写入失败，恢复日志保留：{error}; {rollback}"))?;
             return Err(error);
         }
@@ -109,7 +127,9 @@ pub(crate) fn transaction(root: &Path, files: BTreeMap<String, Vec<u8>>) -> Resu
     // back an acknowledged commit. A crash before the marker restores all before-images.
     record.committed=true;
     if let Err(error)=atomic_bytes(&journal,&serde_json::to_vec(&record).map_err(err)?){recover(root)?;return Err(error);}
-    fs::remove_file(journal).map_err(err)
+    // The data is already committed. Recovery can remove a leftover marker.
+    let _ = fs::remove_file(journal);
+    Ok(())
 }
 
 fn settings(root: &Path) -> Result<SyncSettings, String> {

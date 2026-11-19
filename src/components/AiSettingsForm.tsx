@@ -11,8 +11,8 @@ function ConfigSelect(props: SelectHTMLAttributes<HTMLSelectElement>) {
   return <span className="ai-select-wrap"><select {...props}/><ChevronDown size={14} strokeWidth={1.7} aria-hidden="true"/></span>;
 }
 
-export function AiSettingsForm({ initial, onSave, onCancel, onBusyChange }: {
-  initial: AiSettings; onSave: (settings: AiSettings) => void; onCancel: () => void; onBusyChange?: (busy:boolean)=>void;
+export function AiSettingsForm({ initial, onSave, onCancel, onBusyChange, boardTools = true }: {
+  initial: AiSettings; onSave: (settings: AiSettings) => void; onCancel: () => void; onBusyChange?: (busy:boolean)=>void; boardTools?: boolean;
 }) {
   const [s, setS] = useState<AiSettings>(() => ({ ...initial, maxTokens: initial.maxTokens ?? modelLimits(initial.model).output }));
   const [profiles, setProfiles] = useState(listAiProfiles);
@@ -128,9 +128,11 @@ export function AiSettingsForm({ initial, onSave, onCancel, onBusyChange }: {
           <details className="ai-model-documentation"><summary>模型说明与上限</summary><p className="ai-hint">输入与输出上限分别设置，共用总窗口。额度为本地估算，服务商分词、账号与网关限制仍适用。自定义型号默认使用应用百万级上限，可通过模型目录补充其官方能力。</p>{provider && <a href={provider.docs} target="_blank" rel="noreferrer">官方文档<ExternalLink size={12} aria-hidden="true"/></a>}</details>
         </section>
       </div>
-      <label className="ai-check ai-share-check"><input type="checkbox" checked={s.shareBoard} onChange={e => patch({ shareBoard: e.target.checked })}/><span>允许 AI 读取本白板内容<small>知识库引用仍按白板中的独立授权执行。</small></span></label>
-      <label className="ai-check ai-share-check"><input type="checkbox" checked={s.memoryMode!=='off'} onChange={e=>patch({memoryMode:e.target.checked?'auto':'off'})}/><span>长对话自动整理记忆<small>仅在发送时按需使用当前模型额度，单次最多两批；原始问答保留，关闭后仍可检索原文。</small></span></label>
-      <BoardWriteSettings/>
+      {boardTools && <>
+        <label className="ai-check ai-share-check"><input type="checkbox" checked={s.shareBoard} onChange={e => patch({ shareBoard: e.target.checked })}/><span>允许 AI 读取本白板内容<small>知识库引用仍按白板中的独立授权执行。</small></span></label>
+        <label className="ai-check ai-share-check"><input type="checkbox" checked={s.memoryMode!=='off'} onChange={e=>patch({memoryMode:e.target.checked?'auto':'off'})}/><span>长对话自动整理记忆<small>仅在发送时按需使用当前模型额度，单次最多两批；原始问答保留，关闭后仍可检索原文。</small></span></label>
+        <BoardWriteSettings/>
+      </>}
     </fieldset>
     <div className="ai-settings-footer">
       <div className="ai-settings-feedback">{error ? <p role="alert">{error}</p> : <p role="status">{notice || (s.profileId ? '保存更新当前配置；另存可保留两套。' : '原有连接在保存后才会切换。')}</p>}</div>

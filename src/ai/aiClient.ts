@@ -49,7 +49,7 @@ export interface StreamHandlers {
   /** Presence only; raw model reasoning never crosses this UI callback. */
   onReasoning?: (characters:number) => void;
   onToolEnd?: () => void;
-  /** Separate public-catalogue task. Never receives whiteboard tools or secrets. */
+  /** Caller-scoped tools for workflows with their own reads and confirmation. */
   tools?: { definitions: unknown[]; execute: (name: string, args: Record<string, unknown>) => Promise<unknown> };
 }
 

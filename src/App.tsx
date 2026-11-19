@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Sparkles } from 'lucide-react';
 import { api, pickStorageDir, type AppInfo, type BoardEdge, type BoardFile, type BoardMeta, type BoardNode, type ProjectMeta } from './api';
 import { ContextMenu, type ContextMenuState } from './components/ContextMenu';
 import { TitleBar } from './components/TitleBar';
@@ -10,6 +11,7 @@ import { ConfirmAction } from './components/ConfirmAction';
 import { BoardCanvas } from './components/BoardCanvas';
 import { ReaderOverlay } from './components/ReaderOverlay';
 import { AiFab } from './components/AiFab';
+import { WorkspaceAssistant } from './components/WorkspaceAssistant';
 import { ConversationImport } from './components/ConversationImport';
 import type { Viewport } from './canvas/CanvasEngine';
 import { getCurrentWindow } from '@tauri-apps/api/window';
@@ -27,7 +29,7 @@ import type { KnowledgeDraft } from './knowledge/store';
 import {exportBoardPackage,importBoardPackage} from './documents/client';
 import {exportLibraryPackage,restoreLibraryPackage,applyLibraryPreferences} from './libraryPackages';
 
-import { loadFavorites, saveFavorites } from './favorites';
+import { applyPins, loadFavorites, saveFavorites } from './favorites';
 import type { BoardAppearance } from './canvas/presentation';
 import { catalogTiles, EMPTY_PROJECT_LAYOUT, parentProject, projectPath, type CatalogTile, type ProjectLayoutSnapshot, type ProjectRelation } from './projectCanvas/layout';
 import { EMPTY_COVERS, readCover, type CoverTarget } from './projectCanvas/covers';
@@ -80,6 +82,7 @@ export default function App() {
   const [covers, setCovers] = useState(EMPTY_COVERS);
   const [coverEdit, setCoverEdit] = useState<CoverEdit>();
   const [canvasScope, setCanvasScope] = useState('');
+  const [workspaceAiOpen, setWorkspaceAiOpen] = useState(false);
   const [tagFilters, setTagFilters] = useState<Record<string, string[]>>({});
   const [tagEdit, setTagEdit] = useState<{ target: TagTarget; name: string; colorMark?: string }>();
   const [boards, setBoards] = useState<BoardMeta[]>([]);
@@ -113,8 +116,23 @@ export default function App() {
     return () => { active = false; unlisten?.(); window.removeEventListener('lumen:open-knowledge', open); };
   }, []);
   const [favoriteVersion,setFavoriteVersion]=useState(0);
-  const favorites=useMemo(()=>loadFavorites(root??''),[root,favoriteVersion]);
-  const toggleFavorite=(kind:'projects'|'boards',id:string)=>{if(!root)return;const next={...favorites,[kind]:favorites[kind].includes(id)?favorites[kind].filter(v=>v!==id):[...favorites[kind],id]};try{saveFavorites(root,next);setFavoriteVersion(v=>v+1);}catch(e){setError(`收藏未能保存：${String(e)}`);}};
+  const favorites = useMemo(() => applyPins(loadFavorites(root ?? ''), layout.pins), [root, favoriteVersion, layout.pins]);
+  const toggleFavorite = (kind: 'projects' | 'boards', id: string) => {
+    if (!root) return;
+    const owner = kind === 'boards' ? activeProject?.id ?? null : null;
+    const pinned = !favorites[kind].includes(id);
+    const key = owner ? `${owner}/${id}` : id;
+    if (Object.prototype.hasOwnProperty.call(layout.pins ?? {}, key)) {
+      void api.projectCanvasPin(kind === 'projects' ? 'project' : 'board', id, owner, pinned, canvasScope)
+        .then(setLayout).catch(error => setError(String(error)));
+      return;
+    }
+    try {
+      const prior = loadFavorites(root);
+      saveFavorites(root, { ...prior, [kind]: pinned ? [...prior[kind], id] : prior[kind].filter(value => value !== id) });
+      setFavoriteVersion(version => version + 1);
+    } catch (error) { setError(`收藏未能保存：${String(error)}`); }
+  };
   const [saveState,setSaveState]=useState<'saved'|'dirty'|'saving'|'error'>('saved');
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pendingBoards = useRef(new Map<string,BoardFile>());
@@ -713,6 +731,7 @@ export default function App() {
       { type: 'separator' },
       { type: 'item', label: '全局搜索  Ctrl/Cmd+K', onClick: () => setSearchOpen(true) },
       ...(phase === 'ready' ? [
+        { type: 'item' as const, label: 'AI 工作区…', onClick: () => leaveKnowledge(() => setWorkspaceAiOpen(true)) },
         { type: 'item' as const, label: '知识库', onClick: () => {
           if (knowledgeOpen) leaveKnowledge();
           else { setKnowledgeTarget({}); setKnowledgeOpen(true); }
@@ -1002,6 +1021,15 @@ export default function App() {
         suspended={knowledgeOpen || !activeBoard}
         onBoardSettings={()=>window.dispatchEvent(new CustomEvent('lumen:board-settings',{detail:activeBoard?.id}))}
       />
+      {!activeBoard && !knowledgeOpen && <button className="ai-fab" type="button" onClick={() => setWorkspaceAiOpen(true)}>
+        <Sparkles size={17} aria-hidden="true" />AI 工作区
+      </button>}
+      <WorkspaceAssistant key={canvasScope} open={workspaceAiOpen} scope={canvasScope} onClose={() => setWorkspaceAiOpen(false)}
+        context={{
+          project: activeProject ? { id: activeProject.id, path: projectTrail.map(project => project.name).join(' / ') } : undefined,
+          board: activeBoard ? { id: activeBoard.id, name: activeBoard.name } : undefined,
+        }}
+        onOpenLocation={location => location.boardId ? void openBoard(location.projectId, location.boardId) : navigateProject(location.projectId)} />
     </div>
   );
 }

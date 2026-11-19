@@ -12,6 +12,7 @@ export type ProjectLayout = {
   boards: Record<string, Record<string, Vec2>>;
   relations?: ProjectRelation[];
   tags?: TagStore;
+  pins?: Record<string, boolean>;
 };
 
 export type ProjectLayoutSnapshot = { layout: ProjectLayout; scope: string; covers?: CoverStore; coverError?: string };

@@ -221,27 +221,27 @@ pub(crate) fn prepare_project(
     if name.is_empty() {
         return Err("项目名不能为空".into());
     }
-    let id = new_id("p");
-    let now = now_iso();
-    let meta = ProjectMeta { id: id.clone(), name: name.to_string(), created_at: now.clone() };
-
     let mut index = read_index(root)?;
-    index.version = FORMAT_VERSION;
-    index.projects.push(meta.clone());
-    let pf = ProjectFile {
-        version: FORMAT_VERSION,
-        id,
-        name: name.to_string(),
-        created_at: now.clone(),
-        updated_at: now,
-        boards: vec![],
-    };
+    let (meta, pf) = new_project(&mut index, name);
     let bytes = |result: Result<Vec<u8>, serde_json::Error>| result.map_err(|e| e.to_string());
     let files = [
         ("index.json".into(), bytes(serde_json::to_vec_pretty(&index))?),
         (format!("{}/project.json", pf.id), bytes(serde_json::to_vec_pretty(&pf))?),
     ].into_iter().collect();
     Ok((meta, files))
+}
+
+pub(crate) fn new_project(index: &mut IndexFile, name: &str) -> (ProjectMeta, ProjectFile) {
+    let id = new_id("p");
+    let now = now_iso();
+    let meta = ProjectMeta { id: id.clone(), name: name.into(), created_at: now.clone() };
+    index.version = FORMAT_VERSION;
+    index.projects.push(meta.clone());
+    let project = ProjectFile {
+        version: FORMAT_VERSION, id, name: name.into(), created_at: now.clone(),
+        updated_at: now, boards: vec![],
+    };
+    (meta, project)
 }
 
 pub fn read_project(root: &Path, project_id: &str) -> Result<ProjectFile, String> {
@@ -271,31 +271,35 @@ pub fn create_board(root: &Path, project_id: &str, name: &str) -> Result<BoardMe
     let pid = safe_id(project_id)?;
     let mut project = read_project(root, pid)?;
 
+    let (meta, board) = new_board(&mut project, name);
+    write_json(&project_file(root, pid), &project)?;
+    write_json(&board_file(root, pid, &meta.id), &board)?;
+    // 白板自带的文档目录
+    fs::create_dir_all(board_dir(root, pid, &meta.id).join("docs"))
+        .map_err(|e| format!("创建 docs 目录失败: {e}"))?;
+    Ok(meta)
+}
+
+pub(crate) fn new_board(project: &mut ProjectFile, name: &str) -> (BoardMeta, BoardFile) {
     let id = new_id("b");
     let now = now_iso();
     let meta = BoardMeta { id: id.clone(), name: name.to_string(), updated_at: now.clone() };
 
     project.boards.push(meta.clone());
     project.updated_at = now.clone();
-    write_json(&project_file(root, pid), &project)?;
-
     let board = BoardFile {
         extra: Default::default(),
         version: FORMAT_VERSION,
         id: id.clone(),
         name: name.to_string(),
-        project_id: pid.to_string(),
+        project_id: project.id.clone(),
         created_at: now.clone(),
         updated_at: now,
         viewport: Viewport::default(),
         nodes: vec![],
         edges: vec![],
     };
-    write_json(&board_file(root, pid, &id), &board)?;
-    // 白板自带的文档目录
-    fs::create_dir_all(board_dir(root, pid, &id).join("docs"))
-        .map_err(|e| format!("创建 docs 目录失败: {e}"))?;
-    Ok(meta)
+    (meta, board)
 }
 
 pub fn load_board(root: &Path, project_id: &str, board_id: &str) -> Result<BoardFile, String> {

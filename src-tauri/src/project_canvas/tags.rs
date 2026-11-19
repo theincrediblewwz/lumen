@@ -6,7 +6,7 @@ use std::{
     path::Path,
 };
 
-const BUILTIN: [(&str, &str); 6] = [
+pub(crate) const BUILTIN: [(&str, &str); 6] = [
     ("color_red", "红色"),
     ("color_orange", "橙色"),
     ("color_yellow", "黄色"),
@@ -18,8 +18,8 @@ const BUILTIN: [(&str, &str); 6] = [
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct TagDefinition {
-    name: String,
-    color: String,
+    pub(crate) name: String,
+    pub(crate) color: String,
 }
 
 impl TagDefinition {
@@ -51,6 +51,40 @@ pub(crate) struct TagStore {
 }
 
 impl TagStore {
+    pub(crate) fn definitions(&self) -> &BTreeMap<String, TagDefinition> {
+        &self.definitions
+    }
+
+    pub(crate) fn assigned(&self, key: &str) -> Option<&BTreeSet<String>> {
+        self.assignments.get(key)
+    }
+
+    pub(crate) fn define(&mut self, id: String, tag: TagDefinition) -> Result<(), String> {
+        self.definitions.insert(id, tag);
+        self.validate()
+    }
+
+    pub(crate) fn remove_definition(&mut self, id: &str) -> Result<usize, String> {
+        if self.definitions.remove(id).is_none() { return Err("只能删除自定义标签".into()); }
+        let mut count = 0;
+        self.assignments.retain(|_, tags| {
+            if tags.remove(id) { count += 1; }
+            !tags.is_empty()
+        });
+        Ok(count)
+    }
+
+    pub(crate) fn set(&mut self, key: String, assigned: BTreeSet<String>) -> Result<(), String> {
+        if assigned.is_empty() { self.assignments.remove(&key); }
+        else { self.assignments.insert(key, assigned); }
+        self.validate()
+    }
+
+    pub(crate) fn remove_tree(&mut self, key: &str) {
+        let prefix = format!("{key}/");
+        self.assignments.retain(|path, _| path != key && !path.starts_with(&prefix));
+    }
+
     pub(crate) fn is_empty(&self) -> bool {
         self.definitions.is_empty() && self.assignments.is_empty()
     }
@@ -184,12 +218,7 @@ fn assign(
         }
         layout.tags.definitions.insert(id, tag);
     }
-    if assigned.is_empty() {
-        layout.tags.assignments.remove(&key);
-    } else {
-        layout.tags.assignments.insert(key, assigned);
-    }
-    layout.tags.validate()?;
+    layout.tags.set(key, assigned)?;
     write(root, &layout)?;
     Ok(layout)
 }

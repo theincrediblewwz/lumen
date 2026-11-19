@@ -1,0 +1,129 @@
+.workspace-ai-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 1490;
+  display: grid;
+  place-items: center;
+  background: rgba(20, 35, 30, .24);
+}
+.workspace-assistant.ai-root {
+  box-sizing: border-box;
+  width: min(1020px, calc(100vw - 40px));
+  height: min(740px, calc(100vh - 40px));
+  max-width: none;
+  max-height: none;
+  margin: auto;
+  padding: 0;
+  border: 1px solid var(--border-color);
+  border-radius: 22px;
+  background: var(--bg-canvas);
+  box-shadow: var(--shadow-node-hover);
+}
+.workspace-ai-head {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 16px 20px;
+  border-bottom: 1px solid var(--border-color);
+}
+.workspace-ai-mark {
+  display: grid;
+  place-items: center;
+  flex: 0 0 38px;
+  height: 38px;
+  border-radius: 12px;
+  color: var(--accent);
+  background: var(--bg-hover);
+}
+.workspace-ai-heading { min-width: 0; flex: 1; }
+.workspace-ai-heading h2 { margin: 0; font-size: 17px; font-weight: 640; }
+.workspace-ai-heading h2:focus { outline: 0; }
+.workspace-ai-heading p { margin: 4px 0 0; font-size: 12px; color: var(--text-secondary); overflow-wrap: anywhere; }
+.workspace-ai-body { min-height: 0; flex: 1; display: grid; grid-template-columns: minmax(0, 1fr); }
+.workspace-ai-body.is-reviewing { grid-template-columns: minmax(0, 1fr) minmax(330px, .85fr); }
+.workspace-ai-conversation, .workspace-ai-plan { min-width: 0; min-height: 0; display: flex; flex-direction: column; }
+.workspace-ai-messages { min-height: 0; flex: 1; padding: 26px 28px; overflow-y: auto; overscroll-behavior: contain; }
+.workspace-ai-welcome { max-width: 410px; margin: clamp(18px, 7vh, 76px) auto 0; }
+.workspace-ai-welcome h3 { font-size: clamp(18px, 3vw, 24px); font-weight: 620; margin: 0 0 9px; }
+.workspace-ai-welcome p { margin: 0 0 14px; color: var(--text-secondary); line-height: 1.65; font-size: 14px; }
+.workspace-ai-welcome .btn { font-size: 12px; }
+.workspace-ai-message { display: flex; justify-content: flex-start; margin: 0 0 17px; font-size: 14px; line-height: 1.65; overflow-wrap: anywhere; }
+.workspace-ai-message.is-user { justify-content: flex-end; }
+.workspace-ai-user-text { max-width: 90%; padding: 9px 14px; border-radius: 15px 15px 4px 15px; background: var(--bg-hover); white-space: pre-wrap; }
+.workspace-ai-message .markdown-body { min-width: 0; max-width: 100%; }
+.workspace-ai-message .markdown-body > :first-child { margin-top: 0; }
+.workspace-ai-message .markdown-body > :last-child { margin-bottom: 0; }
+.workspace-ai-message pre { overflow: auto; }
+.workspace-ai-compose { flex: none; margin: 0; padding: 12px 20px 16px; border-top: 1px solid var(--border-color); }
+.workspace-ai-share { display: flex; align-items: center; gap: 8px; font-size: 12px; }
+.workspace-ai-share input { width: 15px; height: 15px; flex: none; margin: 0; accent-color: var(--accent); }
+.workspace-ai-disclosure { margin: 6px 0 10px; color: var(--text-secondary); font-size: 11px; line-height: 1.45; }
+.workspace-ai-input-wrap { position: relative; }
+.workspace-ai-input-wrap textarea {
+  display: block;
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 76px;
+  max-height: 160px;
+  padding: 12px 54px 12px 12px;
+  border: 1px solid var(--border-color);
+  border-radius: 13px;
+  color: var(--text-primary);
+  background: var(--bg-node);
+  font: inherit;
+  font-size: 14px;
+  line-height: 1.5;
+  resize: vertical;
+}
+.workspace-ai-input-wrap textarea:focus-visible { outline: 1px solid var(--accent); }
+.workspace-ai-send {
+  position: absolute;
+  display: grid;
+  place-items: center;
+  right: 9px;
+  bottom: 9px;
+  width: 34px;
+  height: 34px;
+  border: 0;
+  border-radius: 10px;
+  color: var(--bg-canvas);
+  background: var(--accent);
+  cursor: pointer;
+}
+.workspace-assistant button:disabled { opacity: .45; cursor: default; }
+.workspace-ai-plan { border-left: 1px solid var(--border-color); background: var(--bg-node); }
+.workspace-ai-plan > header {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 16px 17px;
+  color: var(--accent);
+  border-bottom: 1px solid var(--border-color);
+}
+.workspace-ai-plan h3 { margin: 0; color: var(--text-primary); font-size: 15px; }
+.workspace-ai-plan > header > span { margin-left: auto; font-size: 12px; color: var(--text-secondary); }
+.workspace-ai-removals { color: var(--text-primary); background: var(--bg-hover); font-size: 12px; margin: 0; padding: 9px 17px; }
+.workspace-ai-changes { margin: 0; padding: 0 17px; list-style: none; flex: 1; overflow: auto; overscroll-behavior: contain; min-height: 0; }
+.workspace-ai-changes > li { border-bottom: 1px solid var(--border-color); overflow-wrap: anywhere; }
+.workspace-ai-changes summary, .workspace-ai-static { padding: 10px 1px; font-size: 13px; line-height: 1.5; }
+.workspace-ai-changes summary { cursor: pointer; }
+.workspace-ai-changes strong { font-weight: 610; }
+.workspace-ai-changes .is-removal strong { color: var(--danger, #a13d32); }
+.workspace-ai-changes summary span, .workspace-ai-static span { display: block; margin-top: 3px; color: var(--text-secondary); }
+.workspace-ai-diff { padding: 8px 10px; margin-bottom: 8px; border: 1px solid var(--border-color); border-radius: 8px; background: var(--bg-canvas); }
+.workspace-ai-diff small { color: var(--text-secondary); font-size: 11px; }
+.workspace-ai-diff pre { max-height: 220px; overflow: auto; margin: 4px 0 0; font-size: 12px; line-height: 1.6; white-space: pre-wrap; }
+.workspace-ai-actions { flex: none; display: flex; gap: 8px; justify-content: flex-end; padding: 12px 16px; border-top: 1px solid var(--border-color); }
+.workspace-ai-receipt { flex: none; display: flex; align-items: center; gap: 9px; padding: 8px 20px; color: var(--text-secondary); font-size: 12px; flex-wrap: wrap; }
+.workspace-ai-links { display: flex; flex: 1 1 120px; min-width: 0; gap: 8px; overflow: auto; }
+.workspace-ai-link { display: inline-flex; gap: 3px; align-items: center; border: 0; background: none; font: inherit; color: var(--accent); cursor: pointer; white-space: nowrap; }
+.workspace-ai-link:hover { text-decoration: underline; }
+.workspace-ai-status { flex: none; padding: 8px 20px; border-top: 1px solid var(--border-color); color: var(--text-secondary); overflow-wrap: anywhere; font-size: 12px; line-height: 1.5; }
+.workspace-ai-settings { flex: 1; overflow: auto; }
+@media (max-width: 680px) {
+  .workspace-assistant.ai-root { width: calc(100vw - 16px); height: calc(100vh - 16px); border-radius: 16px; }
+  .workspace-ai-head, .workspace-ai-compose, .workspace-ai-messages { padding-left: 13px; padding-right: 13px; }
+  .workspace-ai-body.is-reviewing { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(150px, 1fr) minmax(145px, 1fr); }
+  .workspace-ai-plan { border-left: 0; border-top: 1px solid var(--border-color); }
+}

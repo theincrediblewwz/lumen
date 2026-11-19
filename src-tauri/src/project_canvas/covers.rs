@@ -24,8 +24,22 @@ pub enum CoverTarget {
 }
 
 #[derive(Deserialize)]
-struct Preset {
-    id: String,
+#[derive(serde::Serialize)]
+pub(crate) struct Preset {
+    pub(crate) id: String,
+    name: String,
+    #[serde(default)]
+    style: bool,
+}
+
+pub(crate) fn presets() -> Result<Vec<Preset>, String> {
+    serde_json::from_str(include_str!("../../../src/projectCanvas/covers.json"))
+        .map_err(|error| format!("内置封面库无法读取：{error}"))
+}
+
+pub(crate) fn check_preset(id: &str) -> Result<(), String> {
+    if presets()?.iter().any(|preset| preset.id == id) { Ok(()) }
+    else { Err("封面已不在内置图库中".into()) }
 }
 
 pub(crate) fn read(root: &Path) -> Result<CoverStore, String> {
@@ -40,8 +54,12 @@ pub(crate) fn read(root: &Path) -> Result<CoverStore, String> {
     {
         return Err("封面记录文件过大".into());
     }
-    let covers: CoverStore =
-        serde_json::from_slice(&fs::read(path).map_err(|error| error.to_string())?)
+    parse(&fs::read(path).map_err(|error| error.to_string())?)
+}
+
+pub(crate) fn parse(bytes: &[u8]) -> Result<CoverStore, String> {
+    if bytes.len() as u64 > MAX_FILE_BYTES { return Err("封面记录文件过大".into()); }
+    let covers: CoverStore = serde_json::from_slice(bytes)
             .map_err(|error| format!("无法读取封面记录：{error}"))?;
     for (target, cover_id) in &covers {
         if let Some((project, board)) = target.split_once('/') {
@@ -92,12 +110,7 @@ pub(super) fn assign(
         }
     };
     if let Some(id) = &cover_id {
-        let presets: Vec<Preset> =
-            serde_json::from_str(include_str!("../../../src/projectCanvas/covers.json"))
-                .map_err(|error| format!("内置封面库无法读取：{error}"))?;
-        if !presets.iter().any(|preset| preset.id == *id) {
-            return Err("封面已不在内置图库中".into());
-        }
+        check_preset(id)?;
     }
     let mut covers = read(root)?;
     let current_cover_id = covers.get(&key).map(String::as_str);
