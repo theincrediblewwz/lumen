@@ -5,9 +5,9 @@
 
 ## 当前版本
 
-[下载 Mac 0.3.1](https://github.com/theincrediblewwz/lumen/releases/tag/mac-v0.3.1) · [AI 工作区](./docs/WORKSPACE_AI.md) · [白板编辑与保存](./docs/CANVAS_AUTHORING.md)
+[下载 Mac 0.4.0](https://github.com/theincrediblewwz/lumen/releases/tag/mac-v0.4.0) · [AI 工作区](./docs/WORKSPACE_AI.md) · [白板编辑与保存](./docs/CANVAS_AUTHORING.md)
 
-**0.3.1 节点预览。** 完整问题与首份附件同时显示。右下角翻到下一页，左下角可返回上一页。 [素材预览说明](./docs/MATERIAL_PREVIEWS.md)
+**0.4.0 项目画布与资料恢复。** 文件夹支持原地展开，项目与白板卡片可以互连。附件用双箭头跨素材。项目包和全库包可恢复当前嵌套结构。 [项目与恢复](./docs/PROJECT_CANVAS.md) · [素材预览](./docs/MATERIAL_PREVIEWS.md)
 
 **0.3.0 AI 工作区。** 可通过聊天在指定上级项目下新建子项目和白板，组织主题、分支、标签与子流程。整批预览后应用，也可以撤销。
 
