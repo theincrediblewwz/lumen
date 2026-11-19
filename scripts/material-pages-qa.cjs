@@ -35,6 +35,8 @@ const base=process.env.LSQ_UI_URL||'http://127.0.0.1:5198',out=path.resolve(proc
   const left=await pagerStyle(previous()),right=await pagerStyle(next());
   assert.deepEqual([left.width,left.height,left.radius,left.bottom,left.left],['24px','24px','6px','4px','4px']);
   assert.deepEqual([right.width,right.height,right.radius,right.bottom,right.right],['24px','24px','6px','4px','4px']);
+  const textViewport=await preview().locator('.node-page-viewport').boundingBox();
+  for(const button of [previous(),next()])assert.ok((await button.boundingBox()).y>=textViewport.y+textViewport.height-.5);
   await previous().focus();await previous().press('Enter');assert.equal(await preview().getAttribute('data-preview-page'),'0');
   assert.equal(await previous().count(),0);assert.equal(await next().evaluate(e=>document.activeElement===e),true);
   check('small rounded controls sit in opposite bottom corners; Previous appears after page one and returns keyboard focus on the first page');

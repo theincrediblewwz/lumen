@@ -2673,6 +2673,7 @@ html.motion-off .edge-line { animation: none; }
 .node-page-columns pre {white-space:pre-wrap;overflow-wrap:anywhere;}
 .node-page-columns table {max-width:100%;table-layout:fixed;overflow-wrap:anywhere;}
 .node-preview.is-question + .node-preview:not(.is-image) {border-top:1px solid var(--border-color);padding-top:8px;}
+.node-preview.has-page-controls:not(.is-image) {padding-bottom:28px;}
 .node-preview-turn {
   position:absolute;
   bottom:4px;

@@ -81,7 +81,7 @@ function PreviewPager({ resources, projectId, boardId, docVersions, onPresentati
         }
       }}><Chevron size={14} aria-hidden="true" /></button>;
   };
-  return <div className={`node-preview${image ? ' is-image' : ''}${question ? ' is-question' : ''}`}
+  return <div className={`node-preview${image ? ' is-image' : ''}${question ? ' is-question' : ''}${canGoForward ? ' has-page-controls' : ''}`}
     role="group" aria-label={question ? '完整问题预览' : '附件预览'}
     data-preview-resource={resource.key} data-preview-index={resourceIndex} data-preview-page={page} data-preview-pages={pages}>
     {'doc' in resource ? <NodeAttachment key={resource.key} projectId={projectId} boardId={boardId} doc={resource.doc} refresh={docVersions[resource.key] ?? 0} page={page} onPages={onPages} onImageSize={onImageSize}/>
