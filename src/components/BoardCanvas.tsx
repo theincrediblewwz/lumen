@@ -1,4 +1,6 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
+import { Focus, X } from 'lucide-react';
 import { CanvasEngine, type Viewport } from '../canvas/CanvasEngine';
 import {
   createHistory,
@@ -33,6 +35,7 @@ import { NodePanel } from './NodePanel';
 import { NodeTooltip } from './NodeTooltip';
 import { EdgeLabel } from './EdgeLabel';
 import { FlowPanel } from './FlowPanel';
+import { BranchFocusView } from './BranchFocusView';
 import { imageDoc, imageOnly, clipboardText, nonemptyNode, flowNodes, orderFlow, topLevelNodes } from '../canvas/composition';
 import { measureNodes } from '../canvas/measureNodes';
 import { flowHighlight } from '../canvas/preview';
@@ -66,6 +69,7 @@ export function BoardCanvas({
   onChange, onFlush, saveState,
   guessMath = false,
   focusNode = null,
+  focusSlot, onBranchFocusChange,
   tags, tagStore, tagFilter, onEditTags,
   onBlankClick,
 }: {
@@ -75,6 +79,8 @@ export function BoardCanvas({
   guessMath?: boolean;
   /** AI 引用跳转目标（M5-6）：居中并闪烁高亮该节点。nonce 变化即重新触发。 */
   focusNode?: { id: string; nonce: number } | null;
+  focusSlot: HTMLElement | null;
+  onBranchFocusChange: (active: boolean) => void;
   tags: CatalogTag[];
   tagStore?: TagStore;
   tagFilter: ReadonlySet<string>;
@@ -82,6 +88,18 @@ export function BoardCanvas({
   onBlankClick?: () => void;
 }) {
   const wrapRef = useRef<HTMLDivElement>(null);
+  const focusToggle = useRef<HTMLButtonElement>(null);
+  const [branchRoot, setBranchRoot] = useState<string | null>(null);
+  const branchRootRef = useRef<string | null>(null);
+  const setBranchFocus = useCallback((id: string | null) => {
+    branchRootRef.current = id;
+    setBranchRoot(id);
+    onBranchFocusChange(id !== null);
+  }, [onBranchFocusChange]);
+  useEffect(() => () => onBranchFocusChange(false), [onBranchFocusChange]);
+  useLayoutEffect(() => {
+    if (wrapRef.current) wrapRef.current.inert = branchRoot !== null;
+  }, [branchRoot]);
   const syncMutationLock = useRef(!!document.querySelector('.sync-edit-lock'));
   useEffect(() => {
     const lock = (event: Event) => { syncMutationLock.current = !!(event as CustomEvent<boolean>).detail; };
@@ -275,6 +293,7 @@ export function BoardCanvas({
         const { getCurrentWebview } = await import('@tauri-apps/api/webview');
         const wv = getCurrentWebview();
         const un = await wv.onDragDropEvent((event) => {
+          if (branchRootRef.current) return;
           const p = event.payload;
           if (p.type === 'enter' || p.type === 'over') {
             const pos = p.position;
@@ -310,6 +329,7 @@ export function BoardCanvas({
     const node = graphRef.current.nodes.find((n) => n.id === focusNode.id);
     const wrap = wrapRef.current;
     if (!node || !wrap) return;
+    if (branchRootRef.current) setBranchFocus(null);
     // 尺寸可能还没测到，用默认宽/估算高兜底
     const size = sizesRef.current[node.id] ?? { w: node.w || 240, h: 120 };
     const rectEl = wrap.getBoundingClientRect();
@@ -486,6 +506,18 @@ export function BoardCanvas({
     const hit = (id: string, e: KeyboardEvent) => matchShortcut(e, shortcut(id)!);
     const onKey = (e: KeyboardEvent) => {
       if (mutationsBlocked()) return;
+      if (branchRootRef.current) {
+        if (isEditableTarget(e.target) || e.defaultPrevented) return;
+        if (e.key === 'Escape' && !document.querySelector('.ctx-menu')) {
+          e.preventDefault();
+          setBranchFocus(null);
+          focusToggle.current?.focus({ preventScroll: true });
+        } else if (['delete', 'new-node', 'undo', 'redo'].some(id => hit(id, e))) {
+          // WebKit can otherwise interpret Backspace as browser history navigation.
+          e.preventDefault();
+        }
+        return;
+      }
       if(edgeRouteCleanup.current){if(e.key==='Escape'){e.preventDefault();edgeRouteCleanup.current();}return;}
       if(arrangeJob.current){if(e.key==='Escape'){e.preventDefault();arrangeJob.current.abort();}return;}
       if(drag.current?.kind==='node'||drag.current?.kind==='resize'){
@@ -590,6 +622,7 @@ export function BoardCanvas({
     removeEdge,
     panelId,
     moveRoot,
+    setBranchFocus,
   ]);
 
   /* ── 拖拽状态 ── */
@@ -1062,9 +1095,9 @@ export function BoardCanvas({
   };
   useEffect(()=>{const beforeClose=(e:Event)=>{arrangeJob.current?.abort();if(imageJobs.current){e.preventDefault();setDocumentStatus('资源正在保存，请完成后再关闭。');}};window.addEventListener('lumen:before-window-close',beforeClose);return()=>{arrangeJob.current?.abort();window.removeEventListener('lumen:before-window-close',beforeClose);};},[]);
   useEffect(()=>{
-    const region=(e:PointerEvent)=>{const el=e.target as HTMLElement;if(el.closest('.node-panel')){pasteTarget.current=panelIdRef.current;pasteFlow.current=null;}else if(el.closest('.flow-panel')){pasteTarget.current=el.closest<HTMLElement>('[data-node-id]')?.dataset.nodeId??null;pasteFlow.current=el.closest<HTMLElement>('[data-flow-owner]')?.dataset.flowOwner??null;}else if(el.closest('.board-canvas-live')){pasteTarget.current=null;pasteFlow.current=null;}};
+    const region=(e:PointerEvent)=>{if(branchRootRef.current)return;const el=e.target as HTMLElement;if(el.closest('.node-panel')){pasteTarget.current=panelIdRef.current;pasteFlow.current=null;}else if(el.closest('.flow-panel')){pasteTarget.current=el.closest<HTMLElement>('[data-node-id]')?.dataset.nodeId??null;pasteFlow.current=el.closest<HTMLElement>('[data-flow-owner]')?.dataset.flowOwner??null;}else if(el.closest('.board-canvas-live')){pasteTarget.current=null;pasteFlow.current=null;}};
     const paste=(e:ClipboardEvent)=>{
-      if(document.querySelector('[aria-modal="true"]'))return;
+      if(branchRootRef.current||document.querySelector('[aria-modal="true"]'))return;
       const target=(e.target as HTMLElement)?.closest?.('.node-panel')?panelIdRef.current:pasteTarget.current,flow=target?null:pasteFlow.current;
       const files=[...(e.clipboardData?.files??[])].filter(f=>/^image\/(png|jpeg|gif|webp)$/.test(f.type));
       if(files.length){e.preventDefault();for(const file of files)void stickerImport.current(undefined,file,undefined,target,flow);return;}
@@ -1202,7 +1235,7 @@ export function BoardCanvas({
   }, [mainEdges, nodeById, screenBoxOf, sizesVer, vpSig, heatMode, canvasSize]);
 
   useEffect(()=>{
-    if(!flowOwnerId||!canvasSize.width)return;const owner=graphRef.current.nodes.find(n=>n.id===flowOwnerId);if(!owner)return;
+    if(branchRootRef.current||!flowOwnerId||!canvasSize.width)return;const owner=graphRef.current.nodes.find(n=>n.id===flowOwnerId);if(!owner)return;
     const left=Math.min(520,Math.max(310,canvasSize.width*.43))+16,right=canvasSize.width-332;
     const at=engine.toScreen({x:owner.x+(sizesRef.current[owner.id]?.w??owner.w)/2,y:owner.y+(sizesRef.current[owner.id]?.h??owner.h??96)/2});
     engine.setViewport({...engine.viewport,x:engine.viewport.x+(left+right)/2-at.x,y:engine.viewport.y+Math.max(120,Math.min(canvasSize.height-120,at.y))-at.y});
@@ -1257,10 +1290,18 @@ export function BoardCanvas({
   },[documentEditor?.nodeId,documentEditor?.path,onChange,engine]);
 
 
-  return (
+  const fontStyle = {
+    ['--board-font-family' as string]: FONT_FAMILIES[appearance.fontFamily],
+    ['--board-font-size' as string]: `${appearance.fontSize}px`,
+    ['--board-preview-font-family' as string]: FONT_FAMILIES[appearance.previewFontFamily ?? appearance.fontFamily],
+    ['--board-preview-font-size' as string]: `${appearance.previewFontSize ?? appearance.fontSize}px`,
+  };
+  const focusBusy = draggingNodes || arrangeBusy || dropBusy || !!editingId || !!editingEdge || !!documentEditor || !!connect;
+  return <div className="board-view-stack">
     <div
       ref={wrapRef}
-      className={`board-canvas board-canvas-live${connect ? ' is-connecting' : ''}`}
+      className={`board-canvas board-canvas-live${connect ? ' is-connecting' : ''}${branchRoot ? ' is-behind-focus' : ''}`}
+      aria-hidden={branchRoot ? true : undefined}
       onWheel={onWheel}
       onScroll={e=>{if(e.target===e.currentTarget){e.currentTarget.scrollLeft=0;e.currentTarget.scrollTop=0;}}}
       onPointerDown={onCanvasPointerDown}
@@ -1268,7 +1309,7 @@ export function BoardCanvas({
       onPointerUp={onPointerUp}
       onPointerCancel={onPointerUp}
       onLostPointerCapture={e=>{if((drag.current?.kind==='node'||drag.current?.kind==='resize')&&drag.current.pointerId===e.pointerId)cancelNodeDrag();}}
-      style={{['--board-font-family' as string]:FONT_FAMILIES[appearance.fontFamily],['--board-font-size' as string]:`${appearance.fontSize}px`,['--board-preview-font-family' as string]:FONT_FAMILIES[appearance.previewFontFamily??appearance.fontFamily],['--board-preview-font-size' as string]:`${appearance.previewFontSize??appearance.fontSize}px`}}
+      style={fontStyle}
       aria-busy={draggingNodes||dropBusy||arrangeBusy}
       onContextMenu={onCanvasContextMenu}
       onDoubleClick={onCanvasDoubleClick}
@@ -1489,5 +1530,19 @@ export function BoardCanvas({
 
       {menu && <ContextMenu state={menu} onClose={() => setMenu(null)} />}
     </div>
-  );
+    {branchRoot && <BranchFocusView key={branchRoot} rootId={branchRoot} nodes={nodes} edges={edges} size={canvasSize}
+      projectId={board.projectId} boardId={board.id} docVersions={docVersions} fontStyle={fontStyle} zoomSensitivity={appearance.zoomSensitivity}/>}
+    {focusSlot && (branchRoot || (selected && nodeById[selected])) && createPortal(
+      <button type="button" ref={focusToggle} className="titlebar-btn branch-focus-toggle" aria-pressed={!!branchRoot}
+        aria-label={branchRoot ? '退出专注视图' : '开启专注视图'} title={branchRoot ? '退出专注视图 (Esc)' : '专注于选中节点的分支'}
+        disabled={!branchRoot && focusBusy} onClick={() => {
+          if (branchRoot) { setBranchFocus(null); return; }
+          if (focusBusy || drag.current || edgeRouteCleanup.current || mutationsBlocked()) return;
+          if (blankClickTimer.current) clearTimeout(blankClickTimer.current);
+          setBranchFocus(selected);
+        }}>
+        {branchRoot ? <X size={16} aria-hidden="true"/> : <Focus size={17} aria-hidden="true"/>}
+        <span>{branchRoot ? '退出专注' : '专注视图'}</span>
+      </button>, focusSlot)}
+    </div>;
 }

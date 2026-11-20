@@ -5,7 +5,9 @@
 
 ## 当前版本
 
-[0.4.1 源码预览](https://github.com/theincrediblewwz/lumen/releases/tag/mac-v0.4.1) · [下载 Mac 0.4.0 安装包](https://github.com/theincrediblewwz/lumen/releases/tag/mac-v0.4.0) · [白板编辑与保存](./docs/CANVAS_AUTHORING.md)
+[0.4.2 源码预览](https://github.com/theincrediblewwz/lumen/releases/tag/mac-v0.4.2) · [下载 Mac 0.4.0 安装包](https://github.com/theincrediblewwz/lumen/releases/tag/mac-v0.4.0) · [白板编辑与保存](./docs/CANVAS_AUTHORING.md)
+
+**0.4.2 专注视图。** 选中一个白板节点，右上角可进入专注视图，只查看它沿有向箭头衍生的分支。起点挂载的流程以青蓝荧光标记，步骤大图等比展示。退出后恢复原来的布局、缩放和阅读位置。[专注视图使用说明](./docs/MATERIAL_PREVIEWS.md#专注视图)
 
 **0.4.1 直线与荧光高亮。** 项目画布和白板默认使用直线，拖动可弯折。展开文件夹可见内部箭头、名称和公式。节点标题及 Markdown 编辑器支持选中文字后添加荧光高亮。[项目画布](./docs/PROJECT_CANVAS.md) · [高亮与素材预览](./docs/MATERIAL_PREVIEWS.md)
 

@@ -1,7 +1,7 @@
 import { memo, useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import type { BoardNode } from '../api';
 import { MarkdownView } from './MarkdownView';
-import { NodePreview, type PreviewPresentation } from './NodePreview';
+import { NodePreview, type PreviewMemory, type PreviewPresentation } from './NodePreview';
 import { contentDocs, imageOnly, nodeHeading } from '../canvas/composition';
 import { flowHighlight, materialImageSize } from '../canvas/preview';
 
@@ -94,9 +94,12 @@ export const NodeCard = memo(function NodeCard({
   onExitEdit,
   onMeasure,
   onHoverChange,
-  onResizeStart, projectId, boardId, docVersions={}, measuring=false, hideHandles=false, previewCollapsed=false,
+  onResizeStart, projectId, boardId, docVersions={}, measuring=false, hideHandles=false, previewCollapsed=false, previewMemory, flowStep, imageWidthLimit,
 }: {
   projectId:string; boardId:string; docVersions?:Record<string,number>; measuring?:boolean; hideHandles?:boolean; previewCollapsed?:boolean;
+  previewMemory?: PreviewMemory;
+  flowStep?: boolean;
+  imageWidthLimit?: number;
   onResizeStart:(e:React.PointerEvent,id:string,corner:string)=>void;
   node: BoardNode;
   selected: boolean;
@@ -127,8 +130,10 @@ export const NodeCard = memo(function NodeCard({
   const pureImage = !previewCollapsed && !heading.trim() && !hasQuestion && !!primary && (presentation?.image ?? imageOnly(node));
   const contentOnly = !heading.trim() && !hasQuestion && !!primary;
   const automaticView=presentation?.navigated&&presentation.baseWidth===node.w&&presentation.baseHeight===node.h;
-  const automatic=automaticView&&presentation?.image&&presentation.dimensions?materialImageSize(presentation.dimensions.width,presentation.dimensions.height):undefined;
-  const width=automatic?.w??node.w,aspect=presentation?.image&&presentation.dimensions?presentation.dimensions.width/presentation.dimensions.height:node.imageAspect||node.w/(node.h||node.w);
+  const adaptiveImage = imageWidthLimit !== undefined && presentation?.image;
+  const automatic=(automaticView||adaptiveImage)&&presentation?.image&&presentation.dimensions?materialImageSize(presentation.dimensions.width,presentation.dimensions.height):undefined;
+  const width=automatic&&imageWidthLimit!==undefined?Math.min(automatic.w,imageWidthLimit):automatic?.w??node.w;
+  const aspect=presentation?.image&&presentation.dimensions?presentation.dimensions.width/presentation.dimensions.height:node.imageAspect||node.w/(node.h||node.w);
 
   // 测量真实布局尺寸（世界单位，不受 transform 缩放影响：offsetWidth/Height）
   useLayoutEffect(() => {
@@ -162,7 +167,7 @@ export const NodeCard = memo(function NodeCard({
         width,
         height: pureImage ? width/aspect : undefined,
         minWidth: previewCollapsed?0:minimum.w,
-        minHeight: pureImage||previewCollapsed?0:Math.max(measuring||automaticView?0:node.h??0,minimum.h),
+        minHeight: pureImage||previewCollapsed?0:Math.max(measuring||automaticView||adaptiveImage?0:node.h??0,minimum.h),
         // 节点自定义颜色：既作左侧色条，又作为该卡片的强调色（选中框/锚点/光晕）。
         // 未设色时回退到主题强调色 var(--accent)。
         ['--node-accent' as string]: node.color || 'var(--accent)',
@@ -219,7 +224,7 @@ export const NodeCard = memo(function NodeCard({
       ) : (
         <>
           {(heading.trim()||previewCollapsed)&&<MarkdownView className="node-title" inline value={heading.trim()?heading:primary?.title||'流程步骤'}/>}
-          {!previewCollapsed&&<NodePreview summary={node.summary} docs={docs} projectId={projectId} boardId={boardId} docVersions={docVersions} onPresentation={onPresentation} viewKey={`${projectId}/${boardId}/${node.id}/${hideHandles&&!measuring?'flow':'board'}`}/>}
+          {!previewCollapsed&&<NodePreview summary={node.summary} docs={docs} projectId={projectId} boardId={boardId} docVersions={docVersions} onPresentation={onPresentation} memory={previewMemory} viewKey={`${projectId}/${boardId}/${node.id}/${(flowStep ?? (hideHandles&&!measuring))?'flow':'board'}`}/>}
           {contentOnly&&!previewCollapsed&&<span className="sticker-info">{presentation?.title||primary?.title||node.title}</span>}
         </>
       )}

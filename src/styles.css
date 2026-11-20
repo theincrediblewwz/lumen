@@ -507,6 +507,65 @@ html.glass-on body {
   user-select: none;
 }
 
+.board-view-stack { position: relative; display: flex; flex: 1; min-width: 0; min-height: 0; }
+.board-canvas-live.is-behind-focus { visibility: hidden; pointer-events: none; }
+.titlebar-board-action:empty { display: none; }
+.branch-focus-toggle {
+  gap: 6px;
+  height: 30px;
+  padding: 0 9px;
+  white-space: nowrap;
+  font: inherit;
+  font-size: 12px;
+}
+.branch-focus-toggle[aria-pressed="true"] { background: var(--accent-soft); color: var(--accent); }
+.branch-focus-toggle:disabled { opacity: .45; cursor: default; }
+.board-branch-focus {
+  --focus-flow-ink: #237d9a;
+  --focus-flow-glow: #59d5f7;
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  isolation: isolate;
+  overscroll-behavior: none;
+  touch-action: none;
+  user-select: none;
+  outline-offset: -2px;
+  cursor: grab;
+}
+:root[data-theme="dark"] .board-branch-focus { --focus-flow-ink: #83d9ef; }
+@supports (overflow: clip) { .board-branch-focus { overflow: clip; } }
+.board-branch-focus.is-panning { cursor: grabbing; }
+.board-branch-focus .markdown-live { font-family: inherit; }
+.board-branch-focus .branch-focus-toolbar .tb-btn { font: inherit; font-size: 12px; }
+.branch-focus-card { position: absolute; }
+.branch-focus-card .node-card { cursor: default; }
+.branch-focus-card.is-flow-step .node-title { padding-right: 20px; }
+.branch-focus-card.is-flow-step::before {
+  content: '';
+  position: absolute;
+  top: 5px;
+  bottom: 5px;
+  left: -14px;
+  width: 3px;
+  border-radius: 3px;
+  background: var(--focus-flow-glow);
+  box-shadow: 0 0 10px 2px color-mix(in srgb, var(--focus-flow-glow) 48%, transparent);
+  pointer-events: none;
+}
+.board-branch-focus .focus-step-line { stroke: var(--focus-flow-ink); }
+.board-branch-focus .focus-flow-jump,
+.branch-focus-card.is-flow-step .flow-step-number { color: var(--focus-flow-ink); }
+.branch-focus-zoom {
+  position: absolute;
+  left: 20px;
+  bottom: 17px;
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  pointer-events: none;
+}
+
 /* 画布悬浮工具栏：新建 / 撤销 / 重做（左上角，始终可见） */
 .canvas-toolbar {
   position: absolute;

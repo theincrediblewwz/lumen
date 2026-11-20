@@ -19,6 +19,7 @@ export function TitleBar({
   onToggleIndex,
   indexCollapsed,
   path,
+  boardAction,
   filter,
 }: {
   platform: string; // 'macos' | 'windows' | 'linux' | ...
@@ -29,6 +30,7 @@ export function TitleBar({
   onToggleIndex?: () => void;
   indexCollapsed?: boolean;
   path?: ReactNode;
+  boardAction?: ReactNode;
   filter?: ReactNode;
 }) {
   const isMac = platform === 'macos';
@@ -64,6 +66,7 @@ export function TitleBar({
       )}
       {path}
       <div className="titlebar-actions">
+        {boardAction}
         {filter}
         {onToggleIndex && (
           <button type="button" className="titlebar-btn titlebar-menu"

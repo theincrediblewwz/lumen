@@ -7,11 +7,17 @@ import { NodeAttachment, DocumentPages } from './NodeAttachment';
 
 export type PreviewPresentation = { resourceKey: string; image: boolean; navigated: boolean; title: string; dimensions?: { width: number; height: number } };
 type PreviewResource = { key: string; title: string } & ({ summary: string } | { doc: DocRef });
+export type PreviewMemory = Map<string, { signature: string; position: PreviewPosition; counts: Partial<Record<string, number>>; navigated: boolean }>;
 type PreviewProps = {
   summary?: string | null; docs: DocRef[]; projectId: string; boardId: string; docVersions: Record<string, number>;
-  onPresentation: (value: PreviewPresentation) => void; viewKey: string;
+  onPresentation: (value: PreviewPresentation) => void; viewKey: string; memory?: PreviewMemory;
 };
-const positions = new Map<string, { signature: string; position: PreviewPosition; counts: Partial<Record<string, number>>; navigated: boolean }>();
+const positions: PreviewMemory = new Map();
+
+export function copyPreviewMemory(projectId: string, boardId: string): PreviewMemory {
+  const prefix = `${projectId}/${boardId}/`;
+  return new Map([...positions].filter(([key]) => key.startsWith(prefix)));
+}
 
 export function NodePreview({ summary, docs, onPresentation, viewKey, ...context }: PreviewProps) {
   const attachments = useMemo(() => docs.map(doc => ({ key: doc.path, title: doc.title, doc })), [docs]);
@@ -22,11 +28,11 @@ export function NodePreview({ summary, docs, onPresentation, viewKey, ...context
   </>;
 }
 
-function PreviewPager({ resources, projectId, boardId, docVersions, onPresentation, viewKey }: Omit<PreviewProps, 'summary' | 'docs' | 'onPresentation'> & {
+function PreviewPager({ resources, projectId, boardId, docVersions, onPresentation, viewKey, memory = positions }: Omit<PreviewProps, 'summary' | 'docs' | 'onPresentation'> & {
   resources: PreviewResource[];
   onPresentation?: PreviewProps['onPresentation'];
 }) {
-  const signature = resources.map(r => r.key).join('\n'), cached = positions.get(viewKey), saved = cached?.signature === signature ? cached : undefined;
+  const signature = resources.map(r => r.key).join('\n'), cached = memory.get(viewKey), saved = cached?.signature === signature ? cached : undefined;
   const [position, setPosition] = useState(saved?.position ?? { resource: 0, page: 0 }), [navigated, setNavigated] = useState(saved?.navigated ?? false);
   const counts = useRef<Partial<Record<string, number>>>({ ...saved?.counts });
   const [measuredPages, setPages] = useState(saved?.counts[resources[saved.position.resource]?.key]);
@@ -50,9 +56,9 @@ function PreviewPager({ resources, projectId, boardId, docVersions, onPresentati
     if (promoted) setNavigated(true);
   }, [signature]);
   useEffect(() => {
-    positions.delete(viewKey); positions.set(viewKey, { signature, position, counts: { ...counts.current }, navigated });
-    while (positions.size > 512) positions.delete(positions.keys().next().value!);
-  }, [viewKey, signature, position, measuredPages, navigated]);
+    memory.delete(viewKey); memory.set(viewKey, { signature, position, counts: { ...counts.current }, navigated });
+    while (memory.size > 512) memory.delete(memory.keys().next().value!);
+  }, [memory, viewKey, signature, position, measuredPages, navigated]);
   const onPages = useCallback((total: number) => { counts.current[key] = total; setPages(old => old === total ? old : total);setPosition(old=>old.page<total?old:{...old,page:total-1}); }, [key]);
   const onImageSize = useCallback((size: { width: number; height: number }) => setDimensions(old => old?.key === key && old.width === size.width && old.height === size.height ? old : { key, ...size }), [key]);
   useLayoutEffect(() => onPresentation?.({ resourceKey:key, image, navigated, title: resource.title, dimensions: dimensions?.key === key ? dimensions : undefined }), [image, navigated, resource.title, key, dimensions, onPresentation]);

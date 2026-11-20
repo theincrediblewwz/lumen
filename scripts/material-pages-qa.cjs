@@ -131,6 +131,118 @@ const base=process.env.LSQ_UI_URL||'http://127.0.0.1:5198',out=path.resolve(proc
   await page.evaluate(()=>{const s=JSON.parse(localStorage.getItem('lumen.fixture-capture'));s.documents['docs/large.md']=Array.from({length:2400},(_,i)=>`段落 ${i} `+'大文档分页保持正文完整，翻页浏览而不是裁掉后半篇。'.repeat(6)).join('\n\n')+'\n\nLARGE_DOCUMENT_END';s.boards.board.nodes=[{id:'huge',title:'大文档分页',x:100,y:140,w:480,docs:[{path:'docs/large.md',title:'完整大文档'}],created_at:'',updated_at:''}];localStorage.setItem('lumen.fixture-capture',JSON.stringify(s));});
   const started=Date.now();await page.reload({waitUntil:'domcontentloaded'});await page.waitForFunction(()=>window.__fixtureReactMounted);await page.getByText('桌面夹',{exact:true}).dblclick();await page.getByText('分页与子流程',{exact:true}).click();await card('huge').locator('[data-content-status="ready"]').waitFor();const hugePages=Number(await card('huge').locator('.node-preview').getAttribute('data-preview-pages'));assert.ok(hugePages>100);assert.ok((await card('huge').boundingBox()).height<400);assert.match(await card('huge').innerText(),/LARGE_DOCUMENT_END/);assert.equal(await card('huge').locator('.node-page-columns p').count(),2401);check('large Markdown retains every paragraph and its last marker while rendering a bounded-height first page');
   fs.writeFileSync(path.join(out,'material-large-metrics.json'),JSON.stringify({characters:(await state()).documents['docs/large.md'].length,bytes:Buffer.byteLength((await state()).documents['docs/large.md']),pages:hugePages,loadMs:Date.now()-started},null,2));
+
+  await page.evaluate(async () => {
+    const image = async (width, height, label) => {
+      const canvas = document.createElement('canvas'); canvas.width = width; canvas.height = height;
+      const ctx = canvas.getContext('2d'); ctx.fillStyle = '#f1f5f2'; ctx.fillRect(0, 0, width, height);
+      ctx.fillStyle = '#226c51'; ctx.font = `${width / 16}px sans-serif`; ctx.fillText(label, width / 18, height / 2);
+      return window.__TAURI_INTERNALS__.invoke('image_document', { projectId: 'project', boardId: 'board', expectedScope: 'synthetic-scope', base64Data: canvas.toDataURL().split(',')[1] });
+    };
+    const small = await image(320, 160, 'Step detail'), large = await image(2400, 1200, 'High-resolution step');
+    const s = JSON.parse(localStorage.getItem('lumen.fixture-capture'));
+    const reading = { path: 'docs/pages.md', title: '详细推导' };
+    const row = (id, title, x, y, extra = {}) => ({ id, title, x, y, w: 330, docs: [], created_at: '', updated_at: '', ...extra });
+    s.boards.board.nodes = [row('parent', '上级主题', 400, 40), row('sibling-a', '同层 A', 80, 240), row('sibling-c', '同层 C', 950, 240),
+      row('focus-b', '分支 B', 420, 210, { docs: [reading], flow: { nodeIds: ['focus-text', 'focus-small', 'focus-large'] } }),
+      row('focus-child', '分支下一级', 820, 460, { flow: { nodeIds: ['closed-step'] } }), row('focus-leaf', '更下一级', 970, 620),
+      row('related', '仅相关', 60, 690), row('focus-text', '步骤一的推导', 0, 0, { flowOwnerId: 'focus-b', docs: [reading] }),
+      row('focus-small', '', 0, 0, { sticker: true, imageAspect: 2, docs: [small], flowOwnerId: 'focus-b' }),
+      row('focus-large', '', 0, 0, { sticker: true, imageAspect: 2, docs: [large], flowOwnerId: 'focus-b' }),
+      row('closed-step', '后代自己的流程', 0, 0, { flowOwnerId: 'focus-child' })];
+    s.boards.board.edges = [['parent', 'sibling-a'], ['parent', 'focus-b'], ['parent', 'sibling-c'], ['focus-b', 'focus-child'],
+      ['focus-child', 'focus-leaf'], ['focus-b', 'related', false], ['focus-text', 'focus-small'], ['focus-small', 'focus-large']]
+      .map(([from, to, directed = true], i) => ({ id: `focus-edge-${i}`, from, to, directed, created_at: '', label: i === 3 ? '下一步 $\\nu^2$' : null }));
+    s.boards.board.viewport = { x: 26, y: 37, zoom: 0.85 };
+    localStorage.setItem('lumen.fixture-capture', JSON.stringify(s));
+  });
+  await page.reload({ waitUntil: 'domcontentloaded' }); await page.waitForFunction(() => window.__fixtureReactMounted);
+  await page.getByText('桌面夹', { exact: true }).dblclick(); await page.getByText('分页与子流程', { exact: true }).click();
+  const focus = page.locator('.board-branch-focus'), normal = page.locator('.board-canvas-live');
+  const enter = page.getByRole('button', { name: '开启专注视图', exact: true });
+  const exit = page.getByRole('button', { name: '退出专注视图', exact: true });
+  const inside = id => focus.locator(`[data-node-id="${id}"]`);
+  const originalPager = card('focus-b').locator('.node-preview');
+  const stepPager = normal.locator('[data-flow-step="focus-text"] .node-preview');
+  await originalPager.getByRole('button', { name: '下一页', exact: true }).click();
+  await card('focus-b').locator('.node-title').click();
+  await stepPager.getByRole('button', { name: '下一页', exact: true }).click();
+  await page.getByRole('button', { name: '已保存', exact: true }).waitFor();
+  await normal.locator('.flow-scroll').evaluate(el => { el.scrollTop = Math.min(85, el.scrollHeight - el.clientHeight); });
+  const baseline = await state();
+  const viewBefore = await normal.locator('.canvas-world').getAttribute('style');
+  const scrollBefore = await normal.locator('.flow-scroll').evaluate(el => el.scrollTop);
+  const pagesBefore = await Promise.all([originalPager, stepPager].map(pager => pager.getAttribute('data-preview-page')));
+  assert.deepEqual(pagesBefore, ['1', '1']);
+  assert.ok(scrollBefore > 0);
+  await page.screenshot({ path: path.join(out, 'focus-before.png'), animations: 'disabled' });
+  await enter.click(); await focus.waitFor();
+  assert.equal(await focus.getAttribute('data-focus-root'), 'focus-b');
+  assert.equal(await normal.evaluate(el => el.inert && getComputedStyle(el).visibility === 'hidden'), true);
+  const rootPreview = inside('focus-b').locator('.node-preview');
+  assert.equal(await rootPreview.getAttribute('data-preview-page'), '1');
+  await rootPreview.getByRole('button', { name: '下一页', exact: true }).click();
+  assert.equal(await rootPreview.getAttribute('data-preview-page'), '2');
+  await focus.locator('.edge-label-rendered .katex').waitFor();
+  const fitBranch = focus.getByRole('button', { name: '适配整个分支', exact: true });
+  await fitBranch.click();
+  await inside('focus-large').locator('img').waitFor();
+  await inside('focus-small').locator('img').waitFor();
+  await page.waitForFunction(() => {
+    const small = document.querySelector('.board-branch-focus [data-node-id="focus-small"] img');
+    const large = document.querySelector('.board-branch-focus [data-node-id="focus-large"] img');
+    return small?.naturalWidth === 320 && large?.naturalWidth === 2400 && large.offsetWidth > small.offsetWidth * 2;
+  });
+  await fitBranch.click();
+  assert.deepEqual((await focus.locator('[data-node-id]').evaluateAll(els => els.map(el => el.dataset.nodeId))).sort(),
+    ['focus-b', 'focus-child', 'focus-large', 'focus-leaf', 'focus-small', 'focus-text']);
+  assert.equal(await focus.locator('path.focus-step-line').count(), 3);
+  assert.equal(await focus.locator('path[data-from="focus-b"][data-to="focus-child"][marker-end]').count(), 1);
+  const flowStyling = await focus.evaluate(el => {
+    const marker = getComputedStyle(el.querySelector('.branch-focus-card.is-flow-step'), '::before');
+    const plain = getComputedStyle(el.querySelector('.branch-focus-card:not(.is-flow-step)'), '::before');
+    return { shadow: marker.boxShadow, offset: parseFloat(marker.left), otherMarker: plain.content,
+      stepStroke: getComputedStyle(el.querySelector('.focus-step-line')).stroke,
+      branchStroke: getComputedStyle(el.querySelector('.edge-line:not(.focus-step-line)')).stroke };
+  });
+  assert.notEqual(flowStyling.shadow, 'none'); assert.ok(flowStyling.offset < 0);
+  assert.equal(flowStyling.otherMarker, 'none'); assert.notEqual(flowStyling.stepStroke, flowStyling.branchStroke);
+  await inside('focus-child').locator('.node-title').click();
+  assert.equal(await inside('closed-step').count(), 0);
+  const dimensions = await inside('focus-large').locator('img').evaluate(el => ({ ratio: el.offsetWidth / el.offsetHeight, width: el.offsetWidth, original: el.naturalWidth }));
+  assert.ok(Math.abs(dimensions.ratio - 2) < 0.015 && dimensions.width > 900 && dimensions.original === 2400);
+  await page.screenshot({ path: path.join(out, 'focus-branch-and-flow.png'), animations: 'disabled' });
+  check('focus follows outgoing descendants and distinguishes only the selected owner’s steps with side glow, tinted arrows and proportional images');
+
+  const focusWorld = focus.locator('.canvas-world');
+  const focusFit = await focusWorld.getAttribute('style');
+  const viewport = await focus.boundingBox();
+  await page.mouse.move(viewport.x + viewport.width - 65, viewport.y + 145); await page.mouse.wheel(0, -240);
+  await page.waitForFunction(previous => document.querySelector('.board-branch-focus .canvas-world')?.getAttribute('style') !== previous, focusFit);
+  const zoomed = await focusWorld.getAttribute('style');
+  await page.mouse.move(viewport.x + viewport.width - 30, viewport.y + 36);
+  await page.mouse.down(); await page.mouse.move(viewport.x + viewport.width - 168, viewport.y + 88, { steps: 7 }); await page.mouse.up();
+  assert.notEqual(await focusWorld.getAttribute('style'), zoomed);
+  await page.keyboard.press('Backspace'); await page.keyboard.press('ArrowRight');
+  await page.evaluate(() => { const clipboardData = new DataTransfer(); clipboardData.setData('text/plain', '这里不能新增节点'); window.dispatchEvent(new ClipboardEvent('paste', { clipboardData })); });
+  await page.setViewportSize({ width: 720, height: 650 });
+  await focus.getByRole('button', { name: '回到起点', exact: true }).click();
+  const bar = await exit.boundingBox(); assert.ok(bar.x >= 0 && bar.x + bar.width <= 720);
+  await page.screenshot({ path: path.join(out, 'focus-720.png'), animations: 'disabled' });
+  await page.setViewportSize({ width: 1440, height: 960 });
+  await exit.click(); await focus.waitFor({ state: 'detached' });
+  assert.equal(await normal.locator('.canvas-world').getAttribute('style'), viewBefore);
+  assert.equal(await normal.locator('.flow-scroll').evaluate(el => el.scrollTop), scrollBefore);
+  assert.deepEqual(await Promise.all([originalPager, stepPager].map(pager => pager.getAttribute('data-preview-page'))), pagesBefore);
+  assert.equal(await card('focus-b').evaluate(el => el.classList.contains('is-selected')), true);
+  assert.deepEqual(await state(), baseline);
+  await enter.click(); await rootPreview.waitFor(); assert.equal(await rootPreview.getAttribute('data-preview-page'), '1');
+  await page.keyboard.press('Escape'); await focus.waitFor({ state: 'detached' });
+  assert.equal(await normal.locator('.canvas-world').getAttribute('style'), viewBefore);
+  assert.deepEqual(await state(), baseline);
+  await page.screenshot({ path: path.join(out, 'focus-restored.png'), animations: 'disabled' });
+  check('zoom, temporary resize and paging in focus leave the original camera, selection, steps, saved board and reading positions as they were');
+
   assert.deepEqual(errors,[]);fs.writeFileSync(path.join(out,'material-pages-report.json'),JSON.stringify({browser:'WebKit',fallback:'Browser plugin not available',pageIdentity:true,notBlank:true,noOverlay:true,checks,errors,documentPages:count,paragraphsSeen:seen.size},null,2));console.log(JSON.stringify({checks:checks.length,errors,pages:count}));
  }catch(e){await page.screenshot({path:path.join(out,'material-failure.png')});fs.writeFileSync(path.join(out,'material-failure.txt'),e.stack+'\n'+JSON.stringify(errors));throw e;}finally{await browser.close();}
 })();
