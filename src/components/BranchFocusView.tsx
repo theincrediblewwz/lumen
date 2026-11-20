@@ -172,7 +172,7 @@ export function BranchFocusView({ rootId, nodes, edges, projectId, boardId, docV
         style={{ left: point.x, top: point.y, width: Math.max(9, cell.w * zoom), height: Math.max(9, cell.h * zoom), ['--heat-color' as string]: cell.color || 'var(--accent)' }}
         onClick={() => setCamera(recenter(cell, size, Math.min(1, zoom * 2)))}>{cell.count > 1 ? cell.count : ''}</button>;
     })}</div>}
-    <div className="canvas-world" style={{ transform: viewportToTransform(viewport), transformOrigin: '0 0' }}>
+    <div className="canvas-world" style={{ transform: viewportToTransform(viewport), transformOrigin: '0 0', ['--image-pager-scale' as string]: 1 / Math.min(zoom, 1) }}>
       {cards.map(({ node, box, step }) => <div key={node.id} className={`branch-focus-card${step ? ' is-flow-step' : ''}`}
         data-focus-step={step || undefined} style={{ left: box.x, top: box.y, width: box.w, height: box.h }} onDoubleClickCapture={event => {
           if (!(event.target as HTMLElement).closest('button')) readCard(node.id);

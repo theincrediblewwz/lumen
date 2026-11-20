@@ -352,12 +352,14 @@ fn apply_at(
             path,
             title: node.title.clone(),
             bytes: Some(markdown.len() as u64),
+            image_display: None,
         }];
         if node.parent.is_none() {
             docs.push(storage::DocRef {
                 path: source_path.clone(),
                 title: format!("原始对话 · {}", import.source_name),
                 bytes: Some(import.source.len() as u64),
+                image_display: None,
             });
             if let Some(selection) = &import.selection {
                 let path = format!("docs/selection_{request}.md");
@@ -366,6 +368,7 @@ fn apply_at(
                     path,
                     title: "本次整理的轮次".into(),
                     bytes: Some(selection.len() as u64),
+                    image_display: None,
                 });
             }
         }

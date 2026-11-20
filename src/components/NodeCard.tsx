@@ -2,8 +2,11 @@ import { memo, useCallback, useEffect, useLayoutEffect, useRef, useState } from 
 import type { BoardNode } from '../api';
 import { MarkdownView } from './MarkdownView';
 import { NodePreview, type PreviewMemory, type PreviewPresentation } from './NodePreview';
-import { contentDocs, imageOnly, nodeHeading } from '../canvas/composition';
+import { contentDocs, imageDoc, nodeHeading } from '../canvas/composition';
 import { flowHighlight, materialImageSize } from '../canvas/preview';
+import { imageDisplay, type ImagePixels } from '../canvas/imageSizing';
+
+export type PreviewImage = { path: string; pixels?: ImagePixels };
 
 /** 自适应高度的文本域：随内容增减行数（修复长标题只显示尾部的问题） */
 function AutoTextarea({
@@ -94,13 +97,15 @@ export const NodeCard = memo(function NodeCard({
   onExitEdit,
   onMeasure,
   onHoverChange,
+  onImageSize,
   onResizeStart, projectId, boardId, docVersions={}, measuring=false, hideHandles=false, previewCollapsed=false, previewMemory, flowStep, imageWidthLimit,
 }: {
   projectId:string; boardId:string; docVersions?:Record<string,number>; measuring?:boolean; hideHandles?:boolean; previewCollapsed?:boolean;
   previewMemory?: PreviewMemory;
   flowStep?: boolean;
   imageWidthLimit?: number;
-  onResizeStart:(e:React.PointerEvent,id:string,corner:string)=>void;
+  onResizeStart:(e:React.PointerEvent,id:string,corner:string,image?:PreviewImage)=>void;
+  onImageSize?: (path: string, pixels: ImagePixels) => void;
   node: BoardNode;
   selected: boolean;
   flash?: boolean;
@@ -124,16 +129,30 @@ export const NodeCard = memo(function NodeCard({
   const [minimum,setMinimum]=useState({w:120,h:64});
   const [presentation,setPresentation]=useState<(PreviewPresentation&{baseWidth:number;baseHeight?:number})>();
   const nodeDimensions=useRef({w:node.w,h:node.h});nodeDimensions.current={w:node.w,h:node.h};
-  const onPresentation=useCallback((value:PreviewPresentation)=>setPresentation(old=>old?.resourceKey===value.resourceKey&&old.image===value.image&&old.navigated===value.navigated&&old.title===value.title&&old.dimensions?.width===value.dimensions?.width&&old.dimensions?.height===value.dimensions?.height?old:{...value,baseWidth:nodeDimensions.current.w,baseHeight:nodeDimensions.current.h}),[]);
+  const onPresentation = useCallback((value: PreviewPresentation) => {
+    if (value.image && value.dimensions) onImageSize?.(value.resourceKey, value.dimensions);
+    setPresentation(old => old?.resourceKey === value.resourceKey && old.image === value.image
+      && old.navigated === value.navigated && old.title === value.title
+      && old.dimensions?.width === value.dimensions?.width && old.dimensions?.height === value.dimensions?.height
+      ? old : { ...value, baseWidth: nodeDimensions.current.w, baseHeight: nodeDimensions.current.h });
+  }, [onImageSize]);
   const heading=nodeHeading(node), docs=contentDocs(node), primary=docs[0];
   const hasQuestion = !!node.summary?.trim();
-  const pureImage = !previewCollapsed && !heading.trim() && !hasQuestion && !!primary && (presentation?.image ?? imageOnly(node));
+  const activeDoc = previewCollapsed ? undefined : docs.find(doc => doc.path === presentation?.resourceKey) ?? primary;
+  const activeImage = imageDoc(activeDoc) ? activeDoc : undefined;
+  const pureImage = !heading.trim() && !hasQuestion && !!activeImage;
   const contentOnly = !heading.trim() && !hasQuestion && !!primary;
-  const automaticView=presentation?.navigated&&presentation.baseWidth===node.w&&presentation.baseHeight===node.h;
-  const adaptiveImage = imageWidthLimit !== undefined && presentation?.image;
-  const automatic=(automaticView||adaptiveImage)&&presentation?.image&&presentation.dimensions?materialImageSize(presentation.dimensions.width,presentation.dimensions.height):undefined;
-  const width=automatic&&imageWidthLimit!==undefined?Math.min(automatic.w,imageWidthLimit):automatic?.w??node.w;
-  const aspect=presentation?.image&&presentation.dimensions?presentation.dimensions.width/presentation.dimensions.height:node.imageAspect||node.w/(node.h||node.w);
+  const stored = imageDisplay(activeImage);
+  const pixels = presentation?.resourceKey === activeImage?.path ? presentation?.dimensions : undefined;
+  const imagePixels = pixels ?? (stored ? { width: stored.pixelWidth, height: stored.pixelHeight } : undefined);
+  const automaticView = presentation?.navigated && activeImage?.path !== primary?.path
+    && presentation.baseWidth === node.w && presentation.baseHeight === node.h;
+  const adaptiveImage = imageWidthLimit !== undefined && !!activeImage;
+  const automaticWidth = (automaticView || adaptiveImage) && imagePixels
+    ? materialImageSize(imagePixels.width, imagePixels.height).w : undefined;
+  const previewWidth = adaptiveImage ? automaticWidth ?? stored?.width : stored?.width ?? automaticWidth;
+  const width = previewWidth === undefined ? node.w : Math.min(previewWidth, imageWidthLimit ?? Infinity);
+  const aspect = imagePixels ? imagePixels.width / imagePixels.height : node.imageAspect || node.w / (node.h || node.w);
 
   // 测量真实布局尺寸（世界单位，不受 transform 缩放影响：offsetWidth/Height）
   useLayoutEffect(() => {
@@ -167,7 +186,7 @@ export const NodeCard = memo(function NodeCard({
         width,
         height: pureImage ? width/aspect : undefined,
         minWidth: previewCollapsed?0:minimum.w,
-        minHeight: pureImage||previewCollapsed?0:Math.max(measuring||automaticView||adaptiveImage?0:node.h??0,minimum.h),
+        minHeight: pureImage||previewCollapsed?0:Math.max(measuring||automaticView||adaptiveImage||stored&&activeImage?.path!==primary?.path?0:node.h??0,minimum.h),
         // 节点自定义颜色：既作左侧色条，又作为该卡片的强调色（选中框/锚点/光晕）。
         // 未设色时回退到主题强调色 var(--accent)。
         ['--node-accent' as string]: node.color || 'var(--accent)',
@@ -230,7 +249,7 @@ export const NodeCard = memo(function NodeCard({
       )}
 
       </div>
-      {selected&&!editing&&!measuring&&!hideHandles&&(['nw','ne','sw','se'] as const).map(corner=><span key={corner} className={`node-resize-handle corner-${corner}`} role="button" aria-label={`调整节点尺寸 ${corner}`} onPointerDown={e=>onResizeStart(e,node.id,corner)} onClick={e=>e.stopPropagation()}/>)}
+      {selected&&!editing&&!measuring&&!hideHandles&&(['nw','ne','sw','se'] as const).map(corner=><span key={corner} className={`node-resize-handle corner-${corner}`} role="button" aria-label={`调整节点尺寸 ${corner}`} onPointerDown={e=>onResizeStart(e,node.id,corner,activeImage ? { path: activeImage.path, pixels: imagePixels } : undefined)} onClick={e=>e.stopPropagation()}/>)}
       {/* 连线手柄（选中/悬停时出现，按下即拉线）：节点右侧中点，单个 */}
       {!editing&&!measuring&&!hideHandles && (
         <div className="node-anchors" aria-hidden={!showAnchors}>

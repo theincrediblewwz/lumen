@@ -71,6 +71,18 @@ pub struct DocRef {
     pub title: String,
     #[serde(default)]
     pub bytes: Option<u64>,
+    #[serde(rename = "imageDisplay", default, skip_serializing_if = "Option::is_none")]
+    pub image_display: Option<ImageDisplay>,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct ImageDisplay {
+    pub width: f64,
+    pub pixel_width: u32,
+    pub pixel_height: u32,
+    #[serde(default)]
+    pub resized: bool,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -480,6 +492,7 @@ pub fn list_docs(root: &Path, project_id: &str, board_id: &str) -> Result<Vec<Do
             path: format!("docs/{fname}"),
             title,
             bytes,
+            image_display: None,
         });
     }
     out.sort_by(|a, b| a.title.to_lowercase().cmp(&b.title.to_lowercase()));
@@ -531,6 +544,7 @@ pub fn import_doc(
         path: format!("docs/{fname}"),
         title: stem,
         bytes,
+        image_display: None,
     })
 }
 
@@ -574,6 +588,7 @@ pub fn write_doc(
         path: format!("docs/{fname}"),
         title: safe_stem,
         bytes,
+        image_display: None,
     })
 }
 
@@ -1187,11 +1202,25 @@ mod tests {
             y: 160.0,
             w: default_node_w(),
             color: None,
-            docs: vec![DocRef {
-                path: "docs/n1-elbo.md".into(),
-                title: "GPT 回答".into(),
-                bytes: Some(1024),
-            }],
+            docs: vec![
+                DocRef {
+                    path: "docs/n1-elbo.md".into(),
+                    title: "GPT 回答".into(),
+                    bytes: Some(1024),
+                    image_display: None,
+                },
+                DocRef {
+                    path: "docs/sticker_1a.md".into(),
+                    title: "推导贴图".into(),
+                    bytes: None,
+                    image_display: Some(ImageDisplay {
+                        width: 660.0,
+                        pixel_width: 1200,
+                        pixel_height: 600,
+                        resized: true,
+                    }),
+                },
+            ],
             created_at: now_iso(),
             updated_at: now_iso(),
         });
@@ -1202,6 +1231,10 @@ mod tests {
         assert_eq!(reread.nodes.len(), 1);
         assert_eq!(reread.nodes[0].title, "什么是 ELBO？");
         assert_eq!(reread.nodes[0].docs[0].path, "docs/n1-elbo.md");
+        assert!(reread.nodes[0].docs[0].image_display.is_none());
+        let display = reread.nodes[0].docs[1].image_display.as_ref().unwrap();
+        assert_eq!((display.width, display.pixel_width, display.pixel_height), (660.0, 1200, 600));
+        assert!(display.resized);
 
         fs::remove_dir_all(&root).ok();
     }

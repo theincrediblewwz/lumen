@@ -243,6 +243,125 @@ const base=process.env.LSQ_UI_URL||'http://127.0.0.1:5198',out=path.resolve(proc
   await page.screenshot({ path: path.join(out, 'focus-restored.png'), animations: 'disabled' });
   check('zoom, temporary resize and paging in focus leave the original camera, selection, steps, saved board and reading positions as they were');
 
+  await page.evaluate(() => {
+    const s = JSON.parse(localStorage.getItem('lumen.fixture-capture'));
+    const board = s.boards.board;
+    const small = board.nodes.find(node => node.id === 'focus-small').docs[0];
+    const large = board.nodes.find(node => node.id === 'focus-large').docs[0];
+    const make = (id, title, x, y, w, docs) => ({ id, title, x, y, w, docs, created_at: '', updated_at: '' });
+    board.nodes = [
+      { ...make('photos', '', 140, 280, 160, [small]), h: 80, sticker: true, imageAspect: 2 },
+      make('legacy', '离屏旧贴图', 4500, 340, 1440, [large]),
+      make('captioned', '带标题的贴图', 780, 290, 320, []),
+    ];
+    board.edges = [];
+    board.viewport = { x: 0, y: 0, zoom: 0.46 };
+    localStorage.setItem('lumen.fixture-capture', JSON.stringify(s));
+  });
+  const openMaterialsBoard = async () => {
+    await page.reload({ waitUntil: 'domcontentloaded' });
+    await page.waitForFunction(() => window.__fixtureReactMounted);
+    await page.getByText('桌面夹', { exact: true }).dblclick();
+    await page.getByText('分页与子流程', { exact: true }).click();
+  };
+  await openMaterialsBoard();
+  const pastePhoto = (width, height, color, intoPanel = true) => page.evaluate(({ width, height, color, intoPanel }) => {
+    const canvas = document.createElement('canvas'); canvas.width = width; canvas.height = height;
+    const ctx = canvas.getContext('2d'); ctx.fillStyle = color; ctx.fillRect(0, 0, width, height);
+    const bytes = Uint8Array.from(atob(canvas.toDataURL().split(',')[1]), value => value.charCodeAt(0));
+    const data = new DataTransfer(); data.items.add(new File([bytes], 'synthetic-image.png', { type: 'image/png' }));
+    (intoPanel ? document.querySelector('.np-title') : window).dispatchEvent(new ClipboardEvent('paste', { clipboardData: data, bubbles: true, cancelable: true }));
+  }, { width, height, color, intoPanel });
+  const photos = card('photos'), captioned = card('captioned');
+  const photoNext = photos.getByRole('button', { name: '下一个素材', exact: true });
+  const photoPrev = photos.getByRole('button', { name: '上一个素材', exact: true });
+  const notice = page.locator('.document-import-status');
+  const savedBoard = () => page.getByRole('button', { name: '已保存', exact: true }).waitFor();
+  const closePanel = () => page.locator('.np-close').click();
+  const waitPixels = (id, width) => page.waitForFunction(({ id, width }) => document.querySelector(`.canvas-world>[data-node-id="${id}"] .sticker-image`)?.naturalWidth === width, { id, width });
+  const imageWidth = node => node.locator('.sticker-image').evaluate(el => el.offsetWidth);
+
+  await waitPixels('photos', 320);
+  assert.equal(await photoNext.count(), 0);
+  await photos.click();
+  await pastePhoto(1000, 500, '#2f7c63');
+  await photoNext.waitFor();
+  await closePanel();
+  const viewportWidth = (await photoNext.boundingBox()).width;
+  assert.ok(viewportWidth >= 23, `pager target at 46% must be usable, got ${viewportWidth}px`);
+  assert.equal(await photoPrev.count(), 0);
+  await photoNext.click();
+  await waitPixels('photos', 1000);
+  assert.equal(await imageWidth(photos), 550);
+  assert.equal(await photos.locator('.node-preview-material-number').textContent(), '2');
+  assert.equal(await photoNext.count(), 0);
+  assert.equal(await page.locator('.node-panel').count(), 0);
+  await page.screenshot({ path: path.join(out, 'two-images-46-percent.png') });
+  await photoPrev.click(); await waitPixels('photos', 320);
+  assert.equal(await imageWidth(photos), 160);
+  check('a second attachment adds a full-size material button at 46% zoom and both directions load the correct aspect-preserving picture');
+
+  await captioned.click();
+  await pastePhoto(800, 400, '#297d92');
+  await notice.getByText('已挂载图片', { exact: true }).waitFor();
+  await waitPixels('captioned', 800);
+  assert.ok(Math.abs(await imageWidth(captioned) - 440) <= 2);
+  await page.evaluate(() => {
+    window.__imageNoticeFaded = false;
+    const observer = new MutationObserver(() => {
+      if (document.querySelector('.document-import-status.is-fading')) {
+        window.__imageNoticeFaded = true;
+        observer.disconnect();
+      }
+    });
+    observer.observe(document.querySelector('.board-canvas-live'), { childList: true, subtree: true, attributes: true, attributeFilter: ['class'] });
+  });
+  await page.waitForTimeout(1000);
+  await pastePhoto(960, 300, '#72588b');
+  await page.waitForFunction(() => document.querySelectorAll('[data-node-id="captioned"] .node-preview-next').length === 1);
+  await page.waitForTimeout(2150);
+  assert.equal(await notice.getByText('已挂载图片', { exact: true }).count(), 1);
+  await page.waitForFunction(() => window.__imageNoticeFaded);
+  await notice.waitFor({ state: 'detached' });
+  await closePanel();
+  await captioned.getByRole('button', { name: '下一个素材', exact: true }).click();
+  await waitPixels('captioned', 960);
+  assert.ok(Math.abs(await imageWidth(captioned) - 528) <= 2);
+  check('titled nodes show both image attachments and repeated successes each receive their own three-second fade-out');
+
+  await photoNext.click(); await waitPixels('photos', 1000);
+  await photos.click(); await closePanel();
+  await photos.hover();
+  const resizeHandle = photos.locator('.node-resize-handle.corner-se');
+  await resizeHandle.hover();
+  const corner = await resizeHandle.boundingBox();
+  await page.mouse.move(corner.x + corner.width / 2, corner.y + corner.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(corner.x + corner.width / 2 + 46, corner.y + corner.height / 2 + 23, { steps: 6 });
+  await page.mouse.up();
+  await savedBoard();
+  const resized = (await state()).boards.board.nodes.find(node => node.id === 'photos').docs[1].imageDisplay;
+  assert.ok(resized.resized && Math.abs(resized.width - 650) <= 2);
+  await page.mouse.click(1000, 610);
+  await pastePhoto(1200, 600, '#c4a274', false);
+  await notice.getByText('已插入贴图', { exact: true }).waitFor();
+  await savedBoard();
+  const added = (await state()).boards.board.nodes.find(node => node.docs[0]?.imageDisplay?.pixelWidth === 1200);
+  assert.equal(added.w, 660);
+  assert.equal(added.h, 330);
+  await openMaterialsBoard();
+  await waitPixels(added.id, 1200);
+  assert.equal(await imageWidth(card(added.id)), 660);
+  assert.ok(await page.evaluate(() => Object.keys(localStorage).some(key => key.startsWith('lumen.image-sizing.v1.') && JSON.parse(localStorage.getItem(key)).ratio === 0.55)));
+  await page.evaluate(() => { const now = Date.now.bind(Date); Date.now = () => now() + 61_000; });
+  await captioned.click();
+  await pastePhoto(600, 300, '#2f4f68');
+  await notice.getByText('已挂载图片', { exact: true }).waitFor();
+  await savedBoard();
+  const latest = (await state()).boards.board.nodes.find(node => node.id === 'captioned').docs.at(-1).imageDisplay;
+  assert.ok(Math.abs(latest.width - (0.5 + 0.6 + resized.width / 1000) / 3 * 600) < 1);
+  check('legacy sizes seed a board average, manual resize persists per attachment, and the next periodic refresh ignores automatic placements');
+
   assert.deepEqual(errors,[]);fs.writeFileSync(path.join(out,'material-pages-report.json'),JSON.stringify({browser:'WebKit',fallback:'Browser plugin not available',pageIdentity:true,notBlank:true,noOverlay:true,checks,errors,documentPages:count,paragraphsSeen:seen.size},null,2));console.log(JSON.stringify({checks:checks.length,errors,pages:count}));
  }catch(e){await page.screenshot({path:path.join(out,'material-failure.png')});fs.writeFileSync(path.join(out,'material-failure.txt'),e.stack+'\n'+JSON.stringify(errors));throw e;}finally{await browser.close();}
 })();

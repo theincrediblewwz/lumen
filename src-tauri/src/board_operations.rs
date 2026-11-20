@@ -643,6 +643,7 @@ fn append(
         path,
         title: title.trim().into(),
         bytes: Some(markdown.len() as u64),
+        image_display: None,
     });
     node.updated_at = storage::now_iso();
     *docs += 1;

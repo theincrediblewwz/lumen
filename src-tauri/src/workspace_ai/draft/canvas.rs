@@ -391,6 +391,15 @@ fn update_node(node: &mut BoardNode, fields: NodeFields) -> Result<(), String> {
         range(height, 64.0, 4000.0, "高")?;
         node.extra.insert("h".into(), json!(height));
     }
+    if fields.width.is_some() || (aspect.is_some() && fields.height.is_some()) {
+        let question = question_path(&node.id);
+        if let Some(display) = node.docs.iter_mut().find(|doc| doc.path != question)
+            .and_then(|doc| doc.image_display.as_mut())
+        {
+            display.width = node.w;
+            display.resized = true;
+        }
+    }
     if let Some(color) = fields.color {
         if !color.is_empty()
             && (color.len() != 7

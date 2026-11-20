@@ -43,7 +43,7 @@ function PreviewPager({ resources, projectId, boardId, docVersions, onPresentati
   const [dimensions, setDimensions] = useState<{ key: string; width: number; height: number }>();
   const key = resource.key, image = 'doc' in resource && imageDoc(resource.doc);
   const previousSignature = useRef(signature);
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (previousSignature.current === signature) return;
     const oldKeys = previousSignature.current.split('\n');
     const current = oldKeys[position.resource], primary = resources[0].key;
@@ -76,7 +76,7 @@ function PreviewPager({ resources, projectId, boardId, docVersions, onPresentati
   const hasPager = resources.length > 1 || pages > 1;
   const turn = (direction: -1 | 1) => {
     if (direction > 0 ? !canGoForward : !canGoBack) return;
-    const pageCounts = resources.map(r => counts.current[r.key] ?? 1);
+    const pageCounts = resources.map(r => 'doc' in r && imageDoc(r.doc) ? 1 : counts.current[r.key] ?? 1);
     const next = stepPreview(position, pageCounts, direction);
     if (next.resource === position.resource && next.page === position.page) return;
     if (!next.resource && !next.page && document.activeElement === previousButton.current) restoreFocus.current = 1;

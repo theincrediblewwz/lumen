@@ -944,6 +944,7 @@ export default function App() {
           <BoardCanvas
             key={`${activeBoard.id}:${boardGeneration}`}
             board={activeBoard}
+            scope={canvasScope || root || ''}
             focusSlot={boardActionSlot} onBranchFocusChange={setBranchFocusActive}
             onChange={onCanvasChange} onFlush={flushBoards} saveState={saveState}
             guessMath={settings.guessMath}

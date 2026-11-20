@@ -26,6 +26,7 @@ export type DocRef = {
   path: string; // 相对白板文件夹
   title: string;
   bytes?: number | null;
+  imageDisplay?: import('./canvas/imageSizing').ImageDisplay;
 };
 
 export type BoardNode = {

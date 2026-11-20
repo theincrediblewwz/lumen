@@ -5,7 +5,9 @@
 
 ## 当前版本
 
-[0.4.2 源码预览](https://github.com/theincrediblewwz/lumen/releases/tag/mac-v0.4.2) · [下载 Mac 0.4.0 安装包](https://github.com/theincrediblewwz/lumen/releases/tag/mac-v0.4.0) · [白板编辑与保存](./docs/CANVAS_AUTHORING.md)
+[0.4.3 源码预览](https://github.com/theincrediblewwz/lumen/releases/tag/mac-v0.4.3) · [下载 Mac 0.4.0 安装包](https://github.com/theincrediblewwz/lumen/releases/tag/mac-v0.4.0) · [白板编辑与保存](./docs/CANVAS_AUTHORING.md)
+
+**0.4.3 贴图预览。** 同一节点的多张图可用双箭头切换，缩小白板时也容易点到。挂载成功提示在约三秒后淡出。新贴图按当前白板已有图片的显示比例等比放置。 [素材预览](./docs/MATERIAL_PREVIEWS.md)
 
 **0.4.2 专注视图。** 选中一个白板节点，右上角可进入专注视图，只查看它沿有向箭头衍生的分支。起点挂载的流程以青蓝荧光标记，步骤大图等比展示。退出后恢复原来的布局、缩放和阅读位置。[专注视图使用说明](./docs/MATERIAL_PREVIEWS.md#专注视图)
 

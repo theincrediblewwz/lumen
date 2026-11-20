@@ -2851,7 +2851,28 @@ html.motion-off .edge-line { animation: none; }
   font-weight:750;
   line-height:1;
 }
-.node-preview.is-image .node-preview-progress {border-radius:6px;background:var(--bg-node);box-shadow:var(--shadow-node);}
+.node-preview.is-image {
+  --image-control-edge: min(4px, calc(50% - 52px * var(--image-pager-scale, 1)));
+}
+.node-preview.is-image .node-preview-turn {
+  transform: scale(var(--image-pager-scale, 1));
+  box-shadow: 0 1px 5px rgb(0 0 0 / 20%);
+}
+.node-preview.is-image .node-preview-previous {
+  left: var(--image-control-edge);
+  transform-origin: bottom left;
+}
+.node-preview.is-image .node-preview-next {
+  right: var(--image-control-edge);
+  transform-origin: bottom right;
+}
+.node-preview.is-image .node-preview-progress {
+  border-radius: 6px;
+  background: var(--bg-node);
+  box-shadow: 0 1px 5px rgb(0 0 0 / 16%);
+  transform: translateX(-50%) scale(var(--image-pager-scale, 1));
+  transform-origin: bottom center;
+}
 .node-pdf-page canvas {display:block;width:100%;height:auto;}
 .flow-step>.node-card.is-sticker {height:auto!important;min-height:0!important;}
 .flow-step>.node-card.is-sticker .node-card-content,.flow-step>.node-card.is-sticker .node-primary-image,.flow-step>.node-card.is-sticker .node-preview {height:auto;}

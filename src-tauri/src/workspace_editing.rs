@@ -55,7 +55,7 @@ pub(crate) fn prepare_questions(root: &Path, board: &mut storage::BoardFile, ori
                 }
             }else{files.insert(format!("{p}/{b}/{path}"),content.as_bytes().to_vec());}
         }
-        let reference=storage::DocRef{path:path.clone(),title:"完整问题".into(),bytes:Some(content.len() as u64)};
+        let reference=storage::DocRef{path:path.clone(),title:"完整问题".into(),bytes:Some(content.len() as u64),image_display:None};
         if let Some(old)=node.docs.iter_mut().find(|d|d.path==path){*old=reference;}else{node.docs.push(reference);}
     }
     Ok((files, changed_questions))

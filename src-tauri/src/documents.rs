@@ -221,7 +221,7 @@ pub fn prepare_image(bytes:Vec<u8>,title:String)->Result<Prepared,String>{
     let meta=Metadata{schema:"lumen-document/v1".into(),kind:"markdown_bundle".into(),original,images:BTreeMap::from([(alias,image)]),pages:0,extraction:"ready".into()};
     let content=format!("{PREFIX}{}{END}{body}",serde_json::to_string(&meta).map_err(err)?);split(&content)?;
     let path=format!("docs/sticker_{digest}.md");let size=content.len() as u64;files.insert(path.clone(),content.into_bytes());
-    Ok(Prepared{reference:storage::DocRef{path,title,bytes:Some(size)},files})
+    Ok(Prepared{reference:storage::DocRef{path,title,bytes:Some(size),image_display:None},files})
 }
 pub fn unzip(bytes: &[u8]) -> Result<BTreeMap<String, Vec<u8>>, String> {
     unzip_limit(bytes, LIMIT, 512)
@@ -408,6 +408,7 @@ pub fn prepare(
             path,
             title,
             bytes: Some(bytes),
+            image_display: None,
         },
         files,
     })

@@ -497,6 +497,9 @@
 .document-import-status { position:absolute; z-index:30; left:50%; bottom:68px; transform:translateX(-50%); max-width:min(680px,90%); display:flex; align-items:center; gap:12px; padding:12px 16px; background:var(--panel,#fff); border:1px solid var(--line,#dbe6e0); border-radius:16px; box-shadow:0 6px 24px #00000010; font-size:12px; }
 .document-import-status span { white-space:pre-wrap; overflow-wrap:anywhere; }
 .document-import-status button { flex:none; }
+.document-import-status.is-fading { opacity:0; transition:opacity 220ms ease-out; pointer-events:none; }
+html.motion-off .document-import-status.is-fading { transition:none; }
+@media(prefers-reduced-motion:reduce) { .document-import-status.is-fading { transition:none; } }
 .doc-card-pdf { display:flex; flex-direction:column; align-items:center; justify-content:center; height:100%; color:var(--muted,#65756e); }
 .doc-card-pdf span { border:1px solid var(--line,#dbe6e0); border-radius:9px; padding:10px 13px; font-size:16px; letter-spacing:2px; }
 .doc-card-pdf p { font-size:11px; }

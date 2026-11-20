@@ -26,17 +26,18 @@ import { api, type DocRef } from '../api';
 import { invoke } from '@tauri-apps/api/core';
 import { open } from '@tauri-apps/plugin-dialog';
 import { loadWritePolicy } from '../ai/boardOperations';
-import { MIN_BOARD_ZOOM, boardAppearance, FONT_FAMILIES, heatLevel, aggregateHeat, intersects, snapConnection, resizedBox, resizedImageBox, imageDisplaySize, questionPath, type BoardAppearance } from '../canvas/presentation';
+import { MIN_BOARD_ZOOM, boardAppearance, FONT_FAMILIES, heatLevel, aggregateHeat, intersects, snapConnection, resizedBox, resizedImageBox, questionPath, type BoardAppearance } from '../canvas/presentation';
+import { boardImageSizing, imageDisplayAt, type ImagePixels } from '../canvas/imageSizing';
 import { DocumentEditor } from './DocumentEditor';
 import { QuestionEditor } from './QuestionEditor';
 import { BoardAppearancePanel } from './BoardAppearancePanel';
-import { NodeCard } from './NodeCard';
+import { NodeCard, type PreviewImage } from './NodeCard';
 import { NodePanel } from './NodePanel';
 import { NodeTooltip } from './NodeTooltip';
 import { EdgeLabel } from './EdgeLabel';
 import { FlowPanel } from './FlowPanel';
 import { BranchFocusView } from './BranchFocusView';
-import { imageDoc, imageOnly, clipboardText, nonemptyNode, flowNodes, orderFlow, topLevelNodes } from '../canvas/composition';
+import { contentDocs, imageDoc, imageOnly, clipboardText, nonemptyNode, flowNodes, orderFlow, topLevelNodes } from '../canvas/composition';
 import { measureNodes } from '../canvas/measureNodes';
 import { flowHighlight } from '../canvas/preview';
 import { ContextMenu, type ContextMenuState } from './ContextMenu';
@@ -55,6 +56,8 @@ function newEdgeId(): string {
 const DEFAULT_NODE_W = 240;
 /** 未测得真实高度前的兜底高度（首帧连线用） */
 const FALLBACK_NODE_H = 64;
+const IMAGE_FILE = /\.(png|jpe?g|gif|webp)$/i;
+type DocumentNotice = { text: string; autoDismiss: boolean; fading?: boolean };
 
 /**
  * BoardCanvas（M2 + M3）：白板画布
@@ -65,7 +68,7 @@ const FALLBACK_NODE_H = 64;
  * - 命令栈：以上结构变更均可撤销/重做（Ctrl+Z / Ctrl+Shift+Z / Ctrl+Y）
  */
 export function BoardCanvas({
-  board,
+  board, scope,
   onChange, onFlush, saveState,
   guessMath = false,
   focusNode = null,
@@ -75,6 +78,7 @@ export function BoardCanvas({
 }: {
   onFlush:()=>Promise<void>; saveState:'saved'|'dirty'|'saving'|'error';
   board: BoardFile;
+  scope: string;
   onChange: (nodes: BoardNode[], edges: BoardEdge[], viewport: Viewport, appearance?:BoardAppearance) => void;
   guessMath?: boolean;
   /** AI 引用跳转目标（M5-6）：居中并闪烁高亮该节点。nonce 变化即重新触发。 */
@@ -118,6 +122,8 @@ export function BoardCanvas({
   );
   const nodes = history.present.nodes;
   const edges = history.present.edges;
+  const imageSizing = useMemo(() => boardImageSizing(scope, board.projectId, board.id,
+    path => stickerDimensions(board.projectId, board.id, path)), [scope, board.projectId, board.id]);
   const matches = useMemo(() => {
     if (!tagFilter.size) return null;
     const matched = new Set<string>();
@@ -182,7 +188,18 @@ export function BoardCanvas({
   const [dropTargetId, setDropTargetId] = useState<string | null>(null);
   /** 正在处理拖入导入（防重入 + 显示忙碌） */
   const [dropBusy, setDropBusy] = useState(false);
-  const[documentStatus,setDocumentStatus]=useState('');
+  const [notice, setNotice] = useState<DocumentNotice | null>(null);
+  const setDocumentStatus = useCallback((text: string, autoDismiss = false) => {
+    setNotice(text ? { text, autoDismiss } : null);
+  }, []);
+  const documentStatus = notice?.text;
+  useEffect(() => {
+    if (!notice?.autoDismiss || dropBusy) return;
+    const timer = window.setTimeout(() => {
+      setNotice(current => current !== notice ? current : notice.fading ? null : { ...notice, fading: true });
+    }, notice.fading ? 220 : 3000);
+    return () => window.clearTimeout(timer);
+  }, [notice, dropBusy]);
   const documentImport=useRef<AbortController|null>(null);
   const imageJobs=useRef(0);
   const mounted=useRef(true);
@@ -630,7 +647,7 @@ export function BoardCanvas({
     | null
     | { kind: 'pan'; startX: number; startY: number; vx: number; vy: number; moved: boolean }
     | { kind: 'node'; id: string; pointerId:number;startX:number;startY:number;zoom:number; moved: boolean; baseline: Graph; positions:Map<string,{x:number;y:number}>;group:boolean }
-    | { kind: 'resize'; id:string; pointerId:number; startX:number;startY:number;zoom:number;corner:string;box:Box;baseline:Graph;image:boolean }
+    | { kind: 'resize'; id:string; pointerId:number; startX:number;startY:number;zoom:number;corner:string;box:Box;baseline:Graph;sticker:boolean;image?:PreviewImage;primary:boolean }
     | { kind: 'connect'; fromId: string }
   >(null);
   const blankClickTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -707,18 +724,37 @@ export function BoardCanvas({
     (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
   };
 
-  const onResizeStart=(e:React.PointerEvent,id:string,corner:string)=>{
+  const onResizeStart=(e:React.PointerEvent,id:string,corner:string,image?:PreviewImage)=>{
     if(e.button!==0||mutationsBlocked()||drag.current)return;e.preventDefault();e.stopPropagation();if(blankClickTimer.current)clearTimeout(blankClickTimer.current);
     const node=graphRef.current.nodes.find(n=>n.id===id);if(!node)return;
     setSelected(id);suppressClick.current=true;
-    drag.current={kind:'resize',id,corner,pointerId:e.pointerId,startX:e.clientX,startY:e.clientY,zoom:engine.viewport.zoom,box:boxOf(node),baseline:historyRef.current.present,image:!!e.currentTarget.closest('.node-card')?.classList.contains('is-sticker')};
+    const sticker = !!e.currentTarget.closest('.node-card')?.classList.contains('is-sticker');
+    drag.current={kind:'resize',id,corner,pointerId:e.pointerId,startX:e.clientX,startY:e.clientY,zoom:engine.viewport.zoom,box:boxOf(node),baseline:historyRef.current.present,sticker,image,primary:image?.path===contentDocs(node)[0]?.path};
     wrapRef.current?.setPointerCapture(e.pointerId);setDraggingNodes(true);
   };
   const previewResize=(d:Extract<NonNullable<typeof drag.current>,{kind:'resize'}>,e:{clientX:number;clientY:number})=>{
-    const isImage=d.image;
-    let box=(isImage?resizedImageBox:resizedBox)(d.box,d.corner,(e.clientX-d.startX)/d.zoom,(e.clientY-d.startY)/d.zoom);
-    if(!isImage){const min=minimumRef.current[d.id]??{w:120,h:64},w=Math.max(box.w,min.w),h=Math.max(box.h,min.h);box={x:d.corner.includes('w')?d.box.x+d.box.w-w:box.x,y:d.corner.includes('n')?d.box.y+d.box.h-h:box.y,w,h};}
-    const graph={...historyRef.current.present,nodes:historyRef.current.present.nodes.map(n=>n.id===d.id?{...n,...box}:n)};
+    if (Math.hypot(e.clientX - d.startX, e.clientY - d.startY) < 1) {
+      if (historyRef.current.present !== d.baseline) {
+        const next = replacePresent(historyRef.current, d.baseline);
+        historyRef.current = next; graphRef.current = d.baseline; setHistory(next);
+      }
+      return;
+    }
+    let box=(d.sticker?resizedImageBox:resizedBox)(d.box,d.corner,(e.clientX-d.startX)/d.zoom,(e.clientY-d.startY)/d.zoom);
+    if(!d.sticker){const min=minimumRef.current[d.id]??{w:120,h:64},w=Math.max(box.w,min.w),h=Math.max(box.h,min.h);box={x:d.corner.includes('w')?d.box.x+d.box.w-w:box.x,y:d.corner.includes('n')?d.box.y+d.box.h-h:box.y,w,h};}
+    const original = d.baseline.nodes.find(node => node.id === d.id);
+    const image = d.image;
+    const current = historyRef.current.present;
+    const graph = { ...current, nodes: current.nodes.map(node => {
+      if (node.id !== d.id || !original) return node;
+      const position = image?.pixels && !d.primary ? { x: box.x, y: box.y } : box;
+      if (!image?.pixels) return { ...node, ...position };
+      const resized = Math.abs(box.w - d.box.w) > 0.5;
+      const originalDisplay = original.docs.find(doc => doc.path === image.path)?.imageDisplay;
+      const display = resized ? imageDisplayAt(box.w, image.pixels, true) : originalDisplay;
+      const docs = node.docs.map(doc => doc.path === image.path ? { ...doc, imageDisplay: display } : doc);
+      return { ...node, ...position, docs };
+    }) };
     const next=replacePresent(historyRef.current,graph);historyRef.current=next;graphRef.current=graph;setHistory(next);
   };
   /* ── 锚点按下：开始拉连线 ──
@@ -823,7 +859,10 @@ export function BoardCanvas({
       }
     } else if(d.kind==='resize'){
       if(e.type==='pointercancel'){drag.current=d;cancelNodeDrag();return;}
-      previewResize(d,e);const next=commitFromBaseline(historyRef.current,d.baseline);historyRef.current=next;graphRef.current=next.present;setHistory(next);setDraggingNodes(false);suppressClick.current=true;onChange(next.present.nodes,next.present.edges,engine.viewport);
+      previewResize(d,e);setDraggingNodes(false);suppressClick.current=true;
+      if (historyRef.current.present !== d.baseline) {
+        const next=commitFromBaseline(historyRef.current,d.baseline);historyRef.current=next;graphRef.current=next.present;setHistory(next);onChange(next.present.nodes,next.present.edges,engine.viewport);
+      }
     } else if (d.kind === 'node') {
       if(e.type==='pointercancel'){drag.current=d;cancelNodeDrag();return;}
       previewNodeDrag(d,e);setDraggingNodes(false);
@@ -994,17 +1033,39 @@ export function BoardCanvas({
     const controller=new AbortController();documentImport.current=controller;setDropBusy(true);
     let count=0;
     const failed: string[] = [];
-    try{for (const p of paths) {
-      if(controller.signal.aborted)break;
-      try {
-        const next=await attachDocument(board,nodeId,p,text=>mounted.current&&setDocumentStatus(text),controller.signal);
-        if(mounted.current&&documentBoard.current===`${board.projectId}/${board.id}`){apply({nodes:next.nodes,edges:next.edges});count++;}
-      } catch (err) {
-        console.error('导入文档失败：', p, err);
-        failed.push(`${p.split(/[\\/]/).pop()}：${String(err)}`);
+    try {
+      for (const p of paths) {
+        if (controller.signal.aborted) break;
+        try {
+          if (IMAGE_FILE.test(p)) {
+            setDocumentStatus('正在保存贴图…');
+            const policy = await loadWritePolicy();
+            const doc = await invoke<DocRef>('document_import', { projectId: board.projectId, boardId: board.id, srcPath: p, expectedScope: policy.scope });
+            const pixels = await stickerDimensions(board.projectId, board.id, doc.path);
+            if (await mountResource(doc, nodeId, pastePoint(), pixels, null, undefined, controller.signal)) count++;
+          } else {
+            const next = await attachDocument(board, nodeId, p, text => mounted.current && setDocumentStatus(text), controller.signal);
+            if (mounted.current && documentBoard.current === `${board.projectId}/${board.id}`) {
+              apply({ nodes: next.nodes, edges: next.edges });
+              count++;
+            }
+          }
+        } catch (err) {
+          console.error('导入文档失败：', p, err);
+          failed.push(`${p.split(/[\\/]/).pop()}：${String(err)}`);
+        }
       }
-    }if(mounted.current)setDocumentStatus(failed.length?failed.join('\n'):controller.signal.aborted?'已停止，已完成的文档保留':`已挂载 ${count} 篇文档`);return count;
-    }finally{documentImport.current=null;if(mounted.current)setDropBusy(false);}
+      if (mounted.current) {
+        if (failed.length) setDocumentStatus(failed.join('\n'));
+        else if (controller.signal.aborted) setDocumentStatus('已停止，已完成的文档保留');
+        else if (paths.every(path => IMAGE_FILE.test(path))) setDocumentStatus('已挂载图片', true);
+        else setDocumentStatus(`已挂载 ${count} 篇文档`);
+      }
+      return count;
+    } finally {
+      documentImport.current = null;
+      if (mounted.current) setDropBusy(imageJobs.current > 0);
+    }
   };
 
   const importDocs = async (nodeId: string) => {
@@ -1025,16 +1086,11 @@ export function BoardCanvas({
       alert('可以拖入 Markdown、PDF 或 Markdown 图片 ZIP。');
       return;
     }
-    setDropBusy(true);
-    try {
-      const n = await importPathsToNode(nodeId, mdPaths);
-      if (n > 0) {
-        setSelected(nodeId);
-        setFlashId(nodeId);
-        window.setTimeout(() => setFlashId(null), 1200);
-      }
-    } finally {
-      setDropBusy(false);
+    const n = await importPathsToNode(nodeId, mdPaths);
+    if (n > 0 && mounted.current) {
+      setSelected(nodeId);
+      setFlashId(nodeId);
+      window.setTimeout(() => setFlashId(null), 1200);
     }
   };
   importDroppedRef.current = importDroppedToNode;
@@ -1053,12 +1109,28 @@ export function BoardCanvas({
   const stickerImport=useRef<(path?:string,file?:File,point?:{x:number;y:number},target?:string|null,flow?:string|null)=>Promise<void>>(async()=>{});
   const importBlank=useRef<(paths:string[],point:{x:number;y:number},flow?:string|null)=>Promise<void>>(async()=>{});
   const textPaste=useRef<(text:string,target:string|null,flow:string|null)=>Promise<void>>(async()=>{});
-  const mountResource=(doc:DocRef,target:string|null,point:{x:number;y:number},dimensions?:{width:number;height:number},flowId?:string|null,title?:string)=>{
-    const g=graphRef.current,existing=target?g.nodes.find(n=>n.id===target):undefined;
-    if(existing){apply({nodes:g.nodes.map(n=>n.id===target?{...n,docs:[...n.docs.filter(d=>d.path!==doc.path),doc]}:n),edges:g.edges});return;}
-    const now=new Date().toISOString(),isImage=!!dimensions,size=dimensions?imageDisplaySize(dimensions.width,dimensions.height):{w:420,h:undefined};
-    const n:BoardNode={id:newNodeId(),title:isImage?'':title??doc.title,x:point.x-size.w/2,y:point.y-(size.h??80)/2,...size,sticker:isImage,imageAspect:dimensions?dimensions.width/dimensions.height:undefined,docs:[doc],flowOwnerId:flowId??undefined,created_at:now,updated_at:now};
+  const mountResource = async (doc: DocRef, target: string | null, point: { x: number; y: number }, pixels?: ImagePixels, flowId?: string | null, title?: string, signal?: AbortSignal) => {
+    if (!mounted.current || signal?.aborted) return false;
+    const display = pixels ? await imageSizing.suggest(graphRef.current.nodes, pixels, !!target) : undefined;
+    if (!mounted.current || signal?.aborted) return false;
+    if (syncMutationLock.current) throw Error('白板正在同步，请稍后再试');
+    if (drag.current?.kind === 'resize') cancelNodeDrag();
+    const g = graphRef.current;
+    const reference = display ? { ...doc, imageDisplay: display } : doc;
+    if (target) {
+      const existing = g.nodes.find(node => node.id === target);
+      if (!existing) throw Error('目标节点已不存在');
+      if (existing.docs.some(attached => attached.path === doc.path)) return false;
+      const docs = [...existing.docs, reference];
+      const size = display && !contentDocs(existing).length ? { w: display.width } : {};
+      apply({ nodes: g.nodes.map(node => node.id === target ? { ...node, ...size, docs } : node), edges: g.edges });
+      return true;
+    }
+    const now = new Date().toISOString(), isImage = !!display;
+    const size = display ? { w: display.width, h: display.width * display.pixelHeight / display.pixelWidth } : { w: 420, h: undefined };
+    const n:BoardNode={id:newNodeId(),title:isImage?'':title??doc.title,x:point.x-size.w/2,y:point.y-(size.h??80)/2,...size,sticker:isImage,imageAspect:pixels?pixels.width/pixels.height:undefined,docs:[reference],flowOwnerId:flowId??undefined,created_at:now,updated_at:now};
     if(flowId){const owner=g.nodes.find(n=>n.id===flowId);apply(orderFlow([...g.nodes,n],g.edges,flowId,[...(owner?.flow?.nodeIds??[]),n.id],newEdgeId));setPanelId(n.id);setFlowOwnerId(flowId);}else apply({nodes:[...g.nodes,n],edges:g.edges});setSelected(n.id);
+    return true;
   };
   const pastePoint=()=>{const r=rect();return engine.toWorld({x:r.width/2,y:r.height/2});};
   stickerImport.current=async(path,file,point,target=null,flow=null)=>{
@@ -1068,8 +1140,8 @@ export function BoardCanvas({
       if(file){if(file.size>16*1024*1024)throw Error('贴图最多16MiB');const bytes=new Uint8Array(await file.arrayBuffer());let binary='';for(let i=0;i<bytes.length;i+=8192)binary+=String.fromCharCode(...bytes.subarray(i,i+8192));base64Data=btoa(binary);}
       const permission=await loadWritePolicy();const doc=await invoke<DocRef>('image_document',{projectId:board.projectId,boardId:board.id,srcPath:path??null,base64Data:base64Data??null,expectedScope:permission.scope});
       const dimensions=await stickerDimensions(board.projectId,board.id,doc.path);
-      if(!mounted.current)return;mountResource(doc,target,point??pastePoint(),dimensions,flow);
-      setDocumentStatus(target?'已挂载图片':'已插入贴图');
+      const added = await mountResource(doc, target, point ?? pastePoint(), dimensions, flow);
+      if (mounted.current) setDocumentStatus(!added ? '此图片已挂载' : target ? '已挂载图片' : '已插入贴图', true);
     }catch(e){if(mounted.current)setDocumentStatus(`插入贴图失败：${String(e)}`);}
     finally{imageJobs.current--;if(mounted.current)setDropBusy(imageJobs.current>0||!!documentImport.current);}
   };
@@ -1079,7 +1151,7 @@ export function BoardCanvas({
       imageJobs.current++;setDropBusy(true);setDocumentStatus('正在导入资源…');
       try{const policy=await loadWritePolicy(),doc=await invoke<DocRef>('document_import',{projectId:board.projectId,boardId:board.id,srcPath:path,expectedScope:policy.scope});
         const dimensions=imageDoc(doc)?await stickerDimensions(board.projectId,board.id,doc.path):undefined;
-        if(mounted.current)mountResource(doc,null,point,dimensions,flow);setDocumentStatus('已导入文档与原件');
+        if (await mountResource(doc, null, point, dimensions, flow)) setDocumentStatus(dimensions ? '已插入贴图' : '已导入文档与原件', !!dimensions);
       }catch(error){if(mounted.current)setDocumentStatus(String(error));}
       finally{imageJobs.current--;if(mounted.current)setDropBusy(imageJobs.current>0||!!documentImport.current);}
     }
@@ -1087,7 +1159,7 @@ export function BoardCanvas({
   textPaste.current=async(text,target,flow)=>{
     if(!text.trim()||mutationsBlocked())return;
     const plan=clipboardText(text);imageJobs.current++;setDropBusy(true);
-    try{if(target||plan.document){const doc=await api.docWrite(board.projectId,board.id,plan.title||'粘贴的内容',text);if(mounted.current)mountResource(doc,target,pastePoint(),undefined,flow,plan.title);}
+    try{if(target||plan.document){const doc=await api.docWrite(board.projectId,board.id,plan.title||'粘贴的内容',text);await mountResource(doc,target,pastePoint(),undefined,flow,plan.title);}
       else{const now=new Date().toISOString(),at=pastePoint(),node:BoardNode={id:newNodeId(),title:plan.title,x:at.x-130,y:at.y-30,w:260,docs:[],flowOwnerId:flow??undefined,created_at:now,updated_at:now},g=graphRef.current;if(flow){const owner=g.nodes.find(n=>n.id===flow);apply(orderFlow([...g.nodes,node],g.edges,flow,[...(owner?.flow?.nodeIds??[]),node.id],newEdgeId));setPanelId(node.id);}else apply({nodes:[...g.nodes,node],edges:g.edges});setSelected(node.id);}
       setDocumentStatus(target?'已挂载文字文档':'已从剪贴板创建节点');
     }catch(error){if(mounted.current)setDocumentStatus(String(error));}
@@ -1100,7 +1172,16 @@ export function BoardCanvas({
       if(branchRootRef.current||document.querySelector('[aria-modal="true"]'))return;
       const target=(e.target as HTMLElement)?.closest?.('.node-panel')?panelIdRef.current:pasteTarget.current,flow=target?null:pasteFlow.current;
       const files=[...(e.clipboardData?.files??[])].filter(f=>/^image\/(png|jpeg|gif|webp)$/.test(f.type));
-      if(files.length){e.preventDefault();for(const file of files)void stickerImport.current(undefined,file,undefined,target,flow);return;}
+      if(files.length){
+        e.preventDefault();
+        void (async () => {
+          for (const file of files) {
+            if (!mounted.current) break;
+            await stickerImport.current(undefined, file, undefined, target, flow);
+          }
+        })();
+        return;
+      }
       if(isEditableTarget(e.target))return;const text=e.clipboardData?.getData('text/plain');if(text?.trim()){e.preventDefault();void textPaste.current(text,target,flow);}
     };
     window.addEventListener('pointerdown',region,true);window.addEventListener('paste',paste);return()=>{window.removeEventListener('pointerdown',region,true);window.removeEventListener('paste',paste);};
@@ -1178,6 +1259,7 @@ export function BoardCanvas({
   const zoom = engine.viewport.zoom;
   const intensity = Math.max(0, Math.min(1, (0.85 - zoom) / 0.6));
   const glowVars = {
+    ['--image-pager-scale' as string]: 1 / Math.min(zoom, 1),
     ['--glow-blur' as string]: `${(20 * intensity) / zoom}px`,
     ['--glow-spread' as string]: `${(3.5 * intensity) / zoom}px`,
     ['--glow-alpha' as string]: `${0.12 + 0.6 * intensity}`,
@@ -1316,7 +1398,7 @@ export function BoardCanvas({
     >
       {arrangeBusy&&<div className="arrange-progress" role="status"><span>{documentStatus||'正在适配节点内容…'}</span><button className="btn" onClick={()=>arrangeJob.current?.abort()}>停止整理</button></div>}
       {/* 悬浮工具栏：撤销 / 重做 / 整理 / 缩放 / 适配 */}
-      {documentStatus&&<div className="document-import-status" role="status" onPointerDown={e=>e.stopPropagation()}><span>{documentStatus}</span>{dropBusy&&<button type="button" className="btn" disabled={!documentImport.current||documentStatus==='正在保存文档与原件'} onClick={()=>documentImport.current?.abort()}>停止</button>}<button type="button" className="btn" onClick={()=>setDocumentStatus('')} disabled={dropBusy}>关闭</button></div>}
+      {notice&&<div className={`document-import-status${notice.fading ? ' is-fading' : ''}`} role="status" onPointerDown={e=>e.stopPropagation()}><span>{notice.text}</span>{dropBusy&&<button type="button" className="btn" disabled={!documentImport.current||notice.text==='正在保存文档与原件'} onClick={()=>documentImport.current?.abort()}>停止</button>}<button type="button" className="btn" onClick={()=>setDocumentStatus('')} disabled={dropBusy}>关闭</button></div>}
       <div className="canvas-toolbar" role="toolbar" aria-label="画布工具" onPointerDown={(e) => e.stopPropagation()}>
         <button type="button" className="tb-btn" title="撤销 (Ctrl+Z)" aria-label="撤销" disabled={!canUndo(history)} onClick={doUndo}>
           <svg width="15" height="15" viewBox="0 0 16 16" aria-hidden="true">
@@ -1406,7 +1488,7 @@ export function BoardCanvas({
         {visibleNodes.map((n) => (
           <NodeCard
             key={n.id}
-            node={n} projectId={board.projectId} boardId={board.id} onResizeStart={onResizeStart} docVersions={docVersions}
+            node={n} projectId={board.projectId} boardId={board.id} onResizeStart={onResizeStart} onImageSize={imageSizing.observe} docVersions={docVersions}
             previewCollapsed={Boolean(matches && !matches.matched.has(n.id))}
             selected={selected === n.id||!!moveRoot&&moveIds.has(n.id)}
             flash={flashId === n.id}

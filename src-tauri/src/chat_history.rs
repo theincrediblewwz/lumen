@@ -426,6 +426,7 @@ mod tests {
                 path: "docs/saved.md".into(),
                 title: "note".into(),
                 bytes: None,
+                image_display: None,
             }],
             created_at: "at".into(),
             updated_at: "at".into(),

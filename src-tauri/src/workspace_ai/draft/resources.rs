@@ -21,6 +21,7 @@ impl Draft<'_> {
                     path,
                     title: title.clone(),
                     bytes: Some(markdown.len() as u64),
+                    image_display: None,
                 });
                 self.record(
                     "新建 Markdown",
