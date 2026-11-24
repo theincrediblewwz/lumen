@@ -86,7 +86,7 @@ export default function App() {
   const [tagEdit, setTagEdit] = useState<{ target: TagTarget; name: string; colorMark?: string }>();
   const [boards, setBoards] = useState<BoardMeta[]>([]);
   const [activeProject, setActiveProject] = useState<ProjectMeta | null>(null);
-  const [activeBoard, setActiveBoard] = useState<BoardFile | null>(null);
+  const [activeBoard, setActiveBoardState] = useState<BoardFile | null>(null);
   const [boardActionSlot, setBoardActionSlot] = useState<HTMLSpanElement | null>(null);
   const [branchFocusActive, setBranchFocusActive] = useState(false);
   const activeProjectRef = useRef(activeProject);
@@ -138,8 +138,11 @@ export default function App() {
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pendingBoards = useRef(new Map<string,BoardFile>());
   const pendingSave = useRef<Promise<void>>(Promise.resolve());
-  const activeBoardRef = useRef(activeBoard);
-  activeBoardRef.current = activeBoard;
+  const activeBoardRef = useRef<BoardFile | null>(null);
+  const setActiveBoard = useCallback((board: BoardFile | null) => {
+    activeBoardRef.current = board;
+    setActiveBoardState(board);
+  }, []);
   const [boardGeneration,setBoardGeneration] = useState(0);
   const [syncLocked,setSyncLocked] = useState(false);
   const syncLockRef = useRef(false);
@@ -278,7 +281,7 @@ export default function App() {
         if (request !== generation || route !== routeGeneration.current) return;
         setProjects(catalog.rows); setLayout(catalog.layout); setCovers(catalog.covers); setCanvasScope(catalog.scope);
         activeProjectRef.current = folder; setActiveProject(folder); setBoards(nextBoards);
-        activeBoardRef.current = board; setActiveBoard(board); setBoardGeneration(n => n + 1);
+        setActiveBoard(board); setBoardGeneration(n => n + 1);
       }catch(error){setError(String(error));throw error;}
     };
     const unregisterRefresh=registerLibraryRefresh(refresh);
@@ -397,7 +400,7 @@ export default function App() {
         if (!folder || !nextBoards.some(row => row.id === boardId)) throw new Error('这块白板已不在资料库中。');
         setProjects(catalog.rows); setLayout(catalog.layout); setCovers(catalog.covers); setCanvasScope(catalog.scope);
         activeProjectRef.current = folder; setActiveProject(folder); setBoards(nextBoards);
-        activeBoardRef.current = nextBoard; setActiveBoard(nextBoard);
+        setActiveBoard(nextBoard);
         if (nodeId) setTagFilters(old => ({ ...old, [JSON.stringify([catalog.scope, 'board', boardId])]: [] }));
         setFocusNode(nodeId ? { id: nodeId, nonce: Date.now() } : null);
         void api.snapshotCreate(projectId, boardId, false).catch(() => {});
@@ -439,18 +442,30 @@ export default function App() {
   /* ── 打开白板：加载 board.json 到画布 ── */
   const openBoard = (projectId: string, boardId: string) => jumpTo(projectId, boardId, null);
 
-  /* ── 画布变更：本地即时更新 + 防抖落盘（DESIGN §6.5） ── */
-  const onCanvasChange = useCallback(
-    (nodes: BoardNode[], edges: BoardEdge[], viewport: Viewport, appearance?:BoardAppearance) => {
-      if(syncLockRef.current)return;
-      const prev=activeBoardRef.current;if(!prev)return;
-      const next:BoardFile={...prev,nodes,edges,viewport,...(appearance?{appearance}:{})};setSaveState('dirty');
-      activeBoardRef.current=next;setActiveBoard(next);pendingBoards.current.set(next.id,next);
-      if(saveTimer.current)clearTimeout(saveTimer.current);
-      saveTimer.current=setTimeout(()=>{void flushBoards().catch(e=>setError(String(e)));},600);
-    },
-    [flushBoards],
-  );
+  /* The latest viewport shares the same pending snapshot as graph edits. */
+  const queueBoardSave = useCallback((board: BoardFile) => {
+    activeBoardRef.current = board;
+    pendingBoards.current.set(board.id, board);
+    setSaveState('dirty');
+    if (saveTimer.current) clearTimeout(saveTimer.current);
+    saveTimer.current = setTimeout(() => { void flushBoards().catch(error => setError(String(error))); }, 600);
+  }, [flushBoards]);
+
+  const onCanvasChange = useCallback((nodes: BoardNode[], edges: BoardEdge[], viewport: Viewport, appearance?: BoardAppearance) => {
+    const previous = activeBoardRef.current;
+    if (!previous || syncLockRef.current) return;
+    const next = { ...previous, nodes, edges, viewport, ...(appearance ? { appearance } : {}) };
+    queueBoardSave(next);
+    setActiveBoardState(next);
+  }, [queueBoardSave]);
+
+  const onViewportChange = useCallback((viewport: Viewport) => {
+    const board = activeBoardRef.current;
+    if (!board || syncLockRef.current) return;
+    const old = board.viewport;
+    if (viewport.x === old.x && viewport.y === old.y && viewport.zoom === old.zoom) return;
+    queueBoardSave({ ...board, viewport });
+  }, [queueBoardSave]);
 
   const withBusy = async (fn: () => Promise<void>, reportError: (message: string) => void = setError) => {
     if(document.querySelector('.board-canvas-live[aria-busy="true"]')){reportError('请先完成正在进行的画布操作。');return;}
@@ -506,7 +521,6 @@ export default function App() {
       setRoot(cfg.storage_root);
       activeProjectRef.current = null;
       setActiveProject(null);
-      activeBoardRef.current = null;
       setActiveBoard(null);
       setKnowledgeOpen(false);
       setKnowledgeTarget({});
@@ -547,7 +561,7 @@ export default function App() {
           const renamed = await api.boardRename(activeProject.id, cur.id, name);
           finish(); setBoards(rows => rows.map(row => row.id === cur.id ? renamed : row));
           if (activeBoardRef.current?.id === cur.id) {
-            activeBoardRef.current = renamed; setActiveBoard(renamed);
+            setActiveBoard(renamed);
           }
         });
       }
@@ -566,7 +580,6 @@ export default function App() {
       activeProjectRef.current = folder ?? null;
       setActiveProject(folder ?? null);
       setBoards(nextBoards);
-      activeBoardRef.current = null;
       setActiveBoard(null);
       setFocusNode(null);
     }));
@@ -631,7 +644,7 @@ export default function App() {
       if (activeProject?.id === p.id) {
         activeProjectRef.current = null;
         setActiveProject(null);
-        activeBoardRef.current = null; setActiveBoard(null);
+        setActiveBoard(null);
         setBoards([]);
       }
       await refreshProjects();
@@ -643,7 +656,7 @@ export default function App() {
     const projectId = activeProject.id;
     setDeletion({ message: `删除白板「${b.name}」？其中的挂载资料会一并移除。知识库内容保留。`, accept: () => void withBusy(() => withBoardEditLock(async () => {
       await api.boardDelete(projectId, b.id);
-      if (activeBoardRef.current?.id === b.id) { activeBoardRef.current = null; setActiveBoard(null); }
+      if (activeBoardRef.current?.id === b.id) setActiveBoard(null);
       await refreshBoards(projectId);
     })) });
   };
@@ -718,7 +731,7 @@ export default function App() {
       const warnings = applyLibraryPreferences(restored.preferences);
       const nextSettings = loadSettings(); setSettings(nextSettings); applySettings(nextSettings, platform);
       routeGeneration.current++;
-      setRoot(cfg.storage_root); activeProjectRef.current = null; setActiveProject(null); activeBoardRef.current = null; setActiveBoard(null);
+      setRoot(cfg.storage_root); activeProjectRef.current = null; setActiveProject(null); setActiveBoard(null);
       setKnowledgeOpen(false); setKnowledgeTarget({}); setBoards([]); await refreshProjects(); setPhase('ready');
       setArchiveStatus(warnings.length ? `已打开恢复的资料库。${warnings.join('、')}未能写入本机偏好，备份中的记录仍保留。` : '已打开恢复的资料库，原资料目录保留。');
     }) });
@@ -749,7 +762,7 @@ export default function App() {
       ] : []),
       { type: 'group', label: '导入', items: [
         {type:'item',label:'项目/全库资料包（恢复到新目录）…',onClick:restoreLibrary},
-        {type:'item',label:'白板资料包…',disabled:!activeProject,onClick:()=>activeProject&&leaveKnowledge(()=>void withBusy(async()=>{const board=await importBoardPackage(activeProject.id);if(board){await refreshBoards(activeProject.id);activeBoardRef.current=board;setActiveBoard(board);setBoardGeneration(n=>n+1);}}))},
+        {type:'item',label:'白板资料包…',disabled:!activeProject,onClick:()=>activeProject&&leaveKnowledge(()=>void withBusy(async()=>{const board=await importBoardPackage(activeProject.id);if(board){await refreshBoards(activeProject.id);setActiveBoard(board);setBoardGeneration(n=>n+1);}}))},
         {type:'item',label:activeBoard?'对话 → 当前白板…':'对话 → 新白板…',disabled:!activeProject,onClick:()=>activeProject&&leaveKnowledge(()=>setImportTarget({projectId:activeProject.id,...(activeBoard?{boardId:activeBoard.id,boardName:activeBoard.name}:{})}))},
       ] },
       { type: 'group', label: '导出', items: [
@@ -943,10 +956,10 @@ export default function App() {
         {knowledgeOpen ? <KnowledgeLibrary boardId={activeBoard?.id} boardName={activeBoard?.name} boardPolicy={activeBoard?._sync_content_policy} indexCollapsed={knowledgeIndexCollapsed} {...knowledgeTarget} onEditingChange={onKnowledgeEditingChange} onNavigationReady={registerKnowledgeNavigation} onClose={() => { setKnowledgeOpen(false); setError(null); }} /> : activeBoard ? (
           <BoardCanvas
             key={`${activeBoard.id}:${boardGeneration}`}
-            board={activeBoard}
+            board={activeBoardRef.current ?? activeBoard}
             scope={canvasScope || root || ''}
             focusSlot={boardActionSlot} onBranchFocusChange={setBranchFocusActive}
-            onChange={onCanvasChange} onFlush={flushBoards} saveState={saveState}
+            onChange={onCanvasChange} onViewportChange={onViewportChange} onFlush={flushBoards} saveState={saveState}
             guessMath={settings.guessMath}
             tags={tags}
             tagStore={layout.tags}
@@ -1004,7 +1017,7 @@ export default function App() {
       {importTarget&&<ConversationImport target={importTarget} onClose={()=>setImportTarget(undefined)} onImported={(board,rootNodeId)=>{
         routeGeneration.current++;
         pendingBoards.current.delete(board.id);
-        activeBoardRef.current = board; setActiveBoard(board);
+        setActiveBoard(board);
         const project = projects.find(p => p.id === board.projectId) ?? null;
         activeProjectRef.current = project; setActiveProject(project);
         setBoardGeneration(n => n + 1); setKnowledgeOpen(false); setImportTarget(undefined);

@@ -5,7 +5,9 @@
 
 ## 当前版本
 
-[0.4.3 源码预览](https://github.com/theincrediblewwz/lumen/releases/tag/mac-v0.4.3) · [下载 Mac 0.4.0 安装包](https://github.com/theincrediblewwz/lumen/releases/tag/mac-v0.4.0) · [白板编辑与保存](./docs/CANVAS_AUTHORING.md)
+[0.4.4 源码预览](https://github.com/theincrediblewwz/lumen/releases/tag/mac-v0.4.4) · [下载 Mac 0.4.0 安装包](https://github.com/theincrediblewwz/lumen/releases/tag/mac-v0.4.0) · [白板编辑与保存](./docs/CANVAS_AUTHORING.md)
+
+**0.4.4 画布交互。** 图片翻页控件在悬停时显示。带公式的节点可以缩回，空白双击区分关闭面板与新建。扩大了 Mac 顶栏拖动区，并减少了平移缩放时的重复刷新。
 
 **0.4.3 贴图预览。** 同一节点的多张图可用双箭头切换，缩小白板时也容易点到。挂载成功提示在约三秒后淡出。新贴图按当前白板已有图片的显示比例等比放置。 [素材预览](./docs/MATERIAL_PREVIEWS.md)
 

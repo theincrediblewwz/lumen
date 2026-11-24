@@ -69,17 +69,17 @@ type DocumentNotice = { text: string; autoDismiss: boolean; fading?: boolean };
  */
 export function BoardCanvas({
   board, scope,
-  onChange, onFlush, saveState,
+  onChange, onViewportChange, onFlush, saveState,
   guessMath = false,
   focusNode = null,
   focusSlot, onBranchFocusChange,
   tags, tagStore, tagFilter, onEditTags,
-  onBlankClick,
 }: {
   onFlush:()=>Promise<void>; saveState:'saved'|'dirty'|'saving'|'error';
   board: BoardFile;
   scope: string;
   onChange: (nodes: BoardNode[], edges: BoardEdge[], viewport: Viewport, appearance?:BoardAppearance) => void;
+  onViewportChange: (viewport: Viewport) => void;
   guessMath?: boolean;
   /** AI 引用跳转目标（M5-6）：居中并闪烁高亮该节点。nonce 变化即重新触发。 */
   focusNode?: { id: string; nonce: number } | null;
@@ -89,7 +89,6 @@ export function BoardCanvas({
   tagStore?: TagStore;
   tagFilter: ReadonlySet<string>;
   onEditTags: (node: BoardNode) => void;
-  onBlankClick?: () => void;
 }) {
   const wrapRef = useRef<HTMLDivElement>(null);
   const focusToggle = useRef<HTMLButtonElement>(null);
@@ -110,12 +109,24 @@ export function BoardCanvas({
     window.addEventListener('lumen:sync-edit-lock', lock);
     return () => window.removeEventListener('lumen:sync-edit-lock', lock);
   }, []);
-  const mutationsBlocked = () => syncMutationLock.current || !!document.querySelector('[aria-modal="true"]');
+  const mutationsBlocked = useCallback(() => syncMutationLock.current || !!document.querySelector('[aria-modal="true"]'), []);
   const engineRef = useRef<CanvasEngine>(
     new CanvasEngine(board.viewport, { minZoom: MIN_BOARD_ZOOM, maxZoom: 3 }),
   );
   const [, force] = useState(0);
   const rerender = useCallback(() => force((n) => n + 1), []);
+  const paintFrame = useRef<number | null>(null);
+  const scheduleViewportPaint = useCallback(() => {
+    if (paintFrame.current !== null) return;
+    paintFrame.current = requestAnimationFrame(() => {
+      paintFrame.current = null;
+      rerender();
+    });
+  }, [rerender]);
+  useEffect(() => () => {
+    if (paintFrame.current !== null) cancelAnimationFrame(paintFrame.current);
+    paintFrame.current = null;
+  }, [board.id]);
 
   const [history, setHistory] = useState<History<Graph>>(() =>
     createHistory({ nodes: board.nodes, edges: board.edges ?? [] }),
@@ -211,6 +222,11 @@ export function BoardCanvas({
   /** 悬停简介 tooltip：悬停 400ms 后出现 */
   const [tip, setTip] = useState<{ id: string; x: number; y: number } | null>(null);
   const tipTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const clearTip = useCallback(() => {
+    if (tipTimer.current) clearTimeout(tipTimer.current);
+    tipTimer.current = null;
+    setTip(null);
+  }, []);
 
   /** 每个节点测得的真实布局尺寸（世界单位；不随 transform 缩放变化） */
   const sizesRef = useRef<Record<string, { w: number; h: number }>>({});
@@ -362,7 +378,7 @@ export function BoardCanvas({
     setSelected(node.id);
     setFlashId(node.id);
     rerender();
-    onChange(graphRef.current.nodes, graphRef.current.edges, engine.viewport);
+    onViewportChange(engine.viewport);
     const t = setTimeout(() => setFlashId(null), 1600);
     return () => clearTimeout(t);
   }, [focusNode?.nonce]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -416,9 +432,9 @@ export function BoardCanvas({
       const r = rect();
       engine.zoomByFactor({ x: r.width / 2, y: r.height / 2 }, factor);
       rerender();
-      onChange(graphRef.current.nodes, graphRef.current.edges, engine.viewport);
+      onViewportChange(engine.viewport);
     },
-    [engine, onChange, rerender],
+    [engine, onViewportChange, rerender],
   );
 
   /** 缩放重置为 100%，保持视口中心对应的世界点不动。 */
@@ -427,8 +443,8 @@ export function BoardCanvas({
     const r = rect();
     engine.zoomAtPoint({ x: r.width / 2, y: r.height / 2 }, 1);
     rerender();
-    onChange(graphRef.current.nodes, graphRef.current.edges, engine.viewport);
-  }, [engine, onChange, rerender]);
+    onViewportChange(engine.viewport);
+  }, [engine, onViewportChange, rerender]);
 
   /** 适配全部内容到屏幕（zoom-to-fit）。 */
   const fitAll = useCallback(() => {
@@ -461,8 +477,8 @@ export function BoardCanvas({
       );
     }
     rerender();
-    onChange(graphRef.current.nodes, graphRef.current.edges, engine.viewport);
-  }, [engine, onChange, rerender]);
+    onViewportChange(engine.viewport);
+  }, [engine, onViewportChange, rerender]);
 
   /** 在视口中心新建节点（键盘 N）。 */
   const addNodeAtCenter = useCallback(() => {
@@ -645,13 +661,12 @@ export function BoardCanvas({
   /* ── 拖拽状态 ── */
   const drag = useRef<
     | null
-    | { kind: 'pan'; startX: number; startY: number; vx: number; vy: number; moved: boolean }
+    | { kind: 'pan'; pointerId: number; startX: number; startY: number; vx: number; vy: number; moved: boolean; allowsNewNode: boolean }
     | { kind: 'node'; id: string; pointerId:number;startX:number;startY:number;zoom:number; moved: boolean; baseline: Graph; positions:Map<string,{x:number;y:number}>;group:boolean }
     | { kind: 'resize'; id:string; pointerId:number; startX:number;startY:number;zoom:number;corner:string;box:Box;baseline:Graph;sticker:boolean;image?:PreviewImage;primary:boolean }
     | { kind: 'connect'; fromId: string }
   >(null);
-  const blankClickTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  useEffect(() => () => { if (blankClickTimer.current) clearTimeout(blankClickTimer.current); }, []);
+  const blankClicks = useRef<{ x: number; y: number }[]>([]);
 
   /** 连线拖拽的实时状态（世界坐标）；单独 state 以驱动预览重绘 */
   const connectCleanup=useRef<(()=>void)|null>(null);
@@ -660,7 +675,7 @@ export function BoardCanvas({
     null,
   );
 
-  const rect = () => wrapRef.current?.getBoundingClientRect() ?? { left: 0, top: 0, width: 1, height: 1 };
+  const rect = useCallback(() => wrapRef.current?.getBoundingClientRect() ?? { left: 0, top: 0, width: 1, height: 1 }, []);
 
   const suppressClick = useRef(false);
 
@@ -673,38 +688,51 @@ export function BoardCanvas({
     [],
   );
 
-  /* ── 滚轮缩放 ── */
-  const onWheel = (e: React.WheelEvent) => {
-    e.preventDefault();
-    if(drag.current?.kind==='node'||drag.current?.kind==='resize')return;
-    const r = rect();
-    const anchor = { x: e.clientX - r.left, y: e.clientY - r.top };
-    engine.zoomByFactor(anchor, Math.exp(-e.deltaY * 0.0015 * appearance.zoomSensitivity));
-    rerender();
-    onChange(nodes, edges, engine.viewport);
-  };
+  /* Keep the wheel listener on the board so WKWebView allows preventDefault. */
+  useEffect(() => {
+    const canvas = wrapRef.current;
+    if (!canvas) return;
+    const onWheel = (event: WheelEvent) => {
+      event.preventDefault();
+      if (drag.current || branchRootRef.current || !event.deltaY) return;
+      const before = engine.viewport;
+      const bounds = rect();
+      const unit = event.deltaMode === WheelEvent.DOM_DELTA_LINE ? 16 : event.deltaMode === WheelEvent.DOM_DELTA_PAGE ? bounds.height : 1;
+      engine.zoomByFactor({ x: event.clientX - bounds.left, y: event.clientY - bounds.top },
+        Math.exp(-event.deltaY * unit * 0.0015 * appearance.zoomSensitivity));
+      const after = engine.viewport;
+      if (after.zoom === before.zoom) return;
+      blankClicks.current = [];
+      scheduleViewportPaint();
+      onViewportChange(after);
+    };
+    canvas.addEventListener('wheel', onWheel, { passive: false });
+    return () => canvas.removeEventListener('wheel', onWheel);
+  }, [appearance.zoomSensitivity, engine, onViewportChange, rect, scheduleViewportPaint]);
 
   /* ── 空白按下：平移 ── */
   const onCanvasPointerDown = (e: React.PointerEvent) => {
-    if(drag.current||arrangeJob.current)return;
-    if (e.button !== 0) return;
-    if ((e.target as HTMLElement).closest('button,input,textarea,select,a,[contenteditable],.ctx-menu,.node-card,.edge-hit')) return;
-    if (blankClickTimer.current) clearTimeout(blankClickTimer.current);
+    if (drag.current || arrangeJob.current || mutationsBlocked() || e.target !== e.currentTarget
+      || !e.isPrimary || e.button !== 0 || (e.ctrlKey && detectMacOS())) {
+      blankClicks.current = [];
+      return;
+    }
+    const allowsNewNode = !(panelId || flowOwnerId || editingId || editingEdge || menu);
     setSelected(null);
     setSelectedEdge(null);
     setPanelId(null);setFlowOwnerId(null);pasteTarget.current=null;pasteFlow.current=null;
     setMoveRoot(null);
     clearTip();
     const vp = engine.viewport;
-    drag.current = { kind: 'pan', startX: e.clientX, startY: e.clientY, vx: vp.x, vy: vp.y, moved: false };
+    drag.current = { kind: 'pan', pointerId: e.pointerId, startX: e.clientX, startY: e.clientY, vx: vp.x, vy: vp.y, moved: false, allowsNewNode };
     (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
   };
 
   /* ── 节点按下：选中 + 准备拖拽 ── */
-  const onNodePointerDown = (e: React.PointerEvent, id: string) => {
+  const onNodePointerDown = useCallback((e: React.PointerEvent, id: string) => {
     if(drag.current)return;
     if (e.button !== 0||e.ctrlKey&&detectMacOS()) return;
-    e.stopPropagation();if(blankClickTimer.current)clearTimeout(blankClickTimer.current);
+    e.stopPropagation();
     setSelected(id);
     setSelectedEdge(null);
     suppressClick.current=false;
@@ -722,16 +750,16 @@ export function BoardCanvas({
     };
     setDraggingNodes(true);
     (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
-  };
+  }, [engine, moveRoot, moveIds]);
 
-  const onResizeStart=(e:React.PointerEvent,id:string,corner:string,image?:PreviewImage)=>{
-    if(e.button!==0||mutationsBlocked()||drag.current)return;e.preventDefault();e.stopPropagation();if(blankClickTimer.current)clearTimeout(blankClickTimer.current);
+  const onResizeStart = useCallback((e: React.PointerEvent, id: string, corner: string, image?: PreviewImage) => {
+    if(e.button!==0||mutationsBlocked()||drag.current)return;e.preventDefault();e.stopPropagation();
     const node=graphRef.current.nodes.find(n=>n.id===id);if(!node)return;
     setSelected(id);suppressClick.current=true;
     const sticker = !!e.currentTarget.closest('.node-card')?.classList.contains('is-sticker');
     drag.current={kind:'resize',id,corner,pointerId:e.pointerId,startX:e.clientX,startY:e.clientY,zoom:engine.viewport.zoom,box:boxOf(node),baseline:historyRef.current.present,sticker,image,primary:image?.path===contentDocs(node)[0]?.path};
     wrapRef.current?.setPointerCapture(e.pointerId);setDraggingNodes(true);
-  };
+  }, [boxOf, engine, mutationsBlocked]);
   const previewResize=(d:Extract<NonNullable<typeof drag.current>,{kind:'resize'}>,e:{clientX:number;clientY:number})=>{
     if (Math.hypot(e.clientX - d.startX, e.clientY - d.startY) < 1) {
       if (historyRef.current.present !== d.baseline) {
@@ -761,7 +789,7 @@ export function BoardCanvas({
      锚点元素在拖拽中会因 hover 消失而被卸载、指针捕获也会随之失效，
      故不依赖锚点元素/指针捕获，直接挂 window 级监听全程自算，
      并用 graphRef 读取最新节点/连线（规避闭包旧值）。 */
-  const onAnchorPointerDown = (e: React.PointerEvent, id: string) => {
+  const onAnchorPointerDown = useCallback((e: React.PointerEvent, id: string) => {
     if(drag.current)return;
     if (e.button !== 0) return;
     e.stopPropagation();
@@ -813,17 +841,23 @@ export function BoardCanvas({
     const cancel=()=>{window.removeEventListener('pointermove',onMove);window.removeEventListener('pointerup',onUp);window.removeEventListener('pointercancel',cancel);window.removeEventListener('blur',cancel);drag.current=null;setConnect(null);connectCleanup.current=null;};
     connectCleanup.current=cancel;
     window.addEventListener('pointermove', onMove);window.addEventListener('pointerup', onUp);window.addEventListener('pointercancel',cancel);window.addEventListener('blur',cancel);
+  }, [apply, boxOf, engine, nodes, rect]);
+
+  const previewPan = (d: Extract<NonNullable<typeof drag.current>, { kind: 'pan' }>, e: React.PointerEvent) => {
+    const dx = e.clientX - d.startX, dy = e.clientY - d.startY;
+    if (!d.moved && Math.hypot(dx, dy) <= 4) return;
+    d.moved = true;
+    const viewport = engine.viewport;
+    if (viewport.x === d.vx + dx && viewport.y === d.vy + dy) return;
+    engine.setViewport({ ...viewport, x: d.vx + dx, y: d.vy + dy });
+    scheduleViewportPaint();
   };
 
   const onPointerMove = (e: React.PointerEvent) => {
     const d = drag.current;
-    if (!d) return;
-    if((d.kind==='node'||d.kind==='resize')&&d.pointerId!==e.pointerId)return;
+    if (!d || d.kind === 'connect' || d.pointerId !== e.pointerId) return;
     if (d.kind === 'pan') {
-      if (Math.hypot(e.clientX - d.startX, e.clientY - d.startY) > 4) d.moved = true;
-      const vp = engine.viewport;
-      engine.setViewport({ ...vp, x: d.vx + (e.clientX - d.startX), y: d.vy + (e.clientY - d.startY) });
-      rerender();
+      previewPan(d, e);
     } else if (d.kind === 'resize') {previewResize(d,e);
     } else if (d.kind === 'node') {
       previewNodeDrag(d,e);
@@ -846,16 +880,20 @@ export function BoardCanvas({
 
   const onPointerUp = (e: React.PointerEvent) => {
     const d = drag.current;
-    if((d?.kind==='node'||d?.kind==='resize')&&d.pointerId!==e.pointerId)return;
-    if(d?.kind==='node'&&e.type==='pointerup'&&e.button!==0)return;
+    if (!d || d.kind === 'connect' || d.pointerId !== e.pointerId) return;
+    if (e.type === 'pointerup' && e.button !== 0) return;
     drag.current = null;
-    if (!d) return;
-    (e.currentTarget as HTMLElement).releasePointerCapture?.(e.pointerId);
+    if (e.currentTarget.hasPointerCapture(e.pointerId)) e.currentTarget.releasePointerCapture(e.pointerId);
     if (d.kind === 'pan') {
-      onChange(nodes, edges, engine.viewport);
-      if (e.type === 'pointerup' && !d.moved && e.button === 0) {
-        // Give a double click time to create a node before the canvas changes width.
-        blankClickTimer.current = setTimeout(() => onBlankClick?.(), 220);
+      if (e.type === 'pointerup') previewPan(d, e);
+      if (d.moved) onViewportChange(engine.viewport);
+      // Pointer capture can retarget a click to the canvas after the mouse has
+      // moved off it. A creation gesture needs two releases over actual blank space.
+      if (!d.moved && d.allowsNewNode && e.type === 'pointerup'
+        && document.elementFromPoint(e.clientX, e.clientY) === wrapRef.current) {
+        blankClicks.current = [...blankClicks.current.slice(-1), { x: e.clientX, y: e.clientY }];
+      } else {
+        blankClicks.current = [];
       }
     } else if(d.kind==='resize'){
       if(e.type==='pointercancel'){drag.current=d;cancelNodeDrag();return;}
@@ -879,6 +917,18 @@ export function BoardCanvas({
     // 'connect' 全程由 onAnchorPointerDown 的 window 监听处理
   };
 
+  const onLostPointerCapture = (e: React.PointerEvent) => {
+    const d = drag.current;
+    if (!d || d.kind === 'connect' || d.pointerId !== e.pointerId) return;
+    if (d.kind === 'pan') {
+      drag.current = null;
+      blankClicks.current = [];
+      if (d.moved) onViewportChange(engine.viewport);
+    } else {
+      cancelNodeDrag();
+    }
+  };
+
   /* ── 右键：空白 ── */
   const onCanvasContextMenu = (e: React.MouseEvent) => {
     e.preventDefault();
@@ -899,7 +949,7 @@ export function BoardCanvas({
     });
   };
 
-  const onNodeContextMenu = (e: React.MouseEvent, id: string) => {
+  const onNodeContextMenu = useCallback((e: React.MouseEvent, id: string) => {
     e.preventDefault();
     e.stopPropagation();
     if(drag.current?.kind==='node'||drag.current?.kind==='resize')return;
@@ -916,10 +966,10 @@ export function BoardCanvas({
         } },
         {type:'item',label:'移动本节点及全部下级',onClick:()=>{setMoveRoot(id);setMoveIds(descendantIds(graphRef.current.nodes,graphRef.current.edges,id));setPanelId(null);setEditingId(null);clearTip();}},
         {type:'separator'},
-        { type: 'item', label: '删除节点', danger: true, onClick: () => removeNode(id) },
+        { type: 'item', label: '删除节点', danger: true, onClick: () => removeNodeRef.current(id) },
       ],
     });
-  };
+  }, [clearTip, onEditTags]);
 
   const onEdgeContextMenu = (e: React.MouseEvent, id: string) => {
     e.preventDefault();
@@ -974,7 +1024,7 @@ export function BoardCanvas({
   };
 
   /* ── 点击节点：选中并在右侧打开内容面板（NodePanel） ── */
-  const openPanel = (id: string) => {
+  const openPanel = useCallback((id: string) => {
     if (suppressClick.current) {
       suppressClick.current = false;
       return;
@@ -984,25 +1034,15 @@ export function BoardCanvas({
     setSelected(id);
     setSelectedEdge(null);
     setPanelId(id);
-  };
+  }, [moveRoot]);
 
-  const startEdit = (id: string) => {
-    setEditingId(id);
-  };
-
-  /* ── 悬停简介 tooltip（400ms 延时） ── */
-  const clearTip = useCallback(() => {
-    if (tipTimer.current) {
-      clearTimeout(tipTimer.current);
-      tipTimer.current = null;
-    }
-    setTip(null);
-  }, []);
+  const exitNodeEdit = useCallback(() => setEditingId(null), []);
 
   const onNodeHover = useCallback(
     (id: string, hovering: boolean, clientX: number, clientY: number) => {
       setHoverNode((cur) => (hovering ? id : cur === id ? null : cur));
-      if (!hovering||!!graphRef.current.nodes.find(n=>n.id===id)&&imageOnly(graphRef.current.nodes.find(n=>n.id===id)!)) {
+      const node = graphRef.current.nodes.find(n => n.id === id);
+      if (!hovering || (node && imageOnly(node))) {
         clearTip();
         return;
       }
@@ -1095,7 +1135,7 @@ export function BoardCanvas({
   };
   importDroppedRef.current = importDroppedToNode;
 
-  const openFlow=(id:string)=>{const g=graphRef.current,node=g.nodes.find(n=>n.id===id);if(!node||node.flowOwnerId)return;if(!node.flow)apply({nodes:g.nodes.map(n=>n.id===id?{...n,flow:{nodeIds:[]}}:n),edges:g.edges});setFlowOwnerId(id);if(canvasSize.width<900)onBlankClick?.();};
+  const openFlow=(id:string)=>{const g=graphRef.current,node=g.nodes.find(n=>n.id===id);if(!node||node.flowOwnerId)return;if(!node.flow)apply({nodes:g.nodes.map(n=>n.id===id?{...n,flow:{nodeIds:[]}}:n),edges:g.edges});setFlowOwnerId(id);};
   const addFlowStep=(ownerId:string,after?:string)=>{
     const g=graphRef.current,owner=g.nodes.find(n=>n.id===ownerId);if(!owner)return;const now=new Date().toISOString(),node:BoardNode={id:newNodeId(),title:'新步骤',x:0,y:0,w:300,docs:[],flowOwnerId:ownerId,created_at:now,updated_at:now};
     const order=flowNodes(owner,g.nodes).map(n=>n.id),at=after?order.indexOf(after)+1:order.length;order.splice(at,0,node.id);apply(orderFlow([...g.nodes,node],g.edges,ownerId,order,newEdgeId));setPanelId(node.id);setSelected(node.id);pasteTarget.current=node.id;
@@ -1240,19 +1280,19 @@ export function BoardCanvas({
   };
   removeNodeRef.current = removeNode;
 
-  const commitNode = (id: string, patch: { title?: string; summary?: string }) => {
+  const commitNode = useCallback((id: string, patch: { title?: string; summary?: string }) => {
     const g=graphRef.current,target=g.nodes.find(n=>n.id===id);if(!target)return;
     const title=patch.title??target.title,summary=patch.summary!==undefined?patch.summary:target.summary;
     if(title===target.title&&summary===target.summary)return;
     const docs=patch.summary!==undefined&&!target.docs.some(d=>d.path===questionPath(id))?[...target.docs,{path:questionPath(id),title:'完整问题',bytes:new TextEncoder().encode(summary??'').length}]:target.docs;
     apply({nodes:g.nodes.map(n=>n.id===id?nonemptyNode({...n,title,summary,docs,sticker:patch.title!==undefined?false:n.sticker,updated_at:new Date().toISOString()}):n),edges:g.edges});
-  };
+  }, [apply]);
 
   const onCanvasDoubleClick = (e: React.MouseEvent) => {
-    if (blankClickTimer.current) clearTimeout(blankClickTimer.current);
-    const t = e.target as HTMLElement;
-    if(mutationsBlocked()||t.closest('.node-card,.edge-hit,.canvas-toolbar,.canvas-zoom-label,.board-appearance,.document-editor-modal,.node-panel,button,input,textarea,select,a'))return;
-    addNodeAtScreen(e.clientX, e.clientY);
+    const [first, second] = blankClicks.current;
+    blankClicks.current = [];
+    if (!first || !second || e.target !== e.currentTarget || mutationsBlocked()) return;
+    if (Math.hypot(first.x - second.x, first.y - second.y) <= 6) addNodeAtScreen(second.x, second.y);
   };
 
   /* ── 缩放越小、节点热力光越明显 ── */
@@ -1321,7 +1361,7 @@ export function BoardCanvas({
     const left=Math.min(520,Math.max(310,canvasSize.width*.43))+16,right=canvasSize.width-332;
     const at=engine.toScreen({x:owner.x+(sizesRef.current[owner.id]?.w??owner.w)/2,y:owner.y+(sizesRef.current[owner.id]?.h??owner.h??96)/2});
     engine.setViewport({...engine.viewport,x:engine.viewport.x+(left+right)/2-at.x,y:engine.viewport.y+Math.max(120,Math.min(canvasSize.height-120,at.y))-at.y});
-    rerender();onChange(graphRef.current.nodes,graphRef.current.edges,engine.viewport);
+    rerender();onViewportChange(engine.viewport);
   },[flowOwnerId,canvasSize.width,canvasSize.height]);
 
   // At overview scale, nearby relationship captions merge into bounded luminous hints.
@@ -1384,13 +1424,13 @@ export function BoardCanvas({
       ref={wrapRef}
       className={`board-canvas board-canvas-live${connect ? ' is-connecting' : ''}${branchRoot ? ' is-behind-focus' : ''}`}
       aria-hidden={branchRoot ? true : undefined}
-      onWheel={onWheel}
       onScroll={e=>{if(e.target===e.currentTarget){e.currentTarget.scrollLeft=0;e.currentTarget.scrollTop=0;}}}
+      onPointerDownCapture={e => { if (e.target !== e.currentTarget) blankClicks.current = []; }}
       onPointerDown={onCanvasPointerDown}
       onPointerMove={onPointerMove}
       onPointerUp={onPointerUp}
       onPointerCancel={onPointerUp}
-      onLostPointerCapture={e=>{if((drag.current?.kind==='node'||drag.current?.kind==='resize')&&drag.current.pointerId===e.pointerId)cancelNodeDrag();}}
+      onLostPointerCapture={onLostPointerCapture}
       style={fontStyle}
       aria-busy={draggingNodes||dropBusy||arrangeBusy}
       onContextMenu={onCanvasContextMenu}
@@ -1431,7 +1471,7 @@ export function BoardCanvas({
           置于节点层之下（DOM 顺序在前 + CSS 定位），指针默认穿透、仅命中区可点。 */}
       <button className="canvas-zoom-label" title="点击恢复100% · 滚轮或快捷键缩放" aria-label={`当前缩放 ${zoom<0.01?(zoom*100).toFixed(1):Math.round(zoom*100)}%，点击重置为100%`} onPointerDown={e=>e.stopPropagation()} onClick={zoomReset}>{zoom<0.01?(zoom*100).toFixed(1):Math.round(zoom*100)}%</button>
       {heatMode&&<div className="heat-layer" aria-label={`热力概览，共${mainNodes.length}个节点`} data-level={level}>{renderedHeat.map(c=>{
-        const at=engine.toScreen(c);return <button type="button" key={c.id} className={`heat-cell${c.flowCount?' has-flow':''}`} data-count={c.count} data-flow-count={c.flowCount} title={`${c.count}个节点${c.flowCount?` · ${c.flowCount}个含子流程`:''} · 点击逐级展开`} aria-label={`展开${c.count}个节点的热力区域${c.flowCount?'，包含子流程':''}`} style={{left:at.x,top:at.y,width:Math.max(8,c.w*zoom),height:Math.max(8,c.h*zoom),opacity:c.flowCount?1:Math.min(.95,.45+Math.log2(c.count+1)*.08),['--heat-color' as string]:c.color||'var(--accent)',['--flow-glow' as string]:flowHighlight(c.flowColor)}} onPointerDown={e=>e.stopPropagation()} onDoubleClick={e=>e.stopPropagation()} onClick={e=>{e.stopPropagation();const r=rect();engine.zoomAtPoint({x:r.width/2,y:r.height/2},Math.min(1,zoom*2));const z=engine.viewport.zoom;engine.setViewport({zoom:z,x:r.width/2-(c.x+c.w/2)*z,y:r.height/2-(c.y+c.h/2)*z});rerender();onChange(nodes,edges,engine.viewport);}}>{c.count>1?c.count:''}</button>;
+        const at=engine.toScreen(c);return <button type="button" key={c.id} className={`heat-cell${c.flowCount?' has-flow':''}`} data-count={c.count} data-flow-count={c.flowCount} title={`${c.count}个节点${c.flowCount?` · ${c.flowCount}个含子流程`:''} · 点击逐级展开`} aria-label={`展开${c.count}个节点的热力区域${c.flowCount?'，包含子流程':''}`} style={{left:at.x,top:at.y,width:Math.max(8,c.w*zoom),height:Math.max(8,c.h*zoom),opacity:c.flowCount?1:Math.min(.95,.45+Math.log2(c.count+1)*.08),['--heat-color' as string]:c.color||'var(--accent)',['--flow-glow' as string]:flowHighlight(c.flowColor)}} onPointerDown={e=>e.stopPropagation()} onDoubleClick={e=>e.stopPropagation()} onClick={e=>{e.stopPropagation();const r=rect();engine.zoomAtPoint({x:r.width/2,y:r.height/2},Math.min(1,zoom*2));const z=engine.viewport.zoom;engine.setViewport({zoom:z,x:r.width/2-(c.x+c.w/2)*z,y:r.height/2-(c.y+c.h/2)*z});rerender();onViewportChange(engine.viewport);}}>{c.count>1?c.count:''}</button>;
       })}</div>}
       <svg className="edge-layer">
         <defs>
@@ -1499,13 +1539,13 @@ export function BoardCanvas({
             onPointerDown={onNodePointerDown}
             onAnchorPointerDown={onAnchorPointerDown}
             onOpen={openPanel}
-            onStartEdit={startEdit}
+            onStartEdit={setEditingId}
             onContextMenu={onNodeContextMenu}
             onCommit={commitNode}
-            onEditCancel={() => setEditingId(null)}
-            onExitEdit={() => setEditingId(null)}
+            onEditCancel={exitNodeEdit}
+            onExitEdit={exitNodeEdit}
             onMeasure={onMeasure}
-            onHoverChange={(hovering, cx, cy) => onNodeHover(n.id, hovering, cx, cy)}
+            onHoverChange={onNodeHover}
           />
         ))}
       </div>
@@ -1620,7 +1660,7 @@ export function BoardCanvas({
         disabled={!branchRoot && focusBusy} onClick={() => {
           if (branchRoot) { setBranchFocus(null); return; }
           if (focusBusy || drag.current || edgeRouteCleanup.current || mutationsBlocked()) return;
-          if (blankClickTimer.current) clearTimeout(blankClickTimer.current);
+          blankClicks.current = [];
           setBranchFocus(selected);
         }}>
         {branchRoot ? <X size={16} aria-hidden="true"/> : <Focus size={17} aria-hidden="true"/>}

@@ -2873,6 +2873,15 @@ html.motion-off .edge-line { animation: none; }
   transform: translateX(-50%) scale(var(--image-pager-scale, 1));
   transform-origin: bottom center;
 }
+@media (hover: hover) {
+  .node-preview.is-image :is(.node-preview-turn, .node-preview-progress) {
+    opacity: 0;
+    transition: opacity 160ms ease-out;
+  }
+  .node-preview.is-image .node-preview-turn { pointer-events: none; }
+  .node-preview.is-image:is([data-preview-hover], :focus-within) :is(.node-preview-turn, .node-preview-progress) { opacity: 1; }
+  .node-preview.is-image:is([data-preview-hover], :focus-within) .node-preview-turn { pointer-events: auto; }
+}
 .node-pdf-page canvas {display:block;width:100%;height:auto;}
 .flow-step>.node-card.is-sticker {height:auto!important;min-height:0!important;}
 .flow-step>.node-card.is-sticker .node-card-content,.flow-step>.node-card.is-sticker .node-primary-image,.flow-step>.node-card.is-sticker .node-preview {height:auto;}

@@ -8,6 +8,23 @@ import { imageDisplay, type ImagePixels } from '../canvas/imageSizing';
 
 export type PreviewImage = { path: string; pixels?: ImagePixels };
 
+function formulaMinimumWidth(content: HTMLElement | null): number {
+  let minimum = 0;
+  for (const formula of content?.querySelectorAll<HTMLElement>('.katex-html') ?? []) {
+    const display = formula.parentElement?.parentElement?.classList.contains('katex-display');
+    let width = 0, tag = 0;
+    // The display wrapper spans the entire column. Measure the actual glyph runs
+    // and leave room on both sides for a centered display with an equation number.
+    for (const part of formula.children) {
+      if (!(part instanceof HTMLElement)) continue;
+      if (part.classList.contains('katex-tag')) tag = part.offsetWidth;
+      else width = display ? width + part.offsetWidth : Math.max(width, part.offsetWidth);
+    }
+    minimum = Math.max(minimum, width + (tag ? 2 * (tag + 6) : 0));
+  }
+  return minimum;
+}
+
 /** 自适应高度的文本域：随内容增减行数（修复长标题只显示尾部的问题） */
 function AutoTextarea({
   value,
@@ -123,7 +140,7 @@ export const NodeCard = memo(function NodeCard({
   onEditCancel: () => void;
   onExitEdit: () => void;
   onMeasure: (id: string, w: number, h: number, minimumW?:number, minimumH?:number) => void;
-  onHoverChange: (hovering: boolean, clientX: number, clientY: number) => void;
+  onHoverChange: (id: string, hovering: boolean, clientX: number, clientY: number) => void;
 }) {
   const cardRef = useRef<HTMLDivElement>(null), contentRef=useRef<HTMLDivElement>(null);
   const [minimum,setMinimum]=useState({w:120,h:64});
@@ -160,7 +177,7 @@ export const NodeCard = memo(function NodeCard({
     if (!el) return;
     const report = () => {
       const content=contentRef.current,style=getComputedStyle(el),padX=parseFloat(style.paddingLeft)+parseFloat(style.paddingRight)+parseFloat(style.borderLeftWidth)+parseFloat(style.borderRightWidth),padY=parseFloat(style.paddingTop)+parseFloat(style.paddingBottom)+parseFloat(style.borderTopWidth)+parseFloat(style.borderBottomWidth);
-      const mathWidth=Math.max(0,...Array.from(content?.querySelectorAll<HTMLElement>('.katex-html')??[]).map(n=>n.offsetWidth));
+      const mathWidth = formulaMinimumWidth(content);
       // A full-width image deliberately occupies the card's bottom padding.
       // scrollHeight counts that overlap again; don't add a second blank strip.
       const trailingMargin=content?.lastElementChild?parseFloat(getComputedStyle(content.lastElementChild).marginBottom):0;
@@ -194,8 +211,8 @@ export const NodeCard = memo(function NodeCard({
         borderLeftColor: node.color || undefined,
       }}
       onPointerDown={(e) => onPointerDown(e, node.id)}
-      onPointerEnter={(e) => onHoverChange(true, e.clientX, e.clientY)}
-      onPointerLeave={(e) => onHoverChange(false, e.clientX, e.clientY)}
+      onPointerEnter={(e) => onHoverChange(node.id, true, e.clientX, e.clientY)}
+      onPointerLeave={(e) => onHoverChange(node.id, false, e.clientX, e.clientY)}
       onDoubleClick={(e) => {
         e.stopPropagation();
         if(pureImage)onOpen(node.id);else onStartEdit(node.id);

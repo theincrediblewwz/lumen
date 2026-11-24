@@ -8,6 +8,10 @@ const base=process.env.LSQ_UI_URL||'http://127.0.0.1:5198',out=path.resolve(proc
  const check=s=>{checks.push(s);console.log(s);},card=id=>page.locator(`.canvas-world>[data-node-id="${id}"]`),state=()=>page.evaluate(()=>JSON.parse(localStorage.getItem('lumen.fixture-capture')));
  const fit=async()=>{await page.getByRole('button',{name:'适配全部内容到屏幕',exact:true}).click();await page.waitForTimeout(260);};
  const preview=()=>card('materials').locator('.node-preview');
+ const turnMaterial = async button => {
+   await button.locator('..').hover();
+   await button.click();
+ };
  try{
   await page.goto(base+'/scripts/knowledge-ui-fixture.html?mode=main&platform=macos&captureQA',{waitUntil:'domcontentloaded'});await page.waitForFunction(()=>window.__fixtureReactMounted);
   await page.evaluate(async()=>{
@@ -65,26 +69,26 @@ const base=process.env.LSQ_UI_URL||'http://127.0.0.1:5198',out=path.resolve(proc
   assert.match(await nextMaterial().getAttribute('class'),/is-material-turn/);
   await progress(1,count,count);
   await page.screenshot({path:path.join(out,'material-pager-document-boundary.png')});
-  await nextMaterial().click();await card('materials').locator('.sticker-image').waitFor();await page.waitForFunction(()=>document.querySelector('[data-node-id="materials"] img')?.naturalWidth===320);await page.waitForTimeout(150);
+  await turnMaterial(nextMaterial());await card('materials').locator('.sticker-image').waitFor();await page.waitForFunction(()=>document.querySelector('[data-node-id="materials"] img')?.naturalWidth===320);await page.waitForTimeout(150);
   const small=await card('materials').boundingBox();assert.ok(small.width<430);check('the last document page advances to the next image in original attachment order');
   await progress(2,1,1);
   assert.equal(await previous().count(),0);
   assert.match(await previousMaterial().getAttribute('class'),/is-material-turn/);
-  await previousMaterial().click();await preview().locator('[data-content-status="ready"]').waitFor();
+  await turnMaterial(previousMaterial());await preview().locator('[data-content-status="ready"]').waitFor();
   assert.equal(await preview().getAttribute('data-preview-resource'),'docs/pages.md');
   assert.equal(await preview().getAttribute('data-preview-page'),String(count-1));
-  await nextMaterial().click();await card('materials').locator('.sticker-image').waitFor();
+  await turnMaterial(nextMaterial());await card('materials').locator('.sticker-image').waitFor();
   check('Previous from an image returns to the last page of the preceding document');
-  await nextMaterial().click();await page.waitForFunction(()=>document.querySelector('[data-node-id="materials"] img')?.naturalWidth===2400);await page.waitForTimeout(150);const large=await card('materials').boundingBox();assert.ok(large.width>small.width*2);
+  await turnMaterial(nextMaterial());await page.waitForFunction(()=>document.querySelector('[data-node-id="materials"] img')?.naturalWidth===2400);await page.waitForTimeout(150);const large=await card('materials').boundingBox();assert.ok(large.width>small.width*2);
   const ratio=await card('materials').locator('img').evaluate(e=>e.getBoundingClientRect().width/e.getBoundingClientRect().height);assert.ok(Math.abs(ratio-2)<.01);check('high-resolution next image grows proportionally instead of inheriting the smaller slide footprint');
-  await fit();await nextMaterial().click();await preview().locator('.node-document-opening[data-content-status="ready"]').waitFor();assert.match(await preview().innerText(),/SECOND_DOCUMENT/);check('image navigation continues to the next Markdown document');
+  await fit();await turnMaterial(nextMaterial());await preview().locator('.node-document-opening[data-content-status="ready"]').waitFor();assert.match(await preview().innerText(),/SECOND_DOCUMENT/);check('image navigation continues to the next Markdown document');
   const shortPages=Number(await preview().getAttribute('data-preview-pages'));for(let i=0;i<shortPages-1;i++)await next().click();
-  await nextMaterial().click();await page.waitForFunction(()=>document.querySelector('[data-node-id="materials"] img')?.naturalHeight===1200);await fit();const portraitRatio=await card('materials').locator('img').evaluate(e=>e.getBoundingClientRect().width/e.getBoundingClientRect().height);assert.ok(Math.abs(portraitRatio-.5)<.01);
+  await turnMaterial(nextMaterial());await page.waitForFunction(()=>document.querySelector('[data-node-id="materials"] img')?.naturalHeight===1200);await fit();const portraitRatio=await card('materials').locator('img').evaluate(e=>e.getBoundingClientRect().width/e.getBoundingClientRect().height);assert.ok(Math.abs(portraitRatio-.5)<.01);
   await progress(5,1,1);
   assert.equal(await preview().locator('.node-preview-next').count(),0);
   assert.deepEqual((await state()).boards.board.nodes,original);
   check('single and double chevrons distinguish paging from switching materials, the counter follows both, and navigation stops at the end');
-  await previousMaterial().click();await preview().locator('[data-content-status="ready"]').first().waitFor();
+  await turnMaterial(previousMaterial());await preview().locator('[data-content-status="ready"]').first().waitFor();
   assert.equal(await preview().getAttribute('data-preview-resource'),'docs/short.md');
   assert.equal(await preview().getAttribute('data-preview-page'),String(shortPages-1));
   await fit();await card('owner').click();await page.locator('.flow-panel').waitFor();await page.locator('[data-flow-step="step-a"] [data-content-status="ready"]').first().waitFor();
@@ -290,14 +294,29 @@ const base=process.env.LSQ_UI_URL||'http://127.0.0.1:5198',out=path.resolve(proc
   const viewportWidth = (await photoNext.boundingBox()).width;
   assert.ok(viewportWidth >= 23, `pager target at 46% must be usable, got ${viewportWidth}px`);
   assert.equal(await photoPrev.count(), 0);
-  await photoNext.click();
+  const waitImageControls = opacity => page.waitForFunction(expected => {
+    const controls = document.querySelectorAll('[data-node-id="photos"] .node-preview :is(.node-preview-turn,.node-preview-progress)');
+    return controls.length === 2 && [...controls].every(control => getComputedStyle(control).opacity === expected);
+  }, opacity);
+  await waitImageControls('0');
+  assert.equal(await photoNext.evaluate(el => getComputedStyle(el).pointerEvents), 'none');
+  await photos.locator('.node-preview').hover();
+  await waitImageControls('1');
+  await page.mouse.move(1050, 650);
+  await waitImageControls('0');
+  await photoNext.focus();
+  await waitImageControls('1');
+  await photoNext.evaluate(el => el.blur());
+  await waitImageControls('0');
+  check('image pager and page number fade on preview hover, also reveal for keyboard focus, and hidden buttons do not intercept the pointer');
+  await turnMaterial(photoNext);
   await waitPixels('photos', 1000);
   assert.equal(await imageWidth(photos), 550);
   assert.equal(await photos.locator('.node-preview-material-number').textContent(), '2');
   assert.equal(await photoNext.count(), 0);
   assert.equal(await page.locator('.node-panel').count(), 0);
   await page.screenshot({ path: path.join(out, 'two-images-46-percent.png') });
-  await photoPrev.click(); await waitPixels('photos', 320);
+  await turnMaterial(photoPrev); await waitPixels('photos', 320);
   assert.equal(await imageWidth(photos), 160);
   check('a second attachment adds a full-size material button at 46% zoom and both directions load the correct aspect-preserving picture');
 
@@ -324,12 +343,12 @@ const base=process.env.LSQ_UI_URL||'http://127.0.0.1:5198',out=path.resolve(proc
   await page.waitForFunction(() => window.__imageNoticeFaded);
   await notice.waitFor({ state: 'detached' });
   await closePanel();
-  await captioned.getByRole('button', { name: '下一个素材', exact: true }).click();
+  await turnMaterial(captioned.getByRole('button', { name: '下一个素材', exact: true }));
   await waitPixels('captioned', 960);
   assert.ok(Math.abs(await imageWidth(captioned) - 528) <= 2);
   check('titled nodes show both image attachments and repeated successes each receive their own three-second fade-out');
 
-  await photoNext.click(); await waitPixels('photos', 1000);
+  await turnMaterial(photoNext); await waitPixels('photos', 1000);
   await photos.click(); await closePanel();
   await photos.hover();
   const resizeHandle = photos.locator('.node-resize-handle.corner-se');

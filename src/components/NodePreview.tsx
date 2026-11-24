@@ -104,6 +104,10 @@ function PreviewPager({ resources, projectId, boardId, docVersions, onPresentati
   };
   return <div className={`node-preview${image ? ' is-image' : ''}${question ? ' is-question' : ''}${hasPager ? ' has-page-controls' : ''}`}
     role="group" aria-label={question ? '完整问题预览' : '附件预览'}
+    onPointerEnter={event => {
+      if (event.pointerType !== 'touch') event.currentTarget.setAttribute('data-preview-hover', '');
+    }}
+    onPointerLeave={event => event.currentTarget.removeAttribute('data-preview-hover')}
     data-preview-resource={resource.key} data-preview-index={resourceIndex} data-preview-page={page} data-preview-pages={pages}>
     {'doc' in resource ? <NodeAttachment key={resource.key} projectId={projectId} boardId={boardId} doc={resource.doc} refresh={docVersions[resource.key] ?? 0} page={page} onPages={onPages} onImageSize={onImageSize}/>
       : <DocumentPages key={resource.key} markdown={resource.summary ?? ''} page={page} onPages={onPages} question/>}

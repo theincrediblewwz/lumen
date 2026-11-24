@@ -172,7 +172,22 @@ mod tests {
     fn viewing_a_legacy_graph_does_not_materialize_every_question(){
         let(root,mut b)=setup();
         b.nodes=(0..1000).map(|i|serde_json::from_value(serde_json::json!({"id":format!("n{i}"),"title":"问题","summary":"旧问题","x":i,"y":0,"w":240,"docs":[],"created_at":"","updated_at":""})).unwrap()).collect();
-        storage::save_board(&root,&b).unwrap();b.viewport.zoom=0.01;save_board(&root,&b).unwrap();
+        storage::save_board(&root,&b).unwrap();
+        let board_path = storage::board_file(&root, &b.project_id, &b.id);
+        let original: serde_json::Value = serde_json::from_slice(&fs::read(&board_path).unwrap()).unwrap();
+        let mut sizes = Vec::new();
+        for x in 100..110 {
+            b.viewport = storage::Viewport { x: x as f64, y: 200.0, zoom: 0.76 };
+            save_board(&root, &b).unwrap();
+            let bytes = fs::read(&board_path).unwrap();
+            sizes.push(bytes.len());
+            let saved: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+            assert_eq!(saved["viewport"]["x"].as_f64(), Some(x as f64));
+            assert_eq!(saved["nodes"], original["nodes"]);
+            assert_eq!(saved["edges"], original["edges"]);
+        }
+        assert!(sizes.windows(2).all(|pair| pair[0] == pair[1]));
+        assert!(!root.join(".lumen-sync/pending.json").exists());
         assert_eq!(fs::read_dir(storage::docs_dir(&root,&b.project_id,&b.id)).unwrap().count(),0);
         b.nodes[0].summary=Some("编辑后的问题".into());save_board(&root,&b).unwrap();
         assert_eq!(fs::read_dir(storage::docs_dir(&root,&b.project_id,&b.id)).unwrap().count(),1);

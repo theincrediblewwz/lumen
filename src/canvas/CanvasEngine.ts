@@ -101,6 +101,7 @@ export function zoomAtPoint(
   maxZoom: number = DEFAULT_MAX_ZOOM,
 ): Viewport {
   const z = clampZoom(nextZoom, minZoom, maxZoom);
+  if (z === vp.zoom) return { ...vp };
   // 锚点当前对应的世界点，缩放后仍要落在同一屏幕锚点上。
   const world = screenToWorld(vp, screenAnchor);
   return {

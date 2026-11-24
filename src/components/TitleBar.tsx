@@ -8,7 +8,7 @@ import icon from '../../app-icon.png';
  * - macOS：window.titleBarStyle=Overlay 保留系统红绿灯并让内容延伸到标题栏；
  *   本栏只在左侧留出红绿灯安全区，不自绘窗口按钮。
  * - Windows：window.decorations=false 隐藏系统栏，本栏在右侧自绘 最小化/最大化/关闭。
- * 整条标题栏为拖拽区（data-tauri-drag-region），交互元素标记为 no-drag。
+ * 从标题栏空白处或静态文字拖动窗口，按钮和链接保留原有交互。
  */
 export function TitleBar({
   platform,
@@ -53,7 +53,7 @@ export function TitleBar({
   return (
     <div
       className={`titlebar${isMac ? ' is-mac' : ''}${!platform ? ' is-platform-pending' : ''}`}
-      data-tauri-drag-region
+      data-tauri-drag-region="deep"
     >
       {onHome ? (
         <button type="button" className="titlebar-btn titlebar-logo" aria-label="返回项目首页" onClick={onHome}>

@@ -56,5 +56,85 @@ try{
  // Re-seed only the synthetic library for a large-board visual/performance check.
  await page.evaluate(()=>{const s=JSON.parse(localStorage.getItem('lumen.fixture-capture'));s.boards.board.nodes=Array.from({length:10000},(_,i)=>({id:'l'+i,title:'问题'+i,x:(i%100)*360,y:Math.floor(i/100)*180,w:240,h:96,docs:[],created_at:'',updated_at:''}));s.boards.board.edges=Array.from({length:9999},(_,i)=>({id:'e'+i,from:'l'+i,to:'l'+(i+1),directed:true,created_at:''}));s.boards.board.viewport={x:0,y:0,zoom:1};localStorage.setItem('lumen.fixture-capture',JSON.stringify(s));localStorage.removeItem('lumen.fixture-navigation');});await page.goto(base+'/scripts/knowledge-ui-fixture.html?mode=main&platform=macos&nodes&captureQA',{waitUntil:'domcontentloaded'});await page.waitForFunction(()=>window.__fixtureReactMounted);await openBoard();assert.ok(await page.locator('.node-card').count()<100);await page.getByRole('button',{name:'适配全部内容到屏幕',exact:true}).click();await page.locator('.heat-cell').first().waitFor();const first=await page.locator('.heat-cell').count();assert.ok(first<250);const sum=await page.locator('.heat-cell').evaluateAll(c=>c.reduce((n,e)=>n+Number(e.dataset.count),0));assert.equal(sum,10000);await saved();const z=(await capture()).boards.board.viewport.zoom;assert.ok(z<.2);assert.equal((await capture()).boards.board.edges.length,9999);assert.equal(await page.locator('.node-card').count(),0);assert.equal(await page.locator('.edge-line').count(),0);checks.push('10000-node/9999-edge board fits below 20%; all nodes and edges conserved; only bounded heat regions mount');
  await page.locator('.canvas-zoom-label').click();await page.locator('.node-card').first().waitFor();await blank();for(let i=0;i<22;i++)await page.keyboard.press('Meta+-');await page.locator('.heat-cell').first().waitFor();await saved();assert.ok((await capture()).boards.board.viewport.zoom<.02);assert.ok(await page.locator('.heat-cell').count()<first);checks.push('further zoom out progressively merges; zoom in restores visible detailed cards');await page.screenshot({path:out+'/editing-heatmap.png'});
+ await page.evaluate(() => {
+   const fixture = JSON.parse(localStorage.getItem('lumen.fixture-capture'));
+   const board = fixture.boards.board;
+   board.nodes = [{ id: 'equation', title: '公式节点', summary: '完整内容\n\n$$\\displaystyle \\sum_{n=1}^{N} a_n^2 = \\int_0^1 f(x)^2\\,dx\\tag{5.2}$$',
+     x: 380, y: 210, w: 670, docs: [], created_at: '', updated_at: '' }];
+   board.edges = [];
+   board.viewport = { x: 0, y: 0, zoom: 0.68 };
+   localStorage.setItem('lumen.fixture-capture', JSON.stringify(fixture));
+ });
+ await page.reload({ waitUntil: 'domcontentloaded' });
+ await page.waitForFunction(() => window.__fixtureReactMounted);
+ await openBoard();
+ const equation = page.locator('[data-node-id="equation"]');
+ await equation.locator('.katex-html').waitFor();
+ await page.waitForFunction(() => document.fonts.status === 'loaded');
+ await equation.click();
+ await page.locator('.np-close').click();
+ const resizeEquation = async (dx, dy) => {
+   const corner = await equation.locator('.corner-se').boundingBox();
+   const x = corner.x + corner.width / 2, y = corner.y + corner.height / 2;
+   await page.mouse.move(x, y);
+   await page.mouse.down();
+   await page.mouse.move(x + dx, y + dy, { steps: 6 });
+   await page.mouse.up();
+   await saved();
+ };
+ await resizeEquation(136, 43);
+ const wide = await equation.evaluate(el => el.offsetWidth);
+ assert.ok(wide > 850);
+ await resizeEquation(-272, -66);
+ const compact = await equation.evaluate(el => el.offsetWidth);
+ assert.ok(compact < 510 && compact > 250);
+ assert.equal(await equation.locator('.katex-tag').innerText(), '(5.2)');
+ const formula = equation.locator('.katex-html');
+ assert.ok(await formula.evaluate(el => el.scrollWidth <= el.clientWidth + 1));
+ assert.ok((await capture()).boards.board.nodes[0].w < 510);
+ checks.push('a title-and-question card with a displayed equation and equation number can be resized smaller after enlarging');
+ await page.screenshot({ path: out + '/equation-resized.png' });
+
+ await equation.click();
+ await page.locator('.node-panel').waitFor();
+ await page.mouse.dblclick(108, 560);
+ await page.locator('.node-panel').waitFor({ state: 'hidden' });
+ assert.equal(await page.locator('.node-card').count(), 1);
+ await page.locator('.board-canvas-live').dispatchEvent('dblclick', { clientX: 110, clientY: 565, detail: 2 });
+ assert.equal(await page.locator('.node-card').count(), 1);
+ await page.mouse.dblclick(740, 505);
+ await page.locator('.node-title-input').fill('明确双击');
+ await page.mouse.click(108, 640);
+ await saved();
+ assert.equal((await capture()).boards.board.nodes.length, 2);
+ checks.push('closing the panel or receiving a double-click without two blank releases creates nothing; intentional blank double-click still works');
+
+ const boardBeforePan = (await capture()).boards.board;
+ const writeCount = await page.evaluate(() => window.__fixtureBoardSaveCount);
+ await page.mouse.click(130, 640);
+ await page.waitForTimeout(680);
+ assert.equal(await page.evaluate(() => window.__fixtureBoardSaveCount), writeCount);
+ for (let i = 0; i < 3; i++) {
+   await page.mouse.move(110, 670);
+   await page.mouse.down();
+   await page.mouse.move(158, 694, { steps: 4 });
+   await page.mouse.up();
+ }
+ await saved();
+ const boardAfterPan = (await capture()).boards.board;
+ assert.equal(await page.evaluate(() => window.__fixtureBoardSaveCount), writeCount + 1);
+ assert.deepEqual(boardAfterPan.nodes, boardBeforePan.nodes);
+ assert.deepEqual(boardAfterPan.edges, boardBeforePan.edges);
+ assert.deepEqual(boardAfterPan.viewport, { ...boardBeforePan.viewport, x: boardBeforePan.viewport.x + 144, y: boardBeforePan.viewport.y + 72 });
+ await page.reload({ waitUntil: 'domcontentloaded' });
+ await page.waitForFunction(() => window.__fixtureReactMounted);
+ await openBoard();
+ const restoredCamera = await page.locator('.canvas-world').evaluate(el => {
+   const matrix = new DOMMatrixReadOnly(getComputedStyle(el).transform);
+   return [matrix.e, matrix.f, matrix.a];
+ });
+ assert.deepEqual(restoredCamera, [144, 72, 0.68]);
+ checks.push('a still click queues no save; repeated pans coalesce to a single latest viewport with the graph intact and restore on reload');
+
  assert.deepEqual(errors,[]);fs.writeFileSync(out+'/editing-ui-report.json',JSON.stringify({browser:'WebKit',fallback:'Browser plugin not available',checks,errors,largeBoard:{nodes:10000,edges:9999,heatCellsAtFit:first}},null,2));console.log(JSON.stringify({checks:checks.length,errors,heatCellsAtFit:first}));
 }catch(e){await page.screenshot({path:out+'/editing-failure.png'});fs.writeFileSync(out+'/editing-failure.txt',e.stack+'\n'+JSON.stringify(errors));throw e;}finally{await browser.close();}})();
