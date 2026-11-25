@@ -66,9 +66,14 @@ export function AiChat(props:Props){
   },[props.standalone]);
   const signals=Object.fromEntries(Object.values(states).map(s=>[s.conversationId,s]));
   const background=Object.entries(states).filter(([key,s])=>key!==active&&slots.some(slot=>slot.key===key)&&s.retained);
+  const hasNativeControls = props.standalone && (!props.platform || props.platform === 'macos');
   return <div className="ai-session-host" style={{height:'100%',display:'flex',flexDirection:'column'}}>
-    {lastDeleted&&<div className="ai-history-notice" role="status"><span>{restoreError||'对话已删除，已保存的笔记仍保留。'}</span><button className="ai-btn-secondary" disabled={restoring} onClick={()=>{setRestoring(true);void restoreConversation(props.projectId,props.boardId,lastDeleted).then(()=>{setLastDeleted(current=>current?.receipt===lastDeleted.receipt?undefined:current);setRestoreError('');}).catch(e=>{if(deletedRef.current?.receipt===lastDeleted.receipt)setRestoreError(String(e));}).finally(()=>setRestoring(false));}}>撤销删除</button></div>}
-    {background.length>0&&<div className="ai-background-tasks" role="status">{background.map(([key,s])=><button className="ai-background-task" key={key} onClick={()=>setActive(key)} title={s.progress}>{s.working&&<span className="ai-tool-spinner"/>}<span>{s.title||'对话'} · {s.failed?'保存未完成':s.progress||(s.working?'运行中':'草稿')}</span></button>)}</div>}
+    {(lastDeleted || background.length > 0) && (
+      <div className="ai-session-notices" data-native-controls={hasNativeControls || undefined} data-tauri-drag-region={hasNativeControls || undefined}>
+        {lastDeleted&&<div className="ai-history-notice" role="status"><span>{restoreError||'对话已删除，已保存的笔记仍保留。'}</span><button className="ai-btn-secondary" disabled={restoring} onClick={()=>{setRestoring(true);void restoreConversation(props.projectId,props.boardId,lastDeleted).then(()=>{setLastDeleted(current=>current?.receipt===lastDeleted.receipt?undefined:current);setRestoreError('');}).catch(e=>{if(deletedRef.current?.receipt===lastDeleted.receipt)setRestoreError(String(e));}).finally(()=>setRestoring(false));}}>撤销删除</button></div>}
+        {background.length>0&&<div className="ai-background-tasks" role="status">{background.map(([key,s])=><button className="ai-background-task" key={key} onClick={()=>setActive(key)} title={s.progress}>{s.working&&<span className="ai-tool-spinner"/>}<span>{s.title||'对话'} · {s.failed?'保存未完成':s.progress||(s.working?'运行中':'草稿')}</span></button>)}</div>}
+      </div>
+    )}
     {slots.map(slot=><div key={slot.key} hidden={slot.key!==active} style={slot.key===active?{flex:1,minHeight:0}:undefined}><ChatPane {...props} conversationId={slot.conversationId} messageIds={slot.messageIds} freshId={slot.freshId} initialHistory={slot.history} onConversationDeleted={removed} paneKey={slot.key} visible={visible&&slot.key===active} onSessionStatus={status} onNavigate={navigate} sessionSignals={signals}/></div>)}
   </div>;
 }

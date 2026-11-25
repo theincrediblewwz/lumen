@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import { Minimize2 } from 'lucide-react';
 import { api, pickStorageDir, type AppInfo, type BoardEdge, type BoardFile, type BoardMeta, type BoardNode, type ProjectMeta } from './api';
 import { ContextMenu, type ContextMenuState } from './components/ContextMenu';
@@ -75,7 +75,10 @@ async function svgToPngBase64(svg: string): Promise<string> {
 
 export default function App() {
   const [phase, setPhase] = useState<Phase>('loading');
-  const [platform, setPlatform] = useState<string>('');
+  const [appInfo, setAppInfo] = useState<AppInfo>();
+  const platform = appInfo?.platform ?? '';
+  const titlebarHeight = appInfo?.mac_titlebar_height;
+  const surfaceStyle = titlebarHeight ? { '--titlebar-height': `${titlebarHeight}px` } as CSSProperties : undefined;
   const [root, setRoot] = useState<string | null>(null);
   const [projects, setProjects] = useState<ProjectMeta[]>([]);
   const [layout, setLayout] = useState(EMPTY_PROJECT_LAYOUT);
@@ -311,7 +314,7 @@ export default function App() {
 
   /* 启动：读平台信息 + 配置 */
   useEffect(() => {
-    api.appInfo().then((i: AppInfo) => setPlatform(i.platform)).catch(() => {});
+    api.appInfo().then(setAppInfo).catch(() => {});
     api
       .configGet()
       .then(async (cfg) => {
@@ -936,7 +939,7 @@ export default function App() {
 
   if (phase === 'setup') {
     return (
-      <div className={`board-surface${fullscreen ? ' is-fullscreen' : ''}`}>
+      <div className={`board-surface${fullscreen ? ' is-fullscreen' : ''}`} style={surfaceStyle}>
         <TitleBar platform={platform} brand="脉络" onMenu={appMenu} onFullscreen={enterFullscreen} fullscreen={fullscreen} onSettings={() => setSettingsOpen(true)} />
         {fullscreenExit}
         <div className="screen-center">
@@ -963,7 +966,7 @@ export default function App() {
 
   /* ── 主界面 ── */
   return (
-    <div className={`board-surface${fullscreen ? ' is-fullscreen' : ''}`}>
+    <div className={`board-surface${fullscreen ? ' is-fullscreen' : ''}`} style={surfaceStyle}>
       <TitleBar
         platform={platform}
         brand="脉络"

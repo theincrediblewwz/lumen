@@ -249,8 +249,10 @@ const base=process.env.LSQ_UI_URL||'http://127.0.0.1:5198',out=path.resolve(proc
   await page.mouse.move(viewport.x + viewport.width - 65, viewport.y + 145); await page.mouse.wheel(0, -240);
   await page.waitForFunction(previous => document.querySelector('.board-branch-focus .canvas-world')?.getAttribute('style') !== previous, focusFit);
   const zoomed = await focusWorld.getAttribute('style');
-  await page.mouse.move(viewport.x + viewport.width - 30, viewport.y + 36);
-  await page.mouse.down(); await page.mouse.move(viewport.x + viewport.width - 168, viewport.y + 88, { steps: 7 }); await page.mouse.up();
+  const titlebar = await page.locator('.titlebar').boundingBox();
+  const canvasTop = Math.max(viewport.y, titlebar.y + titlebar.height);
+  await page.mouse.move(viewport.x + viewport.width - 30, canvasTop + 16);
+  await page.mouse.down(); await page.mouse.move(viewport.x + viewport.width - 168, canvasTop + 68, { steps: 7 }); await page.mouse.up();
   assert.notEqual(await focusWorld.getAttribute('style'), zoomed);
   await page.keyboard.press('Backspace'); await page.keyboard.press('ArrowRight');
   await page.evaluate(() => { const clipboardData = new DataTransfer(); clipboardData.setData('text/plain', '这里不能新增节点'); window.dispatchEvent(new ClipboardEvent('paste', { clipboardData })); });

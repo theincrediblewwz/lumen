@@ -12,15 +12,22 @@ pub struct AppInfo {
     pub version: String,
     pub platform: String,
     pub preview_data_dir: Option<String>,
+    #[cfg(target_os = "macos")]
+    pub mac_titlebar_height: Option<f64>,
 }
 
 #[tauri::command]
-pub fn get_app_info() -> AppInfo {
+pub fn get_app_info(_app: tauri::AppHandle) -> AppInfo {
     AppInfo {
         name: env!("CARGO_PKG_NAME").to_string(),
         version: env!("CARGO_PKG_VERSION").to_string(),
         platform: std::env::consts::OS.to_string(),
         preview_data_dir: if cfg!(feature="isolated-preview") {std::env::current_exe().ok().and_then(|p|p.parent().map(|p|p.join(".preview").join("webview").to_string_lossy().into_owned()))} else {None},
+        #[cfg(target_os = "macos")]
+        mac_titlebar_height: {
+            use tauri::Manager;
+            _app.try_state::<crate::MacTitlebarHeight>().map(|height| height.0)
+        },
     }
 }
 

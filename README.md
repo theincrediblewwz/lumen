@@ -5,9 +5,9 @@
 
 ## 当前版本
 
-[0.4.6 源码预览](https://github.com/theincrediblewwz/lumen/releases/tag/mac-v0.4.6) · [下载 Mac 0.4.0 安装包](https://github.com/theincrediblewwz/lumen/releases/tag/mac-v0.4.0) · [白板编辑与保存](./docs/CANVAS_AUTHORING.md)
+[0.4.7 源码预览](https://github.com/theincrediblewwz/lumen/releases/tag/mac-v0.4.7) · [下载 Mac 0.4.0 安装包](https://github.com/theincrediblewwz/lumen/releases/tag/mac-v0.4.0) · [白板编辑与保存](./docs/CANVAS_AUTHORING.md)
 
-**0.4.6 白板点选与全屏。** 白板平移后单击原节点即可选中。顶栏采用半透明毛玻璃过渡，Mac 原生按钮垂直居中。全屏入口位于专注视图旁，进出时顶栏淡滑过渡，全屏中只保留白板和左上角退出按钮。
+**0.4.7 Mac 顶栏与全屏。** 红黄绿按钮和悬停区域由 macOS 一起定位。普通窗口的毛玻璃覆盖到上缘，全屏白板铺满窗口。AI 对话草稿标签移到了系统按钮右侧。
 
 **0.4.5 白板与流程手势。** 未选中节点时，拖动会平移视野。流程图独立滚动和调宽，双指手势作用于流程面板。右侧问题面板可以缩成一行，并记住展开或缩小的状态。
 

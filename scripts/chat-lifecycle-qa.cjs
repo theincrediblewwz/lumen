@@ -35,5 +35,20 @@ const latest=()=>page.evaluate(()=>JSON.parse(localStorage.getItem('lumen.fixtur
  checks.push('real node edits while waiting are rejected without a write or overwrite');
  await page.locator('.ai-icon-btn[aria-label=设置]').click();const address=page.getByLabel('API 地址',{exact:false});await address.fill('https://gateway.example/openai?region=cn');await page.locator('.ai-endpoint').filter({hasText:'https://gateway.example/openai/chat/completions?region=cn'}).waitFor();await address.fill('https://gateway.example/v1/chat/completions?region=cn');assert.equal((await page.locator('.ai-endpoint').innerText()).split('chat/completions').length-1,2);await shot('lifecycle-04-resolved-endpoint');
  checks.push('settings previews the effective endpoint for custom prefixes and complete URLs while preserving query parameters');
+ await page.goto(url());
+ const draft = page.getByRole('textbox',{name:'输入问题',exact:true});
+ await draft.fill('用来测试切换的草稿');
+ await page.getByRole('button',{name:'新对话',exact:true}).click();
+ const draftBadge = page.locator('.ai-background-task').filter({hasText:'草稿'});
+ await draftBadge.waitFor();
+ for (const width of [1180, 520]) {
+  await page.setViewportSize({width,height:720});
+  const bounds = await draftBadge.boundingBox();
+  assert.ok(bounds.x >= 78 && bounds.x + bounds.width <= width);
+ }
+ await shot('lifecycle-05-draft-clear-of-window-controls');
+ await draftBadge.click();
+ assert.equal(await draft.inputValue(),'用来测试切换的草稿');
+ checks.push('the Mac chat draft stays clear of window controls and restores its original input when clicked');
  assert.deepEqual(errors,[]);fs.writeFileSync(path.join(output,'chat-lifecycle-qa.json'),JSON.stringify({checks,errors,realProviderCalls:0,realCredentialsRead:0,nativeFilesystemVerifiedSeparately:true},null,2));await browser.close();console.log(JSON.stringify({pass:true,checks:checks.length,output}));
 })().catch(async error=>{if(page){await shot('lifecycle-failure').catch(()=>{});fs.writeFileSync(path.join(output,'lifecycle-failure.txt'),await page.locator('body').ariaSnapshot().catch(()=>''));}if(browser)await browser.close();console.error(error);process.exitCode=1;});

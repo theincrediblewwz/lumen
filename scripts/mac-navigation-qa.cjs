@@ -127,17 +127,22 @@ async function drag(dx, dy) {
     const seam = await page.evaluate(() => {
       const top = document.querySelector('.titlebar'), canvas = document.querySelector('.project-canvas');
       const style = getComputedStyle(canvas), fade = getComputedStyle(top, '::before');
-      return { gap: canvas.getBoundingClientRect().top - top.getBoundingClientRect().bottom, border: style.borderTopWidth,
+      const barBox = top.getBoundingClientRect();
+      const logoBox = top.querySelector('.titlebar-logo').getBoundingClientRect();
+      return { canvasTop: canvas.getBoundingClientRect().top, barTop: barBox.top, barHeight: barBox.height,
+        logoCenter: logoBox.top + logoBox.height / 2, border: style.borderTopWidth,
         shadow: style.boxShadow, radius: style.borderRadius, barBorder: getComputedStyle(top).borderBottomWidth,
         mask: fade.maskImage || fade.webkitMaskImage, extension: fade.bottom, pointerEvents: fade.pointerEvents,
-        backdrop: fade.backdropFilter || fade.webkitBackdropFilter };
+        backdrop: fade.backdropFilter || fade.webkitBackdropFilter, tint: fade.backgroundColor };
     });
-    assert.equal(seam.gap, -20); assert.equal(seam.border, '0px'); assert.equal(seam.shadow, 'none'); assert.equal(seam.radius, '0px');
+    assert.equal(seam.canvasTop, seam.barTop); assert.equal(seam.barHeight, 52); assert.equal(seam.logoCenter, seam.barTop + 26);
+    assert.equal(seam.border, '0px'); assert.equal(seam.shadow, 'none'); assert.equal(seam.radius, '0px');
     assert.equal(seam.barBorder, '0px'); assert.match(seam.mask, /linear-gradient/);
-    assert.equal(seam.extension, '-24px'); assert.equal(seam.pointerEvents, 'none');
+    assert.equal(seam.extension, '-28px'); assert.equal(seam.pointerEvents, 'none');
     assert.match(seam.backdrop, /blur/);
+    assert.ok(Number(seam.tint.match(/([\d.]+)\)$/)?.[1]) < 0.65);
   }
-  checks.push('the topbar fades into the canvas without a separator or pointer interception in three themes and three material modes');
+  checks.push('the canvas extends under the entire translucent, natively centered topbar in three themes and three material modes');
   await page.setViewportSize({ width: 720, height: 480 }); await menu(); await page.getByRole('menuitem', { name: '导出', exact: true }).click();
   const bounds = await page.getByRole('menu').boundingBox(); assert.ok(bounds.x >= 0 && bounds.y >= 0 && bounds.x + bounds.width <= 721 && bounds.y + bounds.height <= 481);
   await page.keyboard.press('Escape'); await page.setViewportSize({ width: 1440, height: 1024 }); checks.push('expanded menu stays within a small window');

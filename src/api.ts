@@ -93,7 +93,13 @@ function saveBoard(board: BoardFile): Promise<void> {
   return save;
 }
 
-export type AppInfo = { name: string; version: string; platform: string; preview_data_dir?:string|null };
+export type AppInfo = {
+  name: string;
+  version: string;
+  platform: string;
+  preview_data_dir?: string | null;
+  mac_titlebar_height?: number | null;
+};
 
 /** 打开系统目录选择框（tauri-plugin-dialog） */
 export async function pickStorageDir(): Promise<string | null> {

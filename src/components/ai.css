@@ -693,7 +693,9 @@
 .ai-catalog-sources blockquote { margin:10px 0 16px; padding-left:12px; border-left:2px solid var(--border-color); color:var(--text-secondary); line-height:1.7; overflow-wrap:anywhere; white-space:pre-wrap; }
 .ai-endpoint { font-weight: 400; color: var(--text-muted); overflow-wrap: anywhere; line-height: 1.6; }
 .ai-progress { margin: 8px 0; gap: 8px; }
-.ai-background-tasks { display:flex; gap:8px; padding:8px 18px; overflow-x:auto; background:var(--bg-node); border-bottom:1px solid var(--border-color); }
+.ai-session-notices { flex:none; min-width:0; background:var(--bg-node); border-bottom:1px solid var(--border-color); }
+.ai-session-notices[data-native-controls='true'] { padding-inline-start:78px; }
+.ai-background-tasks { display:flex; gap:8px; padding:8px 18px; overflow-x:auto; }
 .ai-background-task { display:flex; align-items:center; gap:7px; flex-shrink:0; border:0; border-radius:20px; padding:6px 11px; background:var(--bg-hover); color:var(--text-secondary); font:inherit; font-size:12px; cursor:pointer; }
 .ai-background-task span:last-child { max-width:280px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .ai-memory-details { margin:8px 0; color:var(--text-secondary); font-size:12px; line-height:1.6; }

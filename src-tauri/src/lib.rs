@@ -52,41 +52,48 @@ fn apply_native_material(window: &tauri::WebviewWindow) {
 }
 
 #[cfg(target_os = "macos")]
-fn align_mac_window_controls(window: &tauri::Window) {
-    use objc2_app_kit::{NSWindow, NSWindowButton, NSWindowStyleMask};
-    use objc2_foundation::NSPoint;
+pub(crate) struct MacTitlebarHeight(pub f64);
 
-    // Match the 48-point title bar in styles.css, including after AppKit lays it out again.
-    const TITLEBAR_CENTER: f64 = 24.0;
-    let handle = window.clone();
-    let _ = window.run_on_main_thread(move || {
-        let Ok(raw) = handle.ns_window() else {
+#[cfg(target_os = "macos")]
+fn configure_mac_titlebar(handle: &tauri::WebviewWindow) -> Option<MacTitlebarHeight> {
+    use objc2_app_kit::{NSTitlebarSeparatorStyle, NSToolbar, NSWindow, NSWindowButton, NSWindowToolbarStyle};
+    use objc2_foundation::{MainThreadMarker, NSPoint};
+
+    let main = MainThreadMarker::new()?;
+    let raw = handle.ns_window().ok()?;
+    // The Tauri handle owns this NSWindow, and setup runs on the AppKit thread.
+    let window = unsafe { raw.cast::<NSWindow>().as_ref() }?;
+    // Let AppKit position the traffic lights and their hover area together.
+    let toolbar = NSToolbar::new(main);
+    window.setToolbar(Some(&toolbar));
+    window.setToolbarStyle(NSWindowToolbarStyle::Unified);
+    window.setTitlebarSeparatorStyle(NSTitlebarSeparatorStyle::None);
+
+    let button = window.standardWindowButton(NSWindowButton::CloseButton)?;
+    let bounds = button.bounds();
+    let button_center = NSPoint::new(0.0, bounds.origin.y + bounds.size.height / 2.0);
+    let center = button.convertPoint_toView(button_center, None);
+    let height = 2.0 * (window.frame().size.height - center.y);
+    (height.is_finite() && height > 0.0).then_some(MacTitlebarHeight(height))
+}
+
+#[cfg(target_os = "macos")]
+fn update_mac_fullscreen_toolbar(handle: &tauri::Window) {
+    use objc2_app_kit::{NSWindow, NSWindowStyleMask};
+
+    let window = handle.clone();
+    let _ = handle.run_on_main_thread(move || {
+        let Ok(raw) = window.ns_window() else {
             return;
         };
-        // The Tauri handle owns this NSWindow, and AppKit runs on its main thread here.
+        // Like setup, this uses the AppKit handle only on its main thread.
         let Some(window) = (unsafe { raw.cast::<NSWindow>().as_ref() }) else {
             return;
         };
-        if window.styleMask().contains(NSWindowStyleMask::FullScreen) {
-            return;
-        }
-
-        let center = NSPoint::new(0.0, window.frame().size.height - TITLEBAR_CENTER);
-        for kind in [
-            NSWindowButton::CloseButton,
-            NSWindowButton::MiniaturizeButton,
-            NSWindowButton::ZoomButton,
-        ] {
-            let Some(button) = window.standardWindowButton(kind) else {
-                continue;
-            };
-            let Some(parent) = (unsafe { button.superview() }) else {
-                continue;
-            };
-            let frame = button.frame();
-            let y = parent.convertPoint_fromView(center, None).y - frame.size.height / 2.0;
-            if (frame.origin.y - y).abs() > 0.5 {
-                button.setFrameOrigin(NSPoint::new(frame.origin.x, y));
+        if let Some(toolbar) = window.toolbar() {
+            let visible = !window.styleMask().contains(NSWindowStyleMask::FullScreen);
+            if toolbar.isVisible() != visible {
+                toolbar.setVisible(visible);
             }
         }
     });
@@ -161,11 +168,10 @@ pub fn run() {
                 chat_generation::release_owner(window.label());
             }
             #[cfg(target_os = "macos")]
-            if window.label() == "main"
-                && matches!(event, tauri::WindowEvent::Resized(_) | tauri::WindowEvent::Focused(true))
-            {
-                align_mac_window_controls(window);
+            if window.label() == "main" && matches!(event, tauri::WindowEvent::Resized(_)) {
+                update_mac_fullscreen_toolbar(window);
             }
+
         })
         .setup(|_app| {
             #[cfg(feature = "isolated-preview")]
@@ -181,7 +187,9 @@ pub fn run() {
                 use tauri::Manager;
                 if let Some(window) = _app.get_webview_window("main") {
                     apply_native_material(&window);
-                    align_mac_window_controls(&window.as_ref().window());
+                    if let Some(height) = configure_mac_titlebar(&window) {
+                        _app.manage(height);
+                    }
                 }
             }
             Ok(())

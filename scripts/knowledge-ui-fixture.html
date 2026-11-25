@@ -127,7 +127,7 @@ window.__fixtureSetNativeFullscreen = active => {
 window.__fixtureImportCalls=[];window.__fixtureShareReads=[];
 const importPlan={schema:'lumen.conversation-tree/v1',title:'从对话形成的问题',nodes:[{reference:'root',title:'理解主题',summary:'先看全貌',markdown:'# AI 整理\n\n公式 $x_i^2$。',parent:null},{reference:'child',title:'继续追问',summary:'继续寻找证据',markdown:'## 下一步\n\n$$\\frac{1}{2}$$',parent:'root'}]};
 window.__TAURI_INTERNALS__={metadata:{currentWindow:{label:'main'},currentWebview:{label:'main'}},transformCallback:callback=>{callbacks.set(++callbackId,callback);return callbackId},unregisterCallback:id=>callbacks.delete(id),invoke:async(command,args)=>{
-  if(command==='get_app_info'){await new Promise(resolve=>setTimeout(resolve,Math.min(10000,Number(fixtureParams.get('platformDelay'))||0)));return{name:'Lumen',version:'0.1.8',platform:fixturePlatform};}
+  if(command==='get_app_info'){await new Promise(resolve=>setTimeout(resolve,Math.min(10000,Number(fixtureParams.get('platformDelay'))||0)));return{name:'Lumen',version:'0.1.8',platform:fixturePlatform,mac_titlebar_height:fixturePlatform==='macos'&&fixtureParams.has('navigationQA')?52:null};}
   if(command==='conversation_import_context')return{scope:window.__fixtureScope??'synthetic-scope',projectRevision:'synthetic-project'};
   if(command==='conversation_share_html')throw Error('合成DOM读取回退');
   if(command==='conversation_share_cancel'){window.__fixtureShareCancelled=args.requestId;return;}
