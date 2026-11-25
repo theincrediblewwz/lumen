@@ -35,10 +35,10 @@ const evidence = path.resolve(process.env.LSQ_UI_EVIDENCE || 'mac-ui-evidence');
     const point = new DOMMatrixReadOnly(card.style.transform);
     return [card.querySelector('.project-tile-open').dataset.id, [point.m41, point.m42]];
   })));
-  const watchPreview = () => page.evaluate(() => new Promise(resolve => {
+  const watchPreview = (endpoint = null) => page.evaluate(id => new Promise(resolve => {
     const frames = [], end = performance.now() + 770;
     function read(now) {
-      const tile = document.querySelector('.project-tile.is-preview-tile.is-board');
+      const tile = document.querySelector(id ? `[data-preview-endpoint="${id}"]` : '.project-tile.is-preview-tile.is-board');
       const line = tile && document.querySelector(`.project-preview-spoke[data-preview-child="${tile.dataset.previewEndpoint}"]`);
       if (tile && line) {
         const point = new DOMMatrixReadOnly(tile.style.transform);
@@ -54,7 +54,7 @@ const evidence = path.resolve(process.env.LSQ_UI_EVIDENCE || 'mac-ui-evidence');
       if (now < end) requestAnimationFrame(read); else resolve(frames);
     }
     requestAnimationFrame(read);
-  }));
+  }), endpoint);
   const point = async (locator, offsetY = 32) => {
     const rect = await locator.boundingBox();
     assert.ok(rect);
@@ -293,7 +293,57 @@ const evidence = path.resolve(process.env.LSQ_UI_EVIDENCE || 'mac-ui-evidence');
     await page.locator('[data-preview-label="project"] .katex').waitFor();
     assert.equal(await page.locator('.project-preview-arrow[data-preview-owner="project"]').count(), 2);
     await page.screenshot({ path: path.join(evidence, 'project-preview-labelled-arrows.png') });
-    await branches('project').getByRole('button', { name: '阅读资料', exact: true }).dblclick();
+
+    const beforeNested = await saved();
+    const readingId = beforeNested.projects.find(project => project.name === '阅读资料').id;
+    const deepest = beforeNested.projects.find(project => project.name === '第三层');
+    const deepBoard = beforeNested.boards.find(board => board.name === '最深白板');
+    const deepEndpoint = `${deepest.id}/${deepBoard.id}`;
+    const reading = branches('project').getByRole('button', { name: '阅读资料', exact: true });
+    const deep = branches(readingId).getByRole('button', { name: '第三层', exact: true });
+    const deepPreview = branches(deepest.id).getByRole('button', { name: '最深白板', exact: true });
+    const outerPositions = await positions();
+    await reading.click(); await settled(readingId);
+    assert.equal(await reading.getAttribute('aria-expanded'), 'true');
+    assert.equal(await deepPreview.count(), 0);
+    const beforeDeepView = await page.locator('.project-canvas-world').getAttribute('style');
+    const deepOpening = watchPreview(deepEndpoint);
+    await deep.click(); await settled(deepest.id);
+    await deepPreview.waitFor();
+    assert.equal(await trail(), '项目首页');
+    assert.equal(await folder('桌面夹').getAttribute('aria-expanded'), 'true');
+    assert.equal(await deep.getAttribute('aria-expanded'), 'true');
+    assert.equal(await branches('project').count(), 4);
+    assert.deepEqual(await positions(), outerPositions);
+    assert.equal(await page.locator('[data-preview-label="project"] .katex').count(), 1);
+    const deepLine = page.locator(`.project-preview-spoke[data-preview-child="${deepEndpoint}"]`);
+    const attachedToParent = await deepLine.evaluate((element, parent) => {
+      const card = document.querySelector(`[data-preview-endpoint="${parent}"]`);
+      const point = new DOMMatrixReadOnly(card.style.transform);
+      const x = Number(element.getAttribute('x1')) - point.m41;
+      const y = Number(element.getAttribute('y1')) - point.m42;
+      return x >= 22.99 && x <= 131.01 && y >= 13.99 && y <= 80.01;
+    }, deepest.id);
+    assert.equal(attachedToParent, true);
+    const nestedFrames = await deepOpening;
+    assert.ok(nestedFrames.filter(frame => frame.alpha > 0.02 && frame.alpha < 0.98).length >= 3);
+    assert.ok(nestedFrames.every(frame => frame.endpointError < 0.02));
+    await page.screenshot({ path: path.join(evidence, 'project-preview-nested.png') });
+    await deep.click(); await branches(deepest.id).first().waitFor({ state: 'detached' });
+    assert.equal(await deep.getAttribute('aria-expanded'), 'false');
+    assert.equal(await reading.getAttribute('aria-expanded'), 'true');
+    assert.equal(await page.locator('.project-canvas-world').getAttribute('style'), beforeDeepView);
+    assert.deepEqual(await saved(), beforeNested);
+    await deep.press('Space'); await settled(deepest.id);
+    await deepPreview.click(); await page.locator('.board-canvas-live').waitFor();
+    assert.equal(await trail(), '最深白板');
+    await crumb('项目首页').click(); await folder('桌面夹').waitFor();
+    assert.equal(await allBranches().count(), 0);
+    check('nested folders expand on the same canvas, animate their own spokes, and collapse a level without changing positions or saved content');
+
+    await folder('桌面夹').click(); await settled('project');
+    await reading.click(); await settled(readingId);
+    await reading.dblclick();
     await folder('第三层').waitFor();
     assert.equal(await trail(), '阅读资料');
     await crumb('项目首页').click();
@@ -332,9 +382,11 @@ const evidence = path.resolve(process.env.LSQ_UI_EVIDENCE || 'mac-ui-evidence');
 
     await page.evaluate(() => { window.__fixtureNavigationFailure = true; });
     const restartPoint = await point(folder('第三个项目'));
+    const restartPosition = (await positions())[rootFolder.id];
     await drag(restartPoint, { x: restartPoint.x + 45, y: restartPoint.y + 85 });
     await page.locator('.error-bar').filter({ hasText: '合成磁盘写入失败' }).waitFor();
-    assert.deepEqual(await point(folder('第三个项目')), restartPoint);
+    // The error banner shifts the whole canvas. The card should roll back within that canvas.
+    assert.deepEqual((await positions())[rootFolder.id], restartPosition);
     assert.deepEqual((await saved()).layout.projects[rootFolder.id].position, rootPosition);
     await page.reload({ waitUntil: 'domcontentloaded' });
     await folder('第三个项目').waitFor();

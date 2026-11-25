@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { peerOffset, radialPositions, revealCards, translate } from './expansion';
+import { nestedPositions, peerOffset, radialPositions, revealCards, translate } from './expansion';
 import { TILE_HEIGHT, TILE_WIDTH } from './layout';
 
 const origin = { x: 54, y: 66 };
@@ -36,5 +36,29 @@ describe('project folder previews', () => {
     expect(next.x + point.x * next.zoom).toBeCloseTo(24);
     expect(next.y).toEqual(view.y);
     expect(view).toEqual({ x: 0, y: 0, zoom: 0.9 });
+  });
+
+  it('grows an inner preview outward and avoids all previously visible cards', () => {
+    const folder = { x: 344, y: -51 };
+    const children = nestedPositions(folder, origin, 1, [origin, folder]);
+    expect(children[0].x).toBeGreaterThan(folder.x);
+    expect(children[0].y).toBeLessThan(folder.y);
+
+    const occupied = [origin, folder, children[0], { x: 400, y: 125 }, { x: 593, y: -30 }];
+    const spread = nestedPositions(folder, origin, 40, occupied);
+    expect(spread).toHaveLength(40);
+    for (const [i, point] of spread.entries()) {
+      expect([...occupied, ...spread.slice(0, i)].every(other => Math.abs(point.x - other.x) >= TILE_WIDTH + 24
+        || Math.abs(point.y - other.y) >= TILE_HEIGHT + 24)).toBe(true);
+    }
+  });
+
+  it('prioritizes the newly expanded group when the full preview does not fit', () => {
+    const view = { x: 0, y: 0, zoom: 1 };
+    const folder = { x: 490, y: 90 }, child = { x: 749, y: 90 };
+    const next = revealCards(view, [origin, folder, child], folder, 720, 480, [folder, child]);
+    expect(next.zoom).toEqual(view.zoom);
+    expect(next.x + child.x + TILE_WIDTH).toEqual(696);
+    expect(next.x + folder.x).toBeGreaterThan(24);
   });
 });

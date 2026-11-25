@@ -1,5 +1,5 @@
 import { Check, Plus, Sparkles, Star, X } from 'lucide-react';
-import { memo, useEffect, useId, useRef, useState, type MouseEvent, type PointerEvent } from 'react';
+import { memo, useEffect, useId, useRef, useState, type KeyboardEvent, type MouseEvent, type PointerEvent } from 'react';
 import type { BoardMeta, Viewport } from '../api';
 import { fitToBounds, IDENTITY_VIEWPORT, screenToWorld, worldToScreen, zoomByFactor, type Vec2 } from '../canvas/CanvasEngine';
 import { straightPath } from '../canvas/geometry';
@@ -118,7 +118,7 @@ const TileContent = memo(function TileContent({ tile, tags, drop }: { tile: Cata
 
 export function ProjectCanvas({ scope, folderId, folderName, tiles, relations, tags, filtering, disabled, readBoards, previewTiles, onOpen, onPlace, onConnect, onBend, onLabel, onRelationMenu, onFavorite, onMenu, addMenuOpen, onAdd, onWorkspaceAi }: Props) {
   const element = useRef<HTMLElement>(null);
-  const { viewport, view, setView, takeCamera, persistView, selected, scene, message, toggle, close } = useExpansion({
+  const { viewport, view, setView, takeCamera, persistView, expanded, scene, toggle, close } = useExpansion({
     host: element, scope, folderId, tiles, readBoards, previewTiles,
   });
   const wheelSave = useRef(0);
@@ -141,12 +141,12 @@ export function ProjectCanvas({ scope, folderId, folderName, tiles, relations, t
   const endpoints = new Map(tiles.map(tile => [
     relationEndpoint(tile), { name: tile.row.name, position: tile.position, box: tileBox(tile, tilePosition(tile)) },
   ]));
-  const branches = scene.branches.map(branch => {
-    const owner = endpoints.get(branch.owner);
-    const drag = dragged?.kind === 'project' && dragged.id === branch.owner ? dragged.position : undefined;
-    const point = owner && drag ? translate(branch.point, { x: drag.x - owner.position.x, y: drag.y - owner.position.y }) : branch.point;
-    return { ...branch, point, box: owner?.box ?? folderBox(branch.origin) };
-  });
+  const draggingFolder = dragged?.kind === 'project' && dragged.id ? endpoints.get(dragged.id) : undefined;
+  const dragOffset = draggingFolder && dragged?.position ? {
+    x: dragged.position.x - draggingFolder.position.x, y: dragged.position.y - draggingFolder.position.y,
+  } : undefined;
+  const branches = scene.branches.map(branch => dragOffset && branch.root === dragged?.id
+    ? { ...branch, point: translate(branch.point, dragOffset) } : branch);
   const relationIndex = new Map((relations ?? []).map(edge => [relationKey(edge), edge]));
   function layRelation(relation: ProjectRelation, from: { name: string; box: ProjectBox }, to: { name: string; box: ProjectBox }, preview = false) {
     const key = relationKey(relation);
@@ -169,6 +169,27 @@ export function ProjectCanvas({ scope, folderId, folderName, tiles, relations, t
     return [{ ...layRelation(relation, from, to, true), owner: from.owner, opacity: Math.min(from.opacity, to.opacity) }];
   }) : [];
   const named = laidRelations.find(edge => edge.key === editingName);
+
+  function clickTile(event: MouseEvent<HTMLButtonElement>, tile: CatalogTile, owner?: string) {
+    if (event.detail > 0 && suppressClick.current) return;
+    if (tile.kind === 'board' || event.detail === 0) onOpen(tile);
+    else if (event.detail === 1) toggle(tile.row.id, owner);
+  }
+
+  function tileKeyDown(event: KeyboardEvent<HTMLButtonElement>, tile: CatalogTile, owner?: string) {
+    if (tile.kind === 'project' && event.key === ' ') {
+      event.preventDefault();
+      if (!event.repeat) toggle(tile.row.id, owner);
+    } else if (owner === undefined && (event.key === 'ContextMenu' || (event.shiftKey && event.key === 'F10'))) {
+      event.currentTarget.dispatchEvent(new window.MouseEvent('contextmenu', { bubbles: true }));
+    }
+  }
+
+  function previewStatus(message?: string) {
+    return message !== undefined && <span className="project-preview-status" role="status">
+      {message || (filtering ? '此项目中没有匹配的内容' : '此项目为空')}
+    </span>;
+  }
 
   useEffect(() => {
     const host = element.current!;
@@ -369,7 +390,7 @@ export function ProjectCanvas({ scope, folderId, folderName, tiles, relations, t
           if (event.currentTarget.hasPointerCapture(pointer)) event.currentTarget.releasePointerCapture(pointer);
           setConnection(undefined);
           setBending(undefined);
-        } else if (event.key === 'Escape' && selected && !editingName && !disabled) {
+        } else if (event.key === 'Escape' && expanded.size && !editingName && !disabled) {
           event.stopPropagation();
           close();
         }
@@ -384,8 +405,9 @@ export function ProjectCanvas({ scope, folderId, folderName, tiles, relations, t
               <path d="M 1 1 L 9 5 L 1 9 Z" fill="currentColor" />
             </marker>
           </defs>
-          {branches.map(({ owner, tile, box, point, opacity }) => {
-            const spoke = previewSpoke(box, tile, point);
+          {branches.map(({ owner, tile, origin, point, opacity }) => {
+            const parent = endpoints.get(owner)?.box ?? projected.get(owner)?.box ?? folderBox(origin);
+            const spoke = previewSpoke(parent, tile, point);
             return spoke && <line key={`${owner}:${tileKey(tile)}`} className="project-preview-spoke" aria-hidden="true"
               data-preview-child={relationEndpoint(tile)} x1={spoke.start.x} y1={spoke.start.y} x2={spoke.end.x} y2={spoke.end.y} opacity={opacity} />;
           })}
@@ -427,12 +449,13 @@ export function ProjectCanvas({ scope, folderId, folderName, tiles, relations, t
           const moving = dragged?.id === tile.row.id && dragged.kind === tile.kind;
           const point = tilePosition(tile);
           const folder = tile.kind === 'project';
-          const expanded = folder && tile.row.id === selected;
+          const isExpanded = folder && expanded.has(tile.row.id);
+          const message = isExpanded ? expanded.get(tile.row.id) : undefined;
           const endpoint = relationEndpoint(tile);
           return (
             <div
               key={tileKey(tile)}
-              className={`project-tile is-${tile.kind}${expanded ? ' is-expanded' : ''}${moving ? ' is-moving' : ''}${dragged?.target === tile.row.id && folder ? ' is-drop-project' : ''}${connection?.target === endpoint ? ' is-connection-target' : ''}${tile.favorite ? ' is-favorite' : ''}`}
+              className={`project-tile is-${tile.kind}${isExpanded ? ' is-expanded' : ''}${moving ? ' is-moving' : ''}${dragged?.target === tile.row.id && folder ? ' is-drop-project' : ''}${connection?.target === endpoint ? ' is-connection-target' : ''}${tile.favorite ? ' is-favorite' : ''}`}
               style={{ transform: `translate3d(${point.x}px,${point.y}px,0)`, width: TILE_WIDTH, minHeight: TILE_HEIGHT }}
               data-relation-endpoint={endpoint}
               onContextMenu={event => { if (!disabled) onMenu(event, tile); }}
@@ -440,23 +463,12 @@ export function ProjectCanvas({ scope, folderId, folderName, tiles, relations, t
               <button
                 type="button" disabled={disabled} className="project-tile-open"
                 data-kind={tile.kind} data-id={tile.row.id}
-                aria-label={tile.row.name} aria-expanded={folder ? expanded : undefined}
-                aria-busy={expanded && message === '正在读取…' ? true : undefined}
+                aria-label={tile.row.name} aria-expanded={folder ? isExpanded : undefined}
+                aria-busy={message === '正在读取…' ? true : undefined}
                 title={folder ? `${tile.row.name} · 单击预览 · 双击进入` : tile.row.name}
-                onClick={event => {
-                  if (event.detail > 0 && suppressClick.current) return;
-                  if (!folder || event.detail === 0) onOpen(tile);
-                  else if (event.detail === 1) toggle(tile.row.id);
-                }}
+                onClick={event => clickTile(event, tile)}
                 onDoubleClick={() => { if (folder && !suppressClick.current) onOpen(tile); }}
-                onKeyDown={event => {
-                  if (folder && event.key === ' ') {
-                    event.preventDefault();
-                    if (!event.repeat) toggle(tile.row.id);
-                  } else if (event.key === 'ContextMenu' || (event.shiftKey && event.key === 'F10')) {
-                    event.currentTarget.dispatchEvent(new window.MouseEvent('contextmenu', { bubbles: true }));
-                  }
-                }}
+                onKeyDown={event => tileKeyDown(event, tile)}
               >
                 <TileContent tile={tile} tags={tags} drop={folder ? tile.row.id : undefined} />
               </button>
@@ -470,26 +482,29 @@ export function ProjectCanvas({ scope, folderId, folderName, tiles, relations, t
                 aria-label={`收藏置顶${folder ? '项目' : '白板'}：${tile.row.name}`}
                 title={tile.favorite ? '取消收藏' : '收藏并置顶'} onClick={() => onFavorite(tile)}
               ><Star size={15} fill={tile.favorite ? 'currentColor' : 'none'} /></button>
-              {expanded && message !== undefined && <span className="project-preview-status" role="status">
-                {message || (filtering ? '此项目中没有匹配的内容' : '此项目为空')}
-              </span>}
+              {previewStatus(message)}
             </div>
           );
         })}
-        {branches.map(({ owner, tile, point, opacity }) => {
-          const shown = owner === selected && opacity >= 0.72;
+        {branches.map(({ owner, tile, point, opacity, retiring }) => {
+          const shown = expanded.has(owner) && !retiring && opacity >= 0.72;
           const folder = tile.kind === 'project';
-          return <div key={`${owner}:${tileKey(tile)}`} className={`project-tile is-${tile.kind} is-preview-tile`}
+          const isExpanded = shown && folder && expanded.has(tile.row.id);
+          const message = isExpanded ? expanded.get(tile.row.id) : undefined;
+          return <div key={`${owner}:${tileKey(tile)}`} className={`project-tile is-${tile.kind} is-preview-tile${isExpanded ? ' is-expanded' : ''}`}
             style={{ transform: `translate3d(${point.x}px,${point.y}px,0)`, width: TILE_WIDTH, minHeight: TILE_HEIGHT, opacity }}
             data-preview-owner={owner} data-preview-endpoint={relationEndpoint(tile)} aria-hidden={!shown}>
             <button type="button" className="project-tile-open project-preview-open" data-id={tile.row.id} disabled={disabled || !shown}
-              aria-label={tile.row.name} title={folder ? `${tile.row.name} · 双击进入` : tile.row.name}
+              aria-label={tile.row.name} aria-expanded={folder ? isExpanded : undefined} aria-busy={message === '正在读取…' ? true : undefined}
+              title={folder ? `${tile.row.name} · 单击预览 · 双击进入` : tile.row.name}
               onPointerDown={event => { if (event.button === 0) suppressClick.current = false; }}
-              onClick={event => { if (!folder || event.detail === 0) onOpen(tile); }}
+              onClick={event => clickTile(event, tile, owner)}
               onDoubleClick={() => { if (folder) onOpen(tile); }}
+              onKeyDown={event => tileKeyDown(event, tile, owner)}
               onContextMenu={event => { event.preventDefault(); event.stopPropagation(); }}>
               <TileContent tile={tile} tags={tags} />
             </button>
+            {previewStatus(message)}
           </div>;
         })}
       </div>

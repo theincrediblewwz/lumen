@@ -5,7 +5,9 @@
 
 ## 当前版本
 
-[0.4.9 源码预览](https://github.com/theincrediblewwz/lumen/releases/tag/mac-v0.4.9) · [下载 Mac 0.4.0 安装包](https://github.com/theincrediblewwz/lumen/releases/tag/mac-v0.4.0) · [白板编辑与保存](./docs/CANVAS_AUTHORING.md)
+[0.4.10 源码预览](https://github.com/theincrediblewwz/lumen/releases/tag/mac-v0.4.10) · [下载 Mac 0.4.0 安装包](https://github.com/theincrediblewwz/lumen/releases/tag/mac-v0.4.0) · [白板编辑与保存](./docs/CANVAS_AUTHORING.md)
+
+**0.4.10 多层项目预览。** 单击预览里的子文件夹可继续展开下一层。再点该文件夹会收起它的下级内容，双击仍可进入。 [项目画布指南](./docs/PROJECT_CANVAS.md)
 
 **0.4.9 菜单开关。** 右上角菜单和项目里的「新建」点一下展开，再点一下收起。点击白板空白处也可关闭。
 

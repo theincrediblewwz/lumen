@@ -25,6 +25,45 @@ export function radialPositions(center: Vec2, count: number): Vec2[] {
   return positions;
 }
 
+/** Prefer the space beyond the parent, keeping the cards already on screen in place. */
+export function nestedPositions(center: Vec2, parent: Vec2, count: number, occupied: Vec2[]): Vec2[] {
+  const width = TILE_WIDTH + GAP, height = TILE_HEIGHT + GAP;
+  const cells = new Map<string, Vec2[]>();
+  const occupy = (point: Vec2) => {
+    const key = `${Math.floor(point.x / width)},${Math.floor(point.y / height)}`;
+    const cell = cells.get(key);
+    if (cell) cell.push(point);
+    else cells.set(key, [point]);
+  };
+  for (const point of occupied) occupy(point);
+
+  const outward = Math.atan2((center.y - parent.y) / height, (center.x - parent.x) / width);
+  const positions: Vec2[] = [];
+  for (let ring = 1; positions.length < count; ring++) {
+    const slots = ring * 6;
+    for (let slot = 0; slot < slots && positions.length < count; slot++) {
+      // Alternate sides of the outward direction.
+      const offset = Math.ceil(slot / 2) * (slot % 2 ? 1 : -1);
+      const angle = outward + offset * 2 * Math.PI / slots;
+      const point = {
+        x: center.x + Math.cos(angle) * width * ring * 1.46,
+        y: center.y + Math.sin(angle) * height * ring * 1.46,
+      };
+      const column = Math.floor(point.x / width), row = Math.floor(point.y / height);
+      let blocked = false;
+      for (let x = column - 1; x <= column + 1 && !blocked; x++) {
+        for (let y = row - 1; y <= row + 1 && !blocked; y++) {
+          blocked = cells.get(`${x},${y}`)?.some(card => Math.abs(card.x - point.x) < width && Math.abs(card.y - point.y) < height) ?? false;
+        }
+      }
+      if (blocked) continue;
+      positions.push(point);
+      occupy(point);
+    }
+  }
+  return positions;
+}
+
 export function cardBounds(points: Vec2[]) {
   if (!points.length) return null;
   let left = Infinity, top = Infinity, right = -Infinity, bottom = -Infinity;
@@ -86,10 +125,12 @@ export function visiblePosition(p: Vec2, view: Viewport, width: number, height: 
 }
 
 /** Pan just enough to disclose the preview at the existing zoom. */
-export function revealCards(base: Viewport, points: Vec2[], center: Vec2, width: number, height: number): Viewport {
-  const box = cardBounds(points);
-  if (!box) return base;
+export function revealCards(base: Viewport, points: Vec2[], center: Vec2, width: number, height: number, priority?: Vec2[]): Viewport {
+  const extent = cardBounds(points);
+  if (!extent) return base;
   const padding = 24;
+  const fits = extent.width * base.zoom + padding * 2 <= width && extent.height * base.zoom + padding * 2 <= height;
+  const box = priority && !fits ? cardBounds(priority) ?? extent : extent;
   const pan = (origin: number, size: number, start: number, span: number, anchor: number, anchorSize: number) => {
     const first = padding - start * base.zoom;
     const last = size - padding - (start + span) * base.zoom;
