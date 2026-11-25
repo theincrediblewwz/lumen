@@ -1,21 +1,28 @@
 import { BoardWriteSettings } from './BoardWriteSettings';
-import { useEffect, useRef, useState, type SelectHTMLAttributes } from 'react';
-import { ChevronDown, CopyPlus, ExternalLink, RotateCcw, Cable } from 'lucide-react';
-import { listAiProfiles, loadAiProfileDeferred, hasSavedAiKey, isAiConfigured, normalizeAiSettings, saveAiProfile, type AiSettings } from '../ai/aiSettings';
+import { useCallback, useEffect, useRef, useState, type SelectHTMLAttributes } from 'react';
+import { ChevronDown, CopyPlus, ExternalLink, RotateCcw, Cable, Trash2 } from 'lucide-react';
+import { listAiProfiles, loadAiProfileDeferred, loadAiSettingsDeferred, loadLegacyAiSettingsDeferred, deleteAiProfile, deleteLegacyAiSettings, hasSavedAiKey, isAiConfigured, normalizeAiSettings, saveAiProfile, type AiProfile, type AiSettings } from '../ai/aiSettings';
 import { modelLimits, modelPreset, getProviderPresets, providerFor, recommendedModel, REASONING_LABELS } from '../ai/modelCatalog';
 import { CatalogManager } from './CatalogManager';
 import { testConnection } from '../ai/catalogAssistant';
 import { chatCompletionsUrl } from '../ai/provider';
+import { ConfirmAction } from './ConfirmAction';
+
+const LEGACY = ':legacy';
 
 function ConfigSelect(props: SelectHTMLAttributes<HTMLSelectElement>) {
   return <span className="ai-select-wrap"><select {...props}/><ChevronDown size={14} strokeWidth={1.7} aria-hidden="true"/></span>;
 }
 
-export function AiSettingsForm({ initial, onSave, onCancel, onBusyChange, boardTools = true }: {
-  initial: AiSettings; onSave: (settings: AiSettings) => void; onCancel: () => void; onBusyChange?: (busy:boolean)=>void; boardTools?: boolean;
+export function AiSettingsForm({ initial, onSave, onDelete, onCancel, onBusyChange, boardTools = true }: {
+  initial: AiSettings; onSave: (settings: AiSettings) => void; onDelete?: (settings: AiSettings) => void;
+  onCancel: () => void; onBusyChange?: (busy:boolean)=>void; boardTools?: boolean;
 }) {
   const [s, setS] = useState<AiSettings>(() => ({ ...initial, maxTokens: initial.maxTokens ?? modelLimits(initial.model).output }));
+  const [connection, setConnection] = useState(initial);
   const [profiles, setProfiles] = useState(listAiProfiles);
+  const [legacyAvailable, setLegacyAvailable] = useState(() => !!loadLegacyAiSettingsDeferred());
+  const [legacySelected, setLegacySelected] = useState(!initial.profileId && legacyAvailable);
   const [name, setName] = useState(() => listAiProfiles().find(p => p.id === initial.profileId)?.name ?? '我的配置');
   const [providerId, setProviderId] = useState(() => providerFor(initial.baseUrl)?.id ?? 'custom');
   const requestUrl=(()=>{try{return chatCompletionsUrl(s.baseUrl,s.endpointMode);}catch{return '';}})();
@@ -23,14 +30,14 @@ export function AiSettingsForm({ initial, onSave, onCancel, onBusyChange, boardT
   const [working, setWorking] = useState(false);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
-  const generation = useRef(0);
+  const [deleteCandidate, setDeleteCandidate] = useState<{ name: string; profile?: AiProfile }>();
+  const cancelDelete = useCallback(() => setDeleteCandidate(undefined), []);
   const [,renderCatalogue]=useState(0);
   const [testing,setTesting]=useState(false);const [testResult,setTestResult]=useState('');
   useEffect(()=>{onBusyChange?.(working||testing);},[working,testing,onBusyChange]);
   const testGeneration=useRef(0);
   useEffect(()=>{testGeneration.current++;setTestResult('');setTesting(false);},[s.baseUrl,s.model,s.apiKey,s.reasoningEffort]);
   useEffect(()=>{const changed=()=>renderCatalogue(n=>n+1);window.addEventListener('lumen-catalog-changed',changed);return()=>{window.removeEventListener('lumen-catalog-changed',changed);testGeneration.current++;};},[]);
-  useEffect(() => () => { generation.current++; }, []);
   const providers=getProviderPresets();
   const provider = providers.find(p => p.id === providerId);
   const preset = modelPreset(s.model,s.baseUrl);
@@ -41,18 +48,22 @@ export function AiSettingsForm({ initial, onSave, onCancel, onBusyChange, boardT
     if (next.contextBudget !== s.contextBudget || next.maxTokens !== s.maxTokens || next.temperature !== s.temperature) setNotice('已调整到当前模型的可用范围。');
     setS(next);
   };
-  const chooseProfile = async (id: string) => {
-    const current = ++generation.current;
-    setWorking(true); setError('');
-    setS(old => ({ ...old, apiKey: '' }));
+  const showProfile = (loaded: AiSettings, rows: AiProfile[], legacy: boolean) => {
+    const presetProvider = providerFor(loaded.baseUrl);
+    setS({ ...loaded, maxTokens: loaded.maxTokens ?? modelLimits(loaded.model, undefined, loaded.baseUrl).output });
+    setName(rows.find(p => p.id === loaded.profileId)?.name ?? '我的配置');
+    setProviderId(presetProvider?.id ?? 'custom');
+    setCustomModel(!presetProvider?.models.some(m => m.id === loaded.model));
+    setLegacySelected(legacy);
+  };
+  const chooseProfile = (id: string) => {
+    setError('');
     try {
-      const loaded = loadAiProfileDeferred(id);
-      if (current !== generation.current) return;
-      setS({ ...loaded, maxTokens: loaded.maxTokens ?? modelLimits(loaded.model).output }); setName(profiles.find(p => p.id === id)?.name ?? '我的配置');
-      setProviderId(providerFor(loaded.baseUrl)?.id ?? 'custom'); setCustomModel(!providerFor(loaded.baseUrl)?.models.some(m => m.id === loaded.model));
+      const loaded = id === LEGACY ? loadLegacyAiSettingsDeferred() : loadAiProfileDeferred(id);
+      if (!loaded) throw new Error('配置不存在');
+      showProfile(loaded, profiles, id === LEGACY);
       setNotice('点击保存后使用这套配置。');
-    } catch { if (current === generation.current) setError('读取配置失败，请重新选择或填写密钥。'); }
-    finally { if (current === generation.current) setWorking(false); }
+    } catch { setError('读取配置失败，请重新选择。'); }
   };
   const chooseProvider = (id: string) => {
     setProviderId(id); setError('');
@@ -72,22 +83,48 @@ export function AiSettingsForm({ initial, onSave, onCancel, onBusyChange, boardT
     } catch (e) { setError(e instanceof Error ? e.message : '保存失败，请重试。'); }
     finally { setWorking(false); }
   };
+  const remove = async () => {
+    if (!deleteCandidate || working || testing) return;
+    setDeleteCandidate(undefined); setWorking(true); setError('');
+    try {
+      if (deleteCandidate.profile) await deleteAiProfile(deleteCandidate.profile);
+      else await deleteLegacyAiSettings();
+      const rows = listAiProfiles();
+      const remainingLegacy = !!loadLegacyAiSettingsDeferred();
+      const next = loadAiSettingsDeferred();
+      setProfiles(rows); setLegacyAvailable(remainingLegacy); setConnection(next);
+      showProfile(next, rows, !next.profileId && remainingLegacy);
+      setTestResult('');
+      setNotice(`已删除「${deleteCandidate.name}」。`);
+      onDelete?.(next);
+    } catch (e) {
+      setProfiles(listAiProfiles());
+      setLegacyAvailable(!!loadLegacyAiSettingsDeferred());
+      setError(e instanceof Error ? e.message : '删除未完成，请重试。');
+    } finally { setWorking(false); }
+  };
+  const selectedProfile = profiles.find(profile => profile.id === s.profileId);
   return <form className="ai-settings ai-settings-form" onSubmit={save} aria-label="AI 设置">
     <fieldset className="ai-settings-scroll" disabled={working}>
       <div className="ai-settings-intro"><h3>AI 设置</h3><p>保存常用连接，按需切换。</p></div>
       <section className="ai-profile-section" aria-label="配置管理">
-        <div className="ai-profile-picker">
-          <label className="ai-field"><span>已保存的配置</span><ConfigSelect aria-label="已保存的配置" value={s.profileId ?? ''} disabled={working} onChange={e => void chooseProfile(e.target.value)}>
-            {!s.profileId && <option value="">{profiles.length ? '新配置' : '原有配置 · 尚未命名'}</option>}
-            {profiles.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
-          </ConfigSelect></label>
-          <button type="button" className="ai-btn-secondary ai-copy-profile" disabled={working} onClick={() => {
-            generation.current++; setS(old => ({ ...old, profileId: undefined })); setName(`${name.replace(/ · 副本$/, '')} · 副本`); setError(''); setNotice('保存后创建新配置，原配置保留。');
-          }}><CopyPlus size={16} aria-hidden="true"/>另存为新配置</button>
-        </div>
+        <label className="ai-field"><span>已保存的配置</span><ConfigSelect aria-label="已保存的配置" value={legacySelected && legacyAvailable ? LEGACY : selectedProfile?.id ?? ''} disabled={working} onChange={e => chooseProfile(e.target.value)}>
+          <option value="" disabled>新配置</option>
+          {legacyAvailable && <option value={LEGACY}>原有配置 · 尚未命名</option>}
+          {profiles.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+        </ConfigSelect></label>
         <label className="ai-field ai-profile-name"><span>配置名称</span><input required maxLength={80} value={name} onChange={e => setName(e.target.value)} placeholder="例如：日常学习、深入研究" /></label>
+        <div className="ai-profile-actions">
+          <button type="button" className="ai-btn-secondary" onClick={() => {
+            setLegacySelected(false); setS(old => ({ ...old, profileId: undefined })); setName(`${name.replace(/ · 副本$/, '')} · 副本`); setError(''); setNotice('保存后创建新配置，原配置保留。');
+          }}><CopyPlus size={16} aria-hidden="true"/>另存为新配置</button>
+          {(selectedProfile || (legacySelected && legacyAvailable)) && <button type="button" className="ai-btn-secondary ai-delete-profile" disabled={testing}
+            onClick={() => setDeleteCandidate({ name: selectedProfile?.name ?? '原有配置', profile: selectedProfile })}>
+            <Trash2 size={15} aria-hidden="true"/>删除配置
+          </button>}
+        </div>
       </section>
-      <CatalogManager connection={initial}/>
+      <CatalogManager connection={connection}/>
       <div className="ai-settings-columns">
         <section className="ai-connection-section"><h4>连接</h4>
           <div className="ai-settings-pair">
@@ -138,5 +175,7 @@ export function AiSettingsForm({ initial, onSave, onCancel, onBusyChange, boardT
       <div className="ai-settings-feedback">{error ? <p role="alert">{error}</p> : <p role="status">{notice || (s.profileId ? '保存更新当前配置；另存可保留两套。' : '原有连接在保存后才会切换。')}</p>}</div>
       <div className="ai-settings-actions"><button type="button" className="ai-btn-secondary" disabled={working} onClick={onCancel}>取消</button><button type="submit" className="ai-btn-primary" disabled={working || !name.trim() || !s.baseUrl.trim() || !s.model.trim()}>{working ? '处理中…' : '保存'}</button></div>
     </div>
+    {deleteCandidate && <ConfirmAction message={`删除「${deleteCandidate.name}」及这套配置当前保存的本机密钥？`}
+      confirmLabel="删除配置" onCancel={cancelDelete} onConfirm={() => void remove()} />}
   </form>;
 }

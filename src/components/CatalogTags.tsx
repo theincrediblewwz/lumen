@@ -2,6 +2,7 @@ import { Check, Eye, EyeOff, Plus, Tag } from 'lucide-react';
 import { useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import type { CatalogTag, TagDefinition } from '../projectCanvas/tags';
+import { TitleBarButton } from './TitleBarButton';
 import '../projectCanvas/tags.css';
 
 function Dot({ color }: { color: string }) {
@@ -62,11 +63,11 @@ export function TagFilter({ tags, active, onChange }: FilterProps) {
   }, [open]);
 
   return <div ref={anchor} className="catalog-tag-filter">
-    <button ref={toggle} type="button" className={`titlebar-btn titlebar-menu${active.size ? ' catalog-filter-active' : ''}`}
-      title="按标签筛选" aria-label="按标签筛选" aria-expanded={open} aria-controls={open ? menuId : undefined}
+    <TitleBarButton buttonRef={toggle} className={`titlebar-btn titlebar-menu${active.size ? ' catalog-filter-active' : ''}`}
+      hint="按标签筛选当前画布的内容" aria-label="按标签筛选" aria-expanded={open} aria-controls={open ? menuId : undefined}
       onClick={() => setOpen(value => !value)}>
-      {active.size ? <EyeOff size={18} /> : <Eye size={18} />}
-    </button>
+      {active.size ? <EyeOff size={18} aria-hidden="true" /> : <Eye size={18} aria-hidden="true" />}
+    </TitleBarButton>
     {open && createPortal(<section ref={panel} className="catalog-filter-panel" id={menuId} style={position} aria-label="标签筛选选项">
       <button className="catalog-tag-option" type="button" aria-pressed={!active.size} onClick={() => onChange([])}>
         <Eye size={15} /><span>全部内容</span>{!active.size && <Check size={15} />}

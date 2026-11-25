@@ -191,6 +191,41 @@ try{
  assert.deepEqual(afterNodeMove.viewport, afterSecondPan.viewport);
  checks.push('an unselected node pans without moving; the first subsequent click selects it even when the drag emitted no click');
 
+ await blank();
+ const quick = page.getByRole('button', { name: '快速移动', exact: true });
+ assert.equal(await quick.getAttribute('aria-pressed'), 'false');
+ await quick.hover();
+ const moveHint = page.getByText('光标放在节点上，三指拖动即可移动', { exact: true });
+ await moveHint.waitFor();
+ await page.screenshot({ path: out + '/quick-move-hint.png', animations: 'disabled' });
+ await quick.click();
+ assert.equal(await quick.getAttribute('aria-pressed'), 'true');
+ await dragEquation(47, 31);
+ const fastMove = (await capture()).boards.board;
+ assert.equal(Math.round((fastMove.nodes[0].x - afterNodeMove.nodes[0].x) * fastMove.viewport.zoom), 47);
+ assert.equal(Math.round((fastMove.nodes[0].y - afterNodeMove.nodes[0].y) * fastMove.viewport.zoom), 31);
+ assert.deepEqual(fastMove.viewport, afterNodeMove.viewport);
+ assert.equal(await questionPanel.count(), 0);
+ await page.getByRole('button', { name: '撤销', exact: true }).click(); await saved();
+ assert.deepEqual((await capture()).boards.board.nodes, afterNodeMove.nodes);
+
+ const start = await page.locator('.board-canvas-live').evaluate(el => {
+   const { left, right, bottom } = el.getBoundingClientRect();
+   for (const x of [left + 45, right - 100]) {
+     if (document.elementFromPoint(x, bottom - 130) === el) return { x, y: bottom - 130 };
+   }
+   throw Error('No blank point for a quick-mode pan');
+ });
+ await page.mouse.move(start.x, start.y); await page.mouse.down();
+ await page.mouse.move(start.x + 24, start.y - 22, { steps: 6 }); await page.mouse.up(); await saved();
+ assert.deepEqual((await capture()).boards.board.viewport, { x: fastMove.viewport.x + 24, y: fastMove.viewport.y - 22, zoom: fastMove.viewport.zoom });
+ await quick.click();
+ assert.equal(await quick.getAttribute('aria-pressed'), 'false');
+ await dragEquation(-18, 23);
+ assert.deepEqual((await capture()).boards.board.nodes, afterNodeMove.nodes);
+ await equation.click(); await questionPanel.waitFor();
+ checks.push('quick move drags an unselected node with one undo, keeps blank panning, and restores reading gestures when turned off');
+
  const expandedRect = await questionPanel.boundingBox();
  const savedRect = () => page.evaluate(() => localStorage.getItem('lumen.nodePanel.rect.v1'));
  const rememberedRect = await savedRect();

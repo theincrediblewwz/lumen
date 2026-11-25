@@ -1005,7 +1005,7 @@ export default function App() {
             board={activeBoardRef.current ?? activeBoard}
             scope={canvasScope || root || ''}
             fullscreen={fullscreen}
-            focusSlot={boardActionSlot} onBranchFocusChange={setBranchFocusActive}
+            actionSlot={boardActionSlot} onBranchFocusChange={setBranchFocusActive}
             onChange={onCanvasChange} onViewportChange={onViewportChange} onFlush={flushBoards} saveState={saveState}
             guessMath={settings.guessMath}
             tags={tags}

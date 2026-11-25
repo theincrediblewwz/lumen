@@ -1,8 +1,8 @@
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { api } from '../api';
-import { DEFAULT_AI_SETTINGS, hasSavedAiKey, isAiConfigured, listAiProfiles, loadAiProfileDeferred, loadAiSettingsDeferred, resolveAiCredentials, saveAiProfile, saveAiSettings } from './aiSettings';
+import { DEFAULT_AI_SETTINGS, deleteAiProfile, deleteLegacyAiSettings, hasSavedAiKey, isAiConfigured, listAiProfiles, loadAiProfileDeferred, loadAiSettingsDeferred, resolveAiCredentials, saveAiProfile, saveAiSettings } from './aiSettings';
 
-vi.mock('../api', () => ({ api: { secretGet: vi.fn(), secretSet: vi.fn() } }));
+vi.mock('../api', () => ({ api: { secretGet: vi.fn(), secretSet: vi.fn(), secretDelete: vi.fn() } }));
 let storage: Record<string, string>;
 let vault: Record<string, string>;
 beforeEach(() => {
@@ -17,8 +17,50 @@ beforeEach(() => {
   });
   vi.mocked(api.secretGet).mockImplementation(async (account, storage = 'system') => vault[`${storage}:${account}`] ?? null);
   vi.mocked(api.secretSet).mockImplementation(async (account, key, storage = 'system') => { if (key) vault[`${storage}:${account}`] = key; else delete vault[`${storage}:${account}`]; });
+  vi.mocked(api.secretDelete).mockImplementation(async (account, storage = 'system') => { delete vault[`${storage}:${account}`]; });
 });
 afterEach(() => vi.unstubAllGlobals());
+
+it('deletes just the chosen connection and its referenced key without reading the vault', async () => {
+  await saveAiProfile({ ...DEFAULT_AI_SETTINGS, apiKey: 'qa-keep', keyStorage: 'system' }, '保留');
+  const retired = await saveAiProfile({ ...DEFAULT_AI_SETTINGS, apiKey: 'qa-retire', keyStorage: 'local' }, '停用');
+  const settings = loadAiSettingsDeferred();
+  const profile = listAiProfiles().find(row => row.id === retired.profileId)!;
+  const before = { ...vault };
+  await deleteAiProfile(profile);
+  delete before[`local:${settings.savedKey!.account}`];
+  expect(vault).toEqual(before);
+  expect(listAiProfiles().map(row => row.name)).toEqual(['保留']);
+  expect(api.secretGet).not.toHaveBeenCalled();
+  await expect(resolveAiCredentials(retired)).rejects.toThrow('配置已删除');
+  await expect(saveAiProfile(retired, '停用')).rejects.toThrow('配置已删除');
+  expect(vault).toEqual(before);
+});
+
+it('restores the exact profile on a vault error and rejects a stale deletion after another save', async () => {
+  const original = await saveAiProfile({ ...DEFAULT_AI_SETTINGS, apiKey: 'qa-original', keyStorage: 'system' }, '原配置');
+  const profile = listAiProfiles()[0];
+  const before = { ...storage };
+  vi.mocked(api.secretDelete).mockRejectedValueOnce(new Error('synthetic permission denied'));
+  await expect(deleteAiProfile(profile)).rejects.toThrow('未能删除');
+  expect(storage).toEqual(before);
+  await saveAiProfile({ ...original, apiKey: 'qa-new' }, '已更新');
+  await expect(deleteAiProfile(profile)).rejects.toThrow('另一窗口变更');
+  expect(listAiProfiles()[0].name).toBe('已更新');
+  expect(api.secretDelete).toHaveBeenCalledTimes(1);
+});
+
+it('removes an unnamed legacy configuration without touching named profiles', async () => {
+  await saveAiSettings({ ...DEFAULT_AI_SETTINGS, apiKey: 'qa-legacy', keyStorage: 'system' });
+  const legacy = loadAiSettingsDeferred();
+  const main = await saveAiProfile({ ...DEFAULT_AI_SETTINGS, apiKey: 'qa-named' }, '保留');
+  vi.mocked(api.secretGet).mockClear();
+  await deleteLegacyAiSettings();
+  expect(loadAiSettingsDeferred().profileId).toBe(main.profileId);
+  expect(api.secretDelete).toHaveBeenCalledWith('apikey.openai', 'system');
+  expect(api.secretGet).not.toHaveBeenCalled();
+  await expect(resolveAiCredentials(legacy)).rejects.toThrow('配置已删除');
+});
 
 it('opening/reopening chat and selecting profiles reads only metadata, while explicit use resolves the saved key', async () => {
   const a = await saveAiProfile({ ...DEFAULT_AI_SETTINGS, apiKey: 'qa-key-A' }, 'A');

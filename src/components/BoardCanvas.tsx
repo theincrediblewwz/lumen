@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { Focus, X } from 'lucide-react';
+import { Focus, Move, X } from 'lucide-react';
 import { CanvasEngine, type Viewport } from '../canvas/CanvasEngine';
 import {
   createHistory,
@@ -37,6 +37,7 @@ import { NodeTooltip } from './NodeTooltip';
 import { EdgeLabel } from './EdgeLabel';
 import { FlowPanel } from './FlowPanel';
 import { BranchFocusView } from './BranchFocusView';
+import { TitleBarButton } from './TitleBarButton';
 import { contentDocs, imageDoc, imageOnly, clipboardText, nonemptyNode, flowNodes, orderFlow, topLevelNodes } from '../canvas/composition';
 import { measureNodes } from '../canvas/measureNodes';
 import { flowHighlight } from '../canvas/preview';
@@ -72,7 +73,7 @@ export function BoardCanvas({
   onChange, onViewportChange, onFlush, saveState,
   guessMath = false,
   focusNode = null,
-  focusSlot, onBranchFocusChange, fullscreen,
+  actionSlot, onBranchFocusChange, fullscreen,
   tags, tagStore, tagFilter, onEditTags,
 }: {
   onFlush:()=>Promise<void>; saveState:'saved'|'dirty'|'saving'|'error';
@@ -83,7 +84,7 @@ export function BoardCanvas({
   guessMath?: boolean;
   /** AI 引用跳转目标（M5-6）：居中并闪烁高亮该节点。nonce 变化即重新触发。 */
   focusNode?: { id: string; nonce: number } | null;
-  focusSlot: HTMLElement | null;
+  actionSlot: HTMLElement | null;
   onBranchFocusChange: (active: boolean) => void;
   fullscreen: boolean;
   tags: CatalogTag[];
@@ -93,6 +94,7 @@ export function BoardCanvas({
 }) {
   const wrapRef = useRef<HTMLDivElement>(null);
   const focusToggle = useRef<HTMLButtonElement>(null);
+  const [quickMove, setQuickMove] = useState(false);
   const [branchRoot, setBranchRoot] = useState<string | null>(null);
   const branchRootRef = useRef<string | null>(null);
   const setBranchFocus = useCallback((id: string | null) => {
@@ -739,7 +741,7 @@ export function BoardCanvas({
     startPan(e, allowsNewNode);
   };
 
-  /* 节点只有已选中时才移动。未选中的节点上轻点仍由 NodeCard 打开面板。 */
+  /* 阅读时先选中节点才移动，快速移动模式下可直接拖动。 */
   const onNodePointerDown = useCallback((e: React.PointerEvent, id: string) => {
     if (drag.current || arrangeJob.current || mutationsBlocked() || !e.isPrimary || e.button !== 0 || (e.ctrlKey && detectMacOS())) return;
     if ((e.target as Element).closest('button, input, textarea, select, a, [contenteditable]')) return;
@@ -748,7 +750,7 @@ export function BoardCanvas({
     e.preventDefault();
     e.stopPropagation();
     suppressClick.current = false;
-    if (selectedRef.current !== id) {
+    if (!quickMove && selectedRef.current !== id) {
       startPan(e, false, id);
       return;
     }
@@ -767,7 +769,7 @@ export function BoardCanvas({
     };
     setDraggingNodes(true);
     (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
-  }, [engine, moveRoot, mutationsBlocked, startPan]);
+  }, [engine, moveRoot, mutationsBlocked, quickMove, startPan]);
 
   const onResizeStart = useCallback((e: React.PointerEvent, id: string, corner: string, image?: PreviewImage) => {
     if(e.button!==0||mutationsBlocked()||drag.current)return;e.preventDefault();e.stopPropagation();
@@ -925,15 +927,15 @@ export function BoardCanvas({
     } else if (d.kind === 'node') {
       if(e.type==='pointercancel'){drag.current=d;cancelNodeDrag();return;}
       previewNodeDrag(d,e);setDraggingNodes(false);
+      suppressClick.current = d.moved || d.group;
       const changed=historyRef.current.present.nodes.some(n=>{const pos=d.positions.get(n.id);return pos&&(n.x!==pos.x||n.y!==pos.y);});
       if (d.moved&&changed) {
-        suppressClick.current = true;
         const next = commitFromBaseline(historyRef.current, d.baseline);
         historyRef.current = next;
         setHistory(next);
         onChange(next.present.nodes, next.present.edges, engine.viewport);
       }
-      if(d.group){suppressClick.current=true;if(d.moved)setMoveRoot(null);}
+      if(d.group&&d.moved)setMoveRoot(null);
     }
     // 'connect' 全程由 onAnchorPointerDown 的 window 监听处理
   };
@@ -1361,8 +1363,9 @@ export function BoardCanvas({
   const heatCells=useMemo(()=>level?aggregateHeat(mainNodes,level,sizesRef.current):[],[mainNodes,level,sizesVer]);
   const visibleWorld=engine.visibleWorldRect(canvasSize);
   const visibleBox={x:visibleWorld.x,y:visibleWorld.y,w:visibleWorld.width,h:visibleWorld.height};
-  const panNode = drag.current?.kind === 'pan' ? drag.current.nodeId : undefined;
-  const visibleNodes=heatMode?[]:mainNodes.filter(n=>n.id===editingId||n.id===selected||n.id===panNode||intersects(boxOf(n),visibleBox,100/zoom));
+  const gesture = drag.current;
+  const pressedNode = gesture?.kind === 'pan' ? gesture.nodeId : gesture?.kind === 'node' ? gesture.id : undefined;
+  const visibleNodes=heatMode?[]:mainNodes.filter(n=>n.id===editingId||n.id===selected||n.id===pressedNode||intersects(boxOf(n),visibleBox,100/zoom));
   const renderedHeat=heatMode?heatCells.filter(c=>intersects(c,visibleBox,80/zoom)):[];
 
   const laidEdges = useMemo(() => {
@@ -1457,7 +1460,7 @@ export function BoardCanvas({
   return <div className="board-view-stack">
     <div
       ref={wrapRef}
-      className={`board-canvas board-canvas-live${connect ? ' is-connecting' : ''}${branchRoot ? ' is-behind-focus' : ''}`}
+      className={`board-canvas board-canvas-live${connect ? ' is-connecting' : ''}${branchRoot ? ' is-behind-focus' : ''}${quickMove ? ' is-quick-move' : ''}`}
       aria-hidden={branchRoot ? true : undefined}
       onScroll={e=>{if(e.target===e.currentTarget){e.currentTarget.scrollLeft=0;e.currentTarget.scrollTop=0;}}}
       onPointerDownCapture={e => { if (e.target !== e.currentTarget) blankClicks.current = []; }}
@@ -1661,7 +1664,7 @@ export function BoardCanvas({
         const steps = flowNodes(owner, nodes);
         return <FlowPanel key={flowOwnerId} owner={owner} nodes={matches ? steps.filter(node => matches.matched.has(node.id)) : steps}
           filtering={!!matches} projectId={board.projectId} boardId={board.id} selected={selected} panelId={panelId}
-          ownerBox={screenBoxOf(owner)} zoomSensitivity={appearance.zoomSensitivity}
+          ownerBox={screenBoxOf(owner)} zoomSensitivity={appearance.zoomSensitivity} quickMove={quickMove}
           docVersions={docVersions} onClose={() => setFlowOwnerId(null)}
           onSelect={id => { setPanelId(id); setSelected(id); pasteTarget.current = id; }}
           onAdd={after => addFlowStep(flowOwnerId, after)} onEditTags={onEditTags}
@@ -1689,18 +1692,25 @@ export function BoardCanvas({
       {menu && <ContextMenu state={menu} onClose={() => setMenu(null)} />}
     </div>
     {branchRoot && <BranchFocusView key={branchRoot} rootId={branchRoot} nodes={nodes} edges={edges} size={canvasSize}
-      projectId={board.projectId} boardId={board.id} docVersions={docVersions} fontStyle={fontStyle} zoomSensitivity={appearance.zoomSensitivity}/>}
-    {focusSlot && (branchRoot || (selected && nodeById[selected])) && createPortal(
-      <button type="button" ref={focusToggle} className="titlebar-btn branch-focus-toggle" aria-pressed={!!branchRoot}
-        aria-label={branchRoot ? '退出专注视图' : '开启专注视图'} title={branchRoot ? '退出专注视图 (Esc)' : '专注于选中节点的分支'}
-        disabled={!branchRoot && focusBusy} onClick={() => {
-          if (branchRoot) { setBranchFocus(null); return; }
-          if (focusBusy || drag.current || edgeRouteCleanup.current || mutationsBlocked()) return;
-          blankClicks.current = [];
-          setBranchFocus(selected);
-        }}>
-        {branchRoot ? <X size={16} aria-hidden="true"/> : <Focus size={17} aria-hidden="true"/>}
-        <span>{branchRoot ? '退出专注' : '专注视图'}</span>
-      </button>, focusSlot)}
+      projectId={board.projectId} boardId={board.id} docVersions={docVersions} fontStyle={fontStyle} zoomSensitivity={appearance.zoomSensitivity} quickMove={quickMove}/>}
+    {actionSlot && createPortal(<>
+      <TitleBarButton className="titlebar-btn titlebar-menu quick-move-toggle" aria-label="快速移动" aria-pressed={quickMove}
+        hint={quickMove ? '关闭快速移动，恢复先选中再拖动' : '光标放在节点上，三指拖动即可移动'}
+        onClick={() => { if (!drag.current && !mutationsBlocked()) setQuickMove(active => !active); }}>
+        <Move size={17} aria-hidden="true" />
+      </TitleBarButton>
+      {(branchRoot || (selected && nodeById[selected])) &&
+        <TitleBarButton buttonRef={focusToggle} className="titlebar-btn branch-focus-toggle" aria-pressed={!!branchRoot}
+          aria-label={branchRoot ? '退出专注视图' : '开启专注视图'} hint={branchRoot ? '退出专注视图 · Esc' : '专注于选中节点的分支'}
+          disabled={!branchRoot && focusBusy} onClick={() => {
+            if (branchRoot) { setBranchFocus(null); return; }
+            if (focusBusy || drag.current || edgeRouteCleanup.current || mutationsBlocked()) return;
+            blankClicks.current = [];
+            setBranchFocus(selected);
+          }}>
+          {branchRoot ? <X size={16} aria-hidden="true"/> : <Focus size={17} aria-hidden="true"/>}
+          <span>{branchRoot ? '退出专注' : '专注视图'}</span>
+        </TitleBarButton>}
+    </>, actionSlot)}
     </div>;
 }

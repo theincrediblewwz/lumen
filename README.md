@@ -5,7 +5,9 @@
 
 ## 当前版本
 
-[0.4.10 源码预览](https://github.com/theincrediblewwz/lumen/releases/tag/mac-v0.4.10) · [下载 Mac 0.4.0 安装包](https://github.com/theincrediblewwz/lumen/releases/tag/mac-v0.4.0) · [白板编辑与保存](./docs/CANVAS_AUTHORING.md)
+[0.4.11 源码预览](https://github.com/theincrediblewwz/lumen/releases/tag/mac-v0.4.11) · [下载 Mac 0.4.0 安装包](https://github.com/theincrediblewwz/lumen/releases/tag/mac-v0.4.0) · [白板编辑与保存](./docs/CANVAS_AUTHORING.md)
+
+**0.4.11 快速移动与 AI 配置管理。** 白板右上角可开启快速移动，直接拖动未选中的节点。顶栏按钮有悬停说明，AI 设置可删除选中的已保存配置。
 
 **0.4.10 多层项目预览。** 单击预览里的子文件夹可继续展开下一层。再点该文件夹会收起它的下级内容，双击仍可进入。 [项目画布指南](./docs/PROJECT_CANVAS.md)
 

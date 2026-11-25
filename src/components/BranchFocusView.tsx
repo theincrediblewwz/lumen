@@ -31,9 +31,9 @@ function recenter(box: Box, size: Size, zoom: number): Viewport {
   return { x: size.width / 2 - (box.x + box.w / 2) * zoom, y: size.height / 2 - (box.y + box.h / 2) * zoom, zoom };
 }
 
-export function BranchFocusView({ rootId, nodes, edges, projectId, boardId, docVersions, size, fontStyle, zoomSensitivity }: {
+export function BranchFocusView({ rootId, nodes, edges, projectId, boardId, docVersions, size, fontStyle, zoomSensitivity, quickMove }: {
   rootId: string; nodes: BoardNode[]; edges: BoardEdge[]; projectId: string; boardId: string;
-  docVersions: Record<string, number>; size: Size; fontStyle: CSSProperties; zoomSensitivity: number;
+  docVersions: Record<string, number>; size: Size; fontStyle: CSSProperties; zoomSensitivity: number; quickMove: boolean;
 }) {
   const host = useRef<HTMLDivElement>(null);
   const marker = useId().replace(/:/g, '');
@@ -133,7 +133,7 @@ export function BranchFocusView({ rootId, nodes, edges, projectId, boardId, docV
   const startDrag = (event: PointerEvent, id?: string) => {
     if (!event.isPrimary || event.button !== 0 || event.ctrlKey || drag.current) return;
     if ((event.target as Element).closest('button, input, textarea, select, a, [contenteditable]')) return;
-    const nodeId = selected === id ? id : undefined;
+    const nodeId = quickMove || selected === id ? id : undefined;
     event.preventDefault();
     drag.current = { pointer: event.pointerId, start: { x: event.clientX, y: event.clientY }, viewport, moved: false,
       nodeId, offset: nodeId ? offsets.get(nodeId) ?? { x: 0, y: 0 } : undefined };
@@ -165,7 +165,7 @@ export function BranchFocusView({ rootId, nodes, edges, projectId, boardId, docV
     if (event.detail && suppressClick.current) { event.preventDefault(); event.stopPropagation(); }
   };
 
-  return <div ref={host} className={`board-canvas board-branch-focus${dragging ? ' is-panning' : ''}`}
+  return <div ref={host} className={`board-canvas board-branch-focus${dragging ? ' is-panning' : ''}${quickMove ? ' is-quick-move' : ''}`}
     aria-label="专注视图" role="region" data-focus-root={rootId} tabIndex={0}
     style={{ ...fontStyle, backgroundPosition: `${viewport.x}px ${viewport.y}px` }}
     onPointerDownCapture={() => { suppressClick.current = false; keepCamera(); }} onKeyDownCapture={keepCamera}

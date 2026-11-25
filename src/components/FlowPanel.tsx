@@ -14,8 +14,8 @@ type Reorder = DragStart & {
 };
 type Drag = (DragStart & { kind: 'pan'; id?: string }) | Reorder;
 
-export function FlowPanel({owner,nodes,projectId,boardId,selected,panelId,ownerBox,zoomSensitivity,onClose,onSelect,onAdd,onReorder,onRemove,docVersions,filtering,onEditTags}: {
-  owner:BoardNode;nodes:BoardNode[];projectId:string;boardId:string;selected:string|null;panelId:string|null;ownerBox:Box;zoomSensitivity:number;
+export function FlowPanel({owner,nodes,projectId,boardId,selected,panelId,ownerBox,zoomSensitivity,quickMove,onClose,onSelect,onAdd,onReorder,onRemove,docVersions,filtering,onEditTags}: {
+  owner:BoardNode;nodes:BoardNode[];projectId:string;boardId:string;selected:string|null;panelId:string|null;ownerBox:Box;zoomSensitivity:number;quickMove:boolean;
   onClose:()=>void;onSelect:(id:string)=>void;onAdd:(after?:string)=>void;onReorder:(ids:string[])=>void;onRemove:(id:string)=>void;docVersions:Record<string,number>;
   filtering: boolean;
   onEditTags: (node: BoardNode) => void;
@@ -152,7 +152,7 @@ export function FlowPanel({owner,nodes,projectId,boardId,selected,panelId,ownerB
     // The browser can scroll a clipped card into view on focus before delivering a click.
     event.preventDefault();
     const origin = { pointer: event.pointerId, x: event.clientX, y: event.clientY, scroll: el.scrollTop, moved: false };
-    if (id && selected === id && edit) {
+    if (id && edit && (quickMove || selected === id)) {
       const boxes = new Map<string, { y: number; h: number }>();
       list.current?.querySelectorAll<HTMLElement>('[data-flow-step]').forEach(step => {
         const { y, height } = step.getBoundingClientRect();
@@ -201,7 +201,7 @@ export function FlowPanel({owner,nodes,projectId,boardId,selected,panelId,ownerB
   const color=owner.color||'var(--accent)';
   return <>
     {bounds&&<svg className="flow-light-paths" aria-hidden="true"><defs><filter id="flow-soft-glow"><feGaussianBlur stdDeviation="4"/></filter><mask id={maskId} maskUnits="userSpaceOnUse" x="0" y="0" width="100%" height="100%"><rect width="100%" height="100%" fill="white"/>{cover&&<rect data-flow-occlusion x={cover.x-1} y={cover.y-1} width={cover.w+2} height={cover.h+2} rx="16" fill="black"/>}</mask></defs><g mask={`url(#${maskId})`}>{corners(ownerBox).map((p,i)=>{const q=corners(bounds)[i],dx=(q.x-p.x)*.45,path=`M${p.x} ${p.y} C${p.x+dx} ${p.y} ${q.x-dx} ${q.y} ${q.x} ${q.y}`;return <g key={i} style={{color}}><path d={path} className="flow-light-outer"/><path d={path} className="flow-light-inner"/></g>;})}</g></svg>}
-    <section data-flow-owner={owner.id} ref={panel} className={`flow-panel glass-surface${edit?' is-editing':''}${collapsed?' is-preview-collapsed':''}`} aria-label={`子白板：${owner.title||'流程'}`}
+    <section data-flow-owner={owner.id} ref={panel} className={`flow-panel glass-surface${edit?' is-editing':''}${edit&&quickMove?' is-quick-move':''}${collapsed?' is-preview-collapsed':''}`} aria-label={`子白板：${owner.title||'流程'}`}
       style={{ ['--flow-color' as string]: color, width: width === undefined ? undefined : flowPanelWidth(width, available), maxWidth: flowPanelWidth(Infinity, available) }}
       onPointerDown={e=>e.stopPropagation()} onDoubleClick={e=>e.stopPropagation()} onContextMenu={e=>{e.preventDefault();e.stopPropagation();}}>
       <header><div><span>子白板 · 线性流程</span><strong><MarkdownView value={owner.title||'流程'} inline/></strong></div><button className="btn flow-preview-toggle" aria-label={collapsed?'展开全部步骤预览':'收起全部步骤预览'} title={collapsed?'显示各步骤的分页素材预览':'只显示步骤标题和编号，不影响母白板'} aria-pressed={collapsed} onClick={()=>setCollapsed(v=>!v)}>{collapsed?'展开预览':'收起预览'}</button><button className="btn" title="编辑时可拖动步骤换位，右键可在下方插入" aria-pressed={edit} onClick={()=>setEdit(v=>!v)}>{edit?'完成编辑':'编辑'}</button><button className="flow-close" aria-label="收起子白板" onClick={onClose}>×</button></header>

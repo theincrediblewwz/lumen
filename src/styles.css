@@ -303,6 +303,39 @@ html.glass-on body {
   color: var(--text-primary);
 }
 
+.titlebar-control {
+  position: relative;
+  display: inline-flex;
+  flex: none;
+}
+
+.titlebar-hint {
+  position: absolute;
+  z-index: 11;
+  inset-block-start: calc(100% + 7px);
+  inset-inline-end: 0;
+  width: max-content;
+  max-width: min(230px, calc(100vw - 24px));
+  padding: 5px 9px;
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  background: var(--bg-node);
+  color: var(--text-primary);
+  box-shadow: var(--shadow-node);
+  font-size: 12px;
+  line-height: 1.45;
+  pointer-events: none;
+  visibility: hidden;
+  opacity: 0;
+  transition: opacity var(--dur-fast), visibility var(--dur-fast);
+}
+
+.titlebar-control > button:not([aria-expanded="true"]):is(:hover, :focus-visible) + .titlebar-hint {
+  visibility: visible;
+  opacity: 1;
+  transition-delay: 300ms;
+}
+
 /* Windows/Linux 窗口按钮 */
 .win-controls {
   display: flex;
@@ -546,6 +579,7 @@ html.glass-on body {
 
 .board-view-stack { position: relative; display: flex; flex: 1; min-width: 0; min-height: 0; }
 .board-canvas-live.is-behind-focus { visibility: hidden; pointer-events: none; }
+.titlebar-board-action { display: inline-flex; align-items: center; gap: 4px; }
 .titlebar-board-action:empty { display: none; }
 .branch-focus-toggle {
   gap: 6px;
@@ -555,8 +589,14 @@ html.glass-on body {
   font: inherit;
   font-size: 12px;
 }
-.branch-focus-toggle[aria-pressed="true"] { background: var(--accent-soft); color: var(--accent); }
+.branch-focus-toggle[aria-pressed="true"],
+.quick-move-toggle[aria-pressed="true"] { background: var(--accent-soft); color: var(--accent); }
 .branch-focus-toggle:disabled { opacity: .45; cursor: default; }
+.board-canvas-live.is-quick-move > .canvas-world > .node-card:not(.is-editing),
+.board-branch-focus.is-quick-move .branch-focus-card > .node-card,
+.flow-panel.is-quick-move .flow-step > .node-card { cursor: grab; }
+.board-canvas-live.is-quick-move > .canvas-world > .node-card:not(.is-editing):active,
+.board-branch-focus.is-quick-move .branch-focus-card > .node-card:active { cursor: grabbing; }
 .board-branch-focus {
   --focus-flow-ink: #237d9a;
   --focus-flow-glow: #59d5f7;

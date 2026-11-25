@@ -80,6 +80,36 @@ async function shot(name) { await page.screenshot({ path: path.join(output, name
   await page.setViewportSize({ width: 380, height: 600 }); await shot('credentials-03-narrow-settings');
   assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
   checks.push('changing endpoint clears the saved-key reference and prevents silent credential reuse; narrow layout has no horizontal overflow');
+
+  const profileSelect = page.getByRole('combobox', { name: '已保存的配置', exact: true });
+  await page.setViewportSize({ width: 1040, height: 760 });
+  await profileSelect.selectOption({ label: '原钥匙串配置' });
+  const retire = page.getByRole('button', { name: '删除配置', exact: true });
+  const dialog = page.getByRole('alertdialog', { name: /删除「原钥匙串配置」/ });
+  const beforeDelete = await state();
+  const keyToRemove = await page.evaluate(async id => {
+    const { savedKey } = (await import('/src/ai/aiSettings.ts')).loadAiProfileDeferred(id);
+    return `${savedKey.storage}:${savedKey.account}`;
+  }, await profileSelect.inputValue());
+  await click(retire); await dialog.waitFor(); await page.keyboard.press('Escape'); await dialog.waitFor({ state: 'hidden' });
+  assert.equal(await profileSelect.isVisible(), true);
+  assert.deepEqual(await state(), beforeDelete);
+  await page.evaluate(() => { window.__fixtureDenySecretDelete = true; });
+  await click(retire); await dialog.getByRole('button', { name: '删除配置' }).click();
+  await page.getByRole('alert').filter({ hasText: '未能删除' }).waitFor();
+  assert.deepEqual(await state(), beforeDelete);
+  await page.evaluate(() => { window.__fixtureDenySecretDelete = false; });
+  await click(retire); await shot('credentials-04-delete-configuration');
+  await dialog.getByRole('button', { name: '删除配置' }).click();
+  await page.getByText('已删除「原钥匙串配置」。', { exact: true }).waitFor();
+  assert.equal(await profileSelect.getByRole('option', { name: '原钥匙串配置', exact: true }).count(), 0);
+  assert.equal(await profileSelect.locator('option:checked').innerText(), '另一钥匙串配置');
+  const remaining = JSON.parse(beforeDelete.vault); delete remaining[keyToRemove];
+  assert.deepEqual(JSON.parse((await state()).vault), remaining);
+  assert.deepEqual(await page.evaluate(() => window.__fixtureSecretAccess), []);
+  await page.reload(); await page.locator('.ai-root.is-mac').waitFor(); await settings();
+  assert.equal(await profileSelect.getByRole('option', { name: '原钥匙串配置', exact: true }).count(), 0);
+  checks.push('delete cancels cleanly, recovers after a vault error, and removes only the selected profile and key across reloads');
   assert.deepEqual(errors, []);
   fs.writeFileSync(path.join(output, 'credentials-qa.json'), JSON.stringify({ engine, checks, pageErrors: errors, realProviderCalls: 0, realCredentialsRead: 0, limitation: 'Synthetic bridge; OS prompt/ACL verified separately on the user Mac' }, null, 2));
   await browser.close(); console.log(JSON.stringify({ pass: true, checks: checks.length, output }));

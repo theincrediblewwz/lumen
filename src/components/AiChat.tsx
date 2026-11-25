@@ -6,6 +6,7 @@ import {
   loadAiSettingsDeferred,
   resolveAiCredentials,
   isAiConfigured,
+  savedAiSettingsAvailable,
   type AiSettings,
 } from '../ai/aiSettings';
 import { ArrowUp, History, MoreHorizontal, SlidersHorizontal, Square, SquarePen, X } from 'lucide-react';
@@ -232,7 +233,7 @@ export function ChatPane({ projectId, boardId, boardName, nodeId: requestedNode,
 
   useEffect(() => {
     const onEscape = (event: KeyboardEvent) => {
-      if (event.key !== 'Escape'||!visible) return;
+      if (event.key !== 'Escape'||!visible||document.querySelector('.action-confirm[aria-modal="true"]')) return;
       if(deleteCandidate){if(!historyBusy)setDeleteCandidate(undefined);}
       else if (knowledgePreview) setKnowledgePreview(undefined);
       else if (showSettings) setShowSettings(false);
@@ -422,6 +423,11 @@ export function ChatPane({ projectId, boardId, boardName, nodeId: requestedNode,
   const send = useCallback(async (checked?: { text: string; refs: KnowledgeReference[]; revision: string }) => {
     const text = checked?.text ?? input.trim();
     if (!text || activity.current || deletedState.current || !configured || resolvingCredentials.current || captureLock.current || !loadedRef.current) return;
+    if (!savedAiSettingsAvailable(settings)) {
+      setSettings(loadAiSettingsDeferred());
+      setCaptureStatus('这套 AI 配置已删除，请确认连接后再发送。');
+      return;
+    }
     if (preparingKnowledge.current) return;
     preparingKnowledge.current = true; requestActive.current=true; activity.current = true; setPreparing(true);setProgress('正在读取白板与参考资料');
     loadEpoch.current++;
@@ -431,6 +437,10 @@ export function ChatPane({ projectId, boardId, boardName, nodeId: requestedNode,
     const requestGeneration=++generation.current;
     currentReplyId.current=undefined;
     const currentRequest = () => mounted.current && generation.current===requestGeneration && activeConversation.current === requestConversation && !captureLock.current;
+    const validateRequest = async () => {
+      if (!savedAiSettingsAvailable(settings)) throw new Error('这套 AI 配置已删除，已停止后续请求。');
+      await claimed!.validate();
+    };
     try {
     const permission=await loadWritePolicy().catch(()=>null);
     if(!permission?.scope||permission.scope!==conversationScope.current)throw Error('资料目录已变化，请返回原资料目录后再续聊；原对话未改动。');
@@ -504,7 +514,7 @@ export function ChatPane({ projectId, boardId, boardName, nodeId: requestedNode,
     const memoryBudget=settings.contextBudget-toolTokens-knowledgeTokens-messageTokens(systemMessage)-messageTokens({role:'user',content:text})-160;
     const prepared=connection.memoryMode==='off'?{memory:undefined,remaining:priorMessages,notice:''}:await prepareMemory({id:convId,messages:priorMessages,budget:memoryBudget,model:connection.model,current:currentRequest,progress:setProgress,generate:prompt=>new Promise<string>((resolve,reject)=>{
       let output='';const compactSettings={...connection,contextBudget:Math.min(settings.contextBudget,12000),maxTokens:Math.min(connection.maxTokens??2400,2400)};
-      handleRef.current=streamChat(compactSettings,prompt,{sessionId:convId,beforeRequest:()=>claimed!.validate(),onDelta:d=>{output+=d;},onDone:()=>resolve(output),onError:reject});
+      handleRef.current=streamChat(compactSettings,prompt,{sessionId:convId,beforeRequest:validateRequest,onDelta:d=>{output+=d;},onDone:()=>resolve(output),onError:reject});
     })});
     if(!currentRequest())return;
     setMemory(prepared.memory);if(prepared.notice)setCaptureStatus(prepared.notice);
@@ -554,7 +564,7 @@ export function ChatPane({ projectId, boardId, boardName, nodeId: requestedNode,
       {
         sessionId: convId,
         beforeRequest: async () => {
-          await claimed!.validate();
+          await validateRequest();
           const nowPolicy=await loadWritePolicy();if(nowPolicy.scope!==conversationScope.current)throw Error('资料目录已变化，已停止原会话后续请求；原内容仍保留。');
           if(settings.shareBoard&&!loadAiSettingsDeferred().shareBoard)throw Error('白板共享已关闭，已停止原会话后续请求。');
           const [latestKnowledge, latestBoard] = await Promise.all([loadKnowledge(), api.boardLoad(projectId, boardId)]);
@@ -615,7 +625,7 @@ export function ChatPane({ projectId, boardId, boardName, nodeId: requestedNode,
 
   const saveAndClose = (s: AiSettings) => {
     if(settings.shareBoard&&!s.shareBoard&&requestActive.current)void stop();
-    setSettings(s);
+    setSettings(loadAiSettingsDeferred());
     setShowSettings(false);
   };
 
@@ -776,7 +786,9 @@ export function ChatPane({ projectId, boardId, boardName, nodeId: requestedNode,
       </header>
 
       {showSettings ? (
-        <AiSettingsForm initial={settings} onSave={saveAndClose} onCancel={() => setShowSettings(false)} />
+        <AiSettingsForm initial={savedAiSettingsAvailable(settings) ? settings : loadAiSettingsDeferred()} onSave={saveAndClose}
+          onDelete={next => { if (requestActive.current && !savedAiSettingsAvailable(settings)) void stop(); setSettings(next); }}
+          onCancel={() => setShowSettings(false)} />
       ) : showHistory ? (
         <div className="ai-history">
           <div className="ai-history-head">

@@ -245,6 +245,16 @@ const base=process.env.LSQ_UI_URL||'http://127.0.0.1:5198',out=path.resolve(proc
   assert.notEqual(await leafEdge.getAttribute('d'), originalPath);
   assert.equal(await focusWorld.getAttribute('style'), focusFit);
   check('focus pans when dragging from an unselected node and temporarily moves a selected node with its edge');
+  await inside('focus-child').locator('.node-title').click();
+  const beforeQuickMove = await leafPosition();
+  const quickMove = page.getByRole('button', { name: '快速移动', exact: true });
+  await quickMove.click();
+  await dragLeaf(24, 22);
+  assert.notDeepEqual(await leafPosition(), beforeQuickMove);
+  assert.equal(await focusWorld.getAttribute('style'), focusFit);
+  assert.equal(await unselected.evaluate(el => el.classList.contains('is-selected')), false);
+  await quickMove.click();
+  check('quick move directly repositions an unselected node only within the focus view');
   const viewport = await focus.boundingBox();
   await page.mouse.move(viewport.x + viewport.width - 65, viewport.y + 145); await page.mouse.wheel(0, -240);
   await page.waitForFunction(previous => document.querySelector('.board-branch-focus .canvas-world')?.getAttribute('style') !== previous, focusFit);

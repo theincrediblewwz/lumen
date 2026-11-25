@@ -2,6 +2,7 @@ import { getCurrentWindow } from '@tauri-apps/api/window';
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { Maximize2, Menu, PanelLeftClose, PanelLeftOpen, Settings } from 'lucide-react';
 import icon from '../../app-icon.png';
+import { TitleBarButton } from './TitleBarButton';
 
 /**
  * 自定义标题栏（native_mac 策略）
@@ -82,57 +83,53 @@ export function TitleBar({
       {path}
       <div className="titlebar-actions">
         {boardAction}
-        <button type="button" className="titlebar-btn titlebar-menu titlebar-fullscreen"
-          aria-label="进入全屏" title="进入全屏 (F11)" onClick={onFullscreen}>
+        <TitleBarButton className="titlebar-btn titlebar-menu titlebar-fullscreen"
+          aria-label="进入全屏" hint="进入全屏 · F11" onClick={onFullscreen}>
           <Maximize2 size={17} aria-hidden="true" />
-        </button>
+        </TitleBarButton>
         {filter}
         {onToggleIndex && (
-          <button type="button" className="titlebar-btn titlebar-menu"
+          <TitleBarButton className="titlebar-btn titlebar-menu"
             aria-label={indexCollapsed ? '展开知识索引' : '收起知识索引'}
-            title={indexCollapsed ? '展开知识索引' : '收起知识索引'}
+            hint={indexCollapsed ? '展开知识库索引' : '收起知识库索引'}
             aria-pressed={!indexCollapsed} onClick={onToggleIndex}>
-            {indexCollapsed ? <PanelLeftOpen size={17} /> : <PanelLeftClose size={17} />}
-          </button>
+            {indexCollapsed ? <PanelLeftOpen size={17} aria-hidden="true" /> : <PanelLeftClose size={17} aria-hidden="true" />}
+          </TitleBarButton>
         )}
-        <button
-          type="button"
+        <TitleBarButton
           className="titlebar-btn titlebar-menu"
-          title="设置"
+          hint="打开应用设置"
           aria-label="设置"
           onClick={onSettings}
         >
           <Settings size={17} aria-hidden="true" />
-        </button>
-        <button
-          type="button"
+        </TitleBarButton>
+        <TitleBarButton
           className="titlebar-btn titlebar-menu"
-          title="菜单"
+          hint="打开主菜单，查看导入、导出和帮助"
           aria-label="菜单"
           aria-haspopup="menu"
           aria-expanded={menuOpen}
           onClick={onMenu}
         >
           <Menu size={19} aria-hidden="true" />
-        </button>
+        </TitleBarButton>
 
         {showWinControls && (
           <div className="win-controls">
-            <button
-              type="button"
+            <TitleBarButton
               className="win-btn"
-              title="最小化"
+              hint="最小化窗口"
               aria-label="最小化"
               onClick={() => win.minimize()}
             >
               <svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true">
                 <path d="M1 5h8" stroke="currentColor" strokeWidth="1.1" />
               </svg>
-            </button>
-            <button
-              type="button"
+            </TitleBarButton>
+            <TitleBarButton
               className="win-btn"
-              title={maximized ? '还原' : '最大化'}
+              hint={maximized ? '还原窗口大小' : '最大化窗口'}
               aria-label={maximized ? '还原' : '最大化'}
               onClick={() => win.toggleMaximize()}
             >
@@ -146,18 +143,17 @@ export function TitleBar({
                   <rect x="1.3" y="1.3" width="7.4" height="7.4" fill="none" stroke="currentColor" strokeWidth="1.1" />
                 </svg>
               )}
-            </button>
-            <button
-              type="button"
+            </TitleBarButton>
+            <TitleBarButton
               className="win-btn win-close"
-              title="关闭"
+              hint="关闭窗口"
               aria-label="关闭"
               onClick={() => win.close()}
             >
               <svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true">
                 <path d="M1.5 1.5l7 7M8.5 1.5l-7 7" stroke="currentColor" strokeWidth="1.1" strokeLinecap="round" />
               </svg>
-            </button>
+            </TitleBarButton>
           </div>
         )}
       </div>

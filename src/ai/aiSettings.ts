@@ -58,17 +58,20 @@ export function secretAccount(kind: ProviderKind): string {
   return `apikey.${kind}`;
 }
 
+function readLegacySettings(): AiSettings | undefined {
+  const raw = localStorage.getItem(KEY);
+  if (!raw) return;
+  const parsed = JSON.parse(raw) as Partial<AiSettings>;
+  return { ...DEFAULT_AI_SETTINGS, ...parsed, endpointMode: parsed.endpointMode ?? 'legacy', keyStorage: parsed.keyStorage ?? 'system' };
+}
+
 /** 同步读取非敏感设置（不含真实密钥）。用于首屏即时渲染，密钥随后异步补入。 */
 export function loadAiSettings(): AiSettings {
   try {
     const profiles = readProfiles();
     const active = profiles.profiles.find(p => p.id === profiles.activeId);
     if (active) return { ...DEFAULT_AI_SETTINGS, ...active.settings, endpointMode:active.settings.endpointMode??'legacy', keyStorage: active.settings.keyStorage ?? 'system', profileId: active.id, apiKey: '' };
-    const raw = localStorage.getItem(KEY);
-    if (!raw) return { ...DEFAULT_AI_SETTINGS };
-    const parsed = JSON.parse(raw) as Partial<AiSettings>;
-    // 兼容旧版本：旧数据可能把 apiKey 存进了 localStorage，读回但下次保存会迁移走。
-    return { ...DEFAULT_AI_SETTINGS, ...parsed, endpointMode:parsed.endpointMode??'legacy', keyStorage: parsed.keyStorage ?? 'system' };
+    return readLegacySettings() ?? { ...DEFAULT_AI_SETTINGS };
   } catch {
     return { ...DEFAULT_AI_SETTINGS };
   }
@@ -84,10 +87,23 @@ function saveNonSecret(s: AiSettings): void {
 
 /** Metadata only: opening chat/settings must not read an OS credential. */
 export function loadAiSettingsDeferred(): AiSettings {
-  const base = loadAiSettings();
-  if (base.profileId) return loadAiProfileDeferred(base.profileId);
-  if (base.apiKey || !localStorage.getItem(KEY)) return base;
-  return { ...base, savedKey: { account: secretAccount(base.kind), browserKey: BROWSER_KEY, baseUrl: base.baseUrl, kind: base.kind, storage: base.keyStorage ?? 'system' } };
+  const { activeId } = readProfiles();
+  return activeId ? loadAiProfileDeferred(activeId) : loadLegacyAiSettingsDeferred() ?? { ...DEFAULT_AI_SETTINGS };
+}
+
+export function loadLegacyAiSettingsDeferred(): AiSettings | undefined {
+  try {
+    const settings = readLegacySettings();
+    if (settings && (settings.kind === 'openai' || settings.kind === 'ollama')) return { ...settings, savedKey: { account: secretAccount(settings.kind), browserKey: BROWSER_KEY,
+      baseUrl: settings.baseUrl, kind: settings.kind, storage: settings.keyStorage ?? 'system' } };
+  } catch { /* A damaged legacy record cannot be used as a connection. */ }
+}
+
+export function savedAiSettingsAvailable(s: AiSettings): boolean {
+  const id = s.profileId ?? s.savedKey?.profileId;
+  if (!id && !s.savedKey) return true;
+  try { return localStorage.getItem(id ? PROFILE_PREFIX + id : KEY) !== null; }
+  catch { return false; }
 }
 
 export function hasSavedAiKey(s: AiSettings): boolean {
@@ -96,6 +112,7 @@ export function hasSavedAiKey(s: AiSettings): boolean {
 
 /** Explicit use/save only. Denied access must not look like an empty saved key. */
 export async function resolveAiCredentials(s: AiSettings): Promise<AiSettings> {
+  if (!savedAiSettingsAvailable(s)) throw new Error('这套 AI 配置已删除，请重新选择连接。');
   if (s.apiKey || !s.savedKey) return s;
   if (!hasSavedAiKey(s)) throw new Error('连接地址已改变，请为新接口填写密钥。原配置未更改。');
   const { savedKey, ...base } = s;
@@ -112,6 +129,7 @@ export async function resolveAiCredentials(s: AiSettings): Promise<AiSettings> {
     const { api } = await import('../api');
     key = await api.secretGet(reference.account, reference.storage);
   } else key = localStorage.getItem(reference.browserKey);
+  if (!savedAiSettingsAvailable(s)) throw new Error('这套 AI 配置已删除，请重新选择连接。');
   return { ...base, apiKey: key ?? '' };
 }
 
@@ -182,6 +200,38 @@ export function profileSecretAccount(id: string, keyId?: string): string {
   if (keyId && !/^[\w-]{1,80}$/.test(keyId)) throw new Error('凭据标识无效');
   return `apikey.profile.${id}${keyId ? `.${keyId}` : ''}`;
 }
+
+async function deleteConnection(key: string, account: string, browserKey: string, storage: 'local' | 'system') {
+  const saved = localStorage.getItem(key);
+  if (saved === null) throw new Error('这套配置已删除，请重新选择。');
+  // Hide the reference before deleting the credential, and restore it on a vault error.
+  localStorage.removeItem(key);
+  try {
+    if (hasTauri()) {
+      const { api } = await import('../api');
+      await api.secretDelete(account, storage);
+    } else localStorage.removeItem(browserKey);
+  } catch {
+    if (localStorage.getItem(key) === null) localStorage.setItem(key, saved);
+    throw new Error('未能删除这套配置的密钥。请检查本机凭据库授权后重试。');
+  }
+}
+
+export async function deleteAiProfile(expected: AiProfile): Promise<void> {
+  const profile = listAiProfiles().find(p => p.id === expected.id);
+  if (!profile || profile.keyId !== expected.keyId || profile.updatedAt !== expected.updatedAt) {
+    throw new Error('这套配置已在另一窗口变更，请重新选择。');
+  }
+  const { savedKey } = loadAiProfileDeferred(profile.id);
+  await deleteConnection(PROFILE_PREFIX + profile.id, savedKey!.account, savedKey!.browserKey, savedKey!.storage);
+}
+
+export async function deleteLegacyAiSettings(): Promise<void> {
+  const reference = loadLegacyAiSettingsDeferred()?.savedKey;
+  if (!reference) throw new Error('找不到这套旧配置。');
+  await deleteConnection(KEY, reference.account, reference.browserKey, reference.storage);
+}
+
 export function normalizeAiSettings(s: AiSettings): AiSettings {
   const limits = modelLimits(s.model, s.maxTokens, s.baseUrl);
   const reasoning = modelPreset(s.model, s.baseUrl)?.reasoning;
@@ -235,6 +285,11 @@ export async function saveAiProfile(s: AiSettings, name: string): Promise<AiSett
   // metadata with another window's new key or undo another successful save.
   await writeProfileKey(id, apiKey, keyId, normalized.keyStorage);
   const before = readProfiles();
+  const replaced = before.profiles.find(p => p.id === id);
+  if (s.profileId && !replaced) {
+    await writeProfileKey(id, '', keyId, normalized.keyStorage).catch(() => {});
+    throw new Error('这套配置已删除。如需保留当前设置，请另存为新配置。');
+  }
   const updatedAt = Math.max(Date.now(), ...before.profiles.map(p => (p.updatedAt ?? 0) + 1));
   const profile = { id, keyId, updatedAt, name: name.trim().slice(0, 80), settings: nonSecret };
   try {
@@ -243,7 +298,6 @@ export async function saveAiProfile(s: AiSettings, name: string): Promise<AiSett
     await writeProfileKey(id, '', keyId, normalized.keyStorage).catch(() => {});
     throw new Error('配置未保存：本机设置写入失败，原配置已保留。');
   }
-  const replaced = before.profiles.find(p => p.id === id);
   // Cross-store migration preserves the original credential for rollback. Never
   // delete a Keychain entry merely because the user opted into prompt-free storage.
   if (replaced && (replaced.settings.keyStorage ?? 'system') === (normalized.keyStorage ?? 'system')) await writeProfileKey(id, '', replaced.keyId, replaced.settings.keyStorage).catch(() => {});

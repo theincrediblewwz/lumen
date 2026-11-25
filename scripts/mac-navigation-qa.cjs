@@ -31,6 +31,17 @@ async function drag(dx, dy) {
   await page.goto(url); await project('桌面夹').waitFor();
   const menuButton = page.getByRole('button', { name: '菜单', exact: true });
   const popup = page.getByRole('menu');
+  assert.equal(await page.getByRole('button', { name: '快速移动', exact: true }).count(), 0);
+  for (const [name, hint] of [['进入全屏', '进入全屏 · F11'], ['按标签筛选', '按标签筛选当前画布的内容'],
+    ['设置', '打开应用设置'], ['菜单', '打开主菜单，查看导入、导出和帮助']]) {
+    const button = page.getByRole('button', { name, exact: true });
+    await button.hover();
+    const tooltip = page.getByText(hint, { exact: true });
+    await tooltip.waitFor();
+    const bounds = await tooltip.boundingBox();
+    assert.ok(bounds.x >= 0 && bounds.x + bounds.width <= 1440 && bounds.y >= 26);
+  }
+  checks.push('right-side titlebar controls show distinct descriptions on hover');
   await menuButton.click(); await popup.waitFor();
   assert.equal(await menuButton.getAttribute('aria-expanded'), 'true');
   await menuButton.click(); await popup.waitFor({ state: 'hidden' });
@@ -102,7 +113,7 @@ async function drag(dx, dy) {
   assert.ok(flowWidth);
   await nodePanel.getByRole('button', { name: '缩小问题面板' }).click();
   const camera = await world.evaluate(el => el.style.transform);
-  assert.equal(await enter.evaluate(button => Boolean(button.previousElementSibling?.querySelector('.branch-focus-toggle'))), true);
+  assert.equal(await enter.evaluate(button => Boolean(button.closest('.titlebar-control')?.previousElementSibling?.querySelector('.branch-focus-toggle'))), true);
   assert.match(await titlebar.evaluate(el => getComputedStyle(el).transitionProperty), /opacity.*transform/);
   await enter.click();
   await leave.waitFor();
