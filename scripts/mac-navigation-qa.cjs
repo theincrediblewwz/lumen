@@ -16,7 +16,9 @@ async function rename(row, name) {
 }
 async function menu() { await page.getByRole('button', { name: '菜单', exact: true }).click(); }
 async function drag(dx, dy) {
-  const box = await page.locator('.node-card').boundingBox();
+  const node = page.locator('.node-card');
+  await node.click();
+  const box = await node.boundingBox();
   await page.mouse.move(box.x + 60, box.y + 24); await page.mouse.down();
   await page.mouse.move(box.x + 60 + dx, box.y + 24 + dy, { steps: 3 }); await page.mouse.up();
 }
@@ -57,6 +59,40 @@ async function drag(dx, dy) {
   await page.reload(); await project('学习项目').dblclick(); await board('最终白板').click(); await page.locator('.node-card').waitFor();
   assert.equal(await page.locator('.node-card').evaluate(el => parseFloat(el.style.left)), 125);
   checks.push('rename flushes pending canvas changes; content, project and board names survive reloading');
+  await page.locator('.node-card').click();
+  const enter = page.getByRole('button', { name: '进入全屏', exact: true });
+  const leave = page.getByRole('button', { name: '退出全屏', exact: true });
+  const titlebar = page.locator('.titlebar');
+  assert.equal(await enter.evaluate(button => Boolean(button.previousElementSibling?.querySelector('.branch-focus-toggle'))), true);
+  assert.match(await titlebar.evaluate(el => getComputedStyle(el).transitionProperty), /opacity.*transform/);
+  await enter.click();
+  await leave.waitFor();
+  const exitBounds = await leave.evaluate(el => ({ x: el.offsetLeft, y: el.offsetTop, width: el.offsetWidth }));
+  assert.equal(exitBounds.x, 12);
+  assert.equal(exitBounds.y, 12);
+  assert.equal(exitBounds.width, 34);
+  assert.match(await leave.evaluate(el => getComputedStyle(el).backdropFilter || getComputedStyle(el).webkitBackdropFilter), /blur/);
+  assert.equal(await titlebar.getAttribute('aria-hidden'), 'true');
+  assert.equal(await titlebar.evaluate(el => el.inert), true);
+  await titlebar.waitFor({ state: 'hidden' });
+  assert.equal(await enter.count(), 0);
+  assert.equal(await page.locator('.board-canvas-live').evaluate(el => el.getBoundingClientRect().top), 0);
+  assert.equal(await page.locator('.canvas-toolbar,.node-panel,.board-settings-fab,.canvas-zoom-label,.board-save-state').filter({ visible: true }).count(), 0);
+  assert.equal(await page.locator('.node-card.is-selected').count(), 1);
+  await page.screenshot({ path: path.join(output, 'mac-fullscreen-canvas.png'), animations: 'disabled' });
+  await leave.click();
+  await enter.waitFor();
+  await page.locator('.node-panel').waitFor();
+  assert.equal(await page.locator('.canvas-toolbar').isVisible(), true);
+  await page.keyboard.press('F11'); await leave.waitFor();
+  await page.keyboard.press('Escape'); await enter.waitFor();
+  assert.deepEqual(await page.evaluate(() => window.__fixtureFullscreenRequests), [true, false, true, false]);
+  await page.evaluate(() => window.__fixtureSetNativeFullscreen(true)); await leave.waitFor();
+  await page.evaluate(() => window.__fixtureSetNativeFullscreen(false)); await enter.waitFor();
+  checks.push('fullscreen is beside focus, hides board chrome, exits from its upper-left glass button, and follows native window changes');
+  await menu(); await page.getByRole('menuitem', { name: '视图与帮助', exact: true }).click();
+  assert.equal(await page.getByRole('menuitem', { name: /全屏/ }).count(), 0);
+  await page.keyboard.press('Escape');
   await menu(); assert.equal(await page.getByRole('menuitem', { name: 'PNG · 图片', exact: true }).count(), 0);
   await page.getByRole('menuitem', { name: '导出', exact: true }).click();
   for (const label of ['完整白板资料包（含原件）', 'Markdown · 保留层级', 'HTML · 离线阅读', 'SVG · 矢量图', 'PNG · 图片']) await page.getByRole('menuitem', { name: label, exact: true }).waitFor();
@@ -88,10 +124,20 @@ async function drag(dx, dy) {
   await crumb('学习项目').click();
   for (const theme of ['light', 'paper', 'dark']) for (const glassMode of ['native', 'css', 'off']) {
     await page.evaluate(async ({ theme, glassMode }) => { const { DEFAULT_SETTINGS, applySettings } = await import('/src/settings.ts'); applySettings({ ...DEFAULT_SETTINGS, theme, glass: glassMode !== 'off', glassMode }, 'macos'); }, { theme, glassMode });
-    const seam = await page.evaluate(() => { const top = document.querySelector('.titlebar'), side = document.querySelector('.project-canvas'); const style = getComputedStyle(side); return { gap: side.getBoundingClientRect().top - top.getBoundingClientRect().bottom, border: style.borderTopWidth, shadow: style.boxShadow, radius: style.borderRadius }; });
-    assert.equal(seam.gap, 0); assert.equal(seam.border, '0px'); assert.equal(seam.shadow, 'none'); assert.equal(seam.radius, '0px');
+    const seam = await page.evaluate(() => {
+      const top = document.querySelector('.titlebar'), canvas = document.querySelector('.project-canvas');
+      const style = getComputedStyle(canvas), fade = getComputedStyle(top, '::before');
+      return { gap: canvas.getBoundingClientRect().top - top.getBoundingClientRect().bottom, border: style.borderTopWidth,
+        shadow: style.boxShadow, radius: style.borderRadius, barBorder: getComputedStyle(top).borderBottomWidth,
+        mask: fade.maskImage || fade.webkitMaskImage, extension: fade.bottom, pointerEvents: fade.pointerEvents,
+        backdrop: fade.backdropFilter || fade.webkitBackdropFilter };
+    });
+    assert.equal(seam.gap, -20); assert.equal(seam.border, '0px'); assert.equal(seam.shadow, 'none'); assert.equal(seam.radius, '0px');
+    assert.equal(seam.barBorder, '0px'); assert.match(seam.mask, /linear-gradient/);
+    assert.equal(seam.extension, '-24px'); assert.equal(seam.pointerEvents, 'none');
+    assert.match(seam.backdrop, /blur/);
   }
-  checks.push('project canvas meets the topbar with no floating border/shadow/radius in three themes and three material modes');
+  checks.push('the topbar fades into the canvas without a separator or pointer interception in three themes and three material modes');
   await page.setViewportSize({ width: 720, height: 480 }); await menu(); await page.getByRole('menuitem', { name: '导出', exact: true }).click();
   const bounds = await page.getByRole('menu').boundingBox(); assert.ok(bounds.x >= 0 && bounds.y >= 0 && bounds.x + bounds.width <= 721 && bounds.y + bounds.height <= 481);
   await page.keyboard.press('Escape'); await page.setViewportSize({ width: 1440, height: 1024 }); checks.push('expanded menu stays within a small window');

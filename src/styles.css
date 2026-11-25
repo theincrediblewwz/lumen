@@ -175,6 +175,7 @@ html.glass-on body {
 }
 
 .board-surface {
+  position: relative;
   display: flex;
   flex-direction: column;
   height: 100%;
@@ -193,18 +194,49 @@ html.glass-on body {
    ========================================================================== */
 
 .titlebar {
+  --titlebar-background: linear-gradient(180deg, var(--chrome-grad-a), var(--chrome-grad-b) 32px), var(--bg-chrome);
+  --titlebar-backdrop: none;
   display: flex;
   align-items: center;
-  height: 44px;
+  height: 48px;
   padding: 0 8px 0 16px;
   border-bottom: var(--border-node) solid var(--border-color);
-  background:
-    linear-gradient(180deg, var(--chrome-grad-a), var(--chrome-grad-b) 70%),
-    var(--bg-chrome);
+  background: var(--titlebar-background);
+  -webkit-backdrop-filter: var(--titlebar-backdrop);
+  backdrop-filter: var(--titlebar-backdrop);
   user-select: none;
   /* 整条为拖拽区；交互控件用 data-tauri-drag-region 之外 + no-drag 类抵消 */
   -webkit-app-region: drag;
   app-region: drag;
+  transition: opacity var(--dur-normal) var(--ease-standard), transform var(--dur-normal) var(--ease-standard), visibility 0s;
+}
+
+.titlebar.fades-to-canvas {
+  position: relative;
+  z-index: 10;
+  border-bottom: 0;
+  background: none;
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+}
+
+.titlebar.fades-to-canvas::before {
+  --titlebar-mask: linear-gradient(to bottom, #000 calc(100% - 24px), rgb(0 0 0 / 36%) calc(100% - 11px), transparent);
+  content: '';
+  position: absolute;
+  inset: 0 0 -24px;
+  z-index: -1;
+  pointer-events: none;
+  background: rgba(var(--glass-rgb), clamp(0.68, calc(var(--glass-alpha) + 0.14), 0.86));
+  -webkit-backdrop-filter: blur(7px) saturate(145%);
+  backdrop-filter: blur(7px) saturate(145%);
+  -webkit-mask-image: var(--titlebar-mask);
+  mask-image: var(--titlebar-mask);
+}
+
+.titlebar.fades-to-canvas + .workspace {
+  --titlebar-overlap: 20px;
+  margin-block-start: calc(-1 * var(--titlebar-overlap));
 }
 
 /* macOS：为左上角系统红绿灯预留安全区，避免和品牌名重叠 */
@@ -569,7 +601,7 @@ html.glass-on body {
 /* 画布悬浮工具栏：新建 / 撤销 / 重做（左上角，始终可见） */
 .canvas-toolbar {
   position: absolute;
-  top: 12px;
+  top: calc(12px + var(--titlebar-overlap, 0px));
   left: 12px;
   z-index: 20;
   display: flex;
@@ -838,36 +870,55 @@ html.motion-off .node-card.is-flash { animation: none; }
   }
 }
 
-/* 全屏：铺满屏幕，标题栏已隐藏；仅留退出按钮 */
 .board-surface.is-fullscreen {
   height: 100vh;
 }
 
-.fullscreen-exit {
-  position: fixed;
-  top: 14px;
-  right: 14px;
-  z-index: 1200;
-  display: inline-flex;
-  align-items: center;
-  gap: 7px;
-  padding: 8px 14px 8px 11px;
-  font-size: 13px;
-  color: #fff;
-  background: rgba(28, 30, 33, 0.72);
-  backdrop-filter: blur(8px);
-  border: none;
-  border-radius: 10px;
-  cursor: pointer;
-  opacity: 0.55;
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.2);
-  transition: opacity var(--dur-fast) var(--ease-standard),
-    background var(--dur-fast) var(--ease-standard);
+.board-surface.is-fullscreen > .titlebar {
+  position: absolute;
+  inset: 0 0 auto;
+  z-index: 10;
+  opacity: 0;
+  transform: translateY(-10px);
+  visibility: hidden;
+  pointer-events: none;
+  transition-delay: 0s, 0s, var(--dur-normal);
 }
 
-.fullscreen-exit:hover {
-  opacity: 1;
-  background: rgba(28, 30, 33, 0.9);
+.board-surface.is-fullscreen .workspace {
+  --titlebar-overlap: 0px;
+  margin-block-start: 0;
+}
+
+.board-surface.is-fullscreen :is(.canvas-toolbar, .canvas-zoom-label, .branch-focus-zoom, .project-canvas-actions, .project-canvas-fit) {
+  display: none;
+}
+
+.fullscreen-exit {
+  position: fixed;
+  top: max(12px, env(safe-area-inset-top, 0px));
+  left: max(12px, env(safe-area-inset-left, 0px));
+  z-index: 45;
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  padding: 0;
+  color: var(--text-secondary);
+  background: rgba(var(--glass-rgb), 0.64);
+  -webkit-backdrop-filter: blur(16px) saturate(160%);
+  backdrop-filter: blur(16px) saturate(160%);
+  border: 1px solid var(--glass-edge);
+  border-radius: 11px;
+  cursor: pointer;
+  box-shadow: inset 0 1px 0 var(--glass-hi), var(--shadow-node);
+  transition: color var(--dur-fast) var(--ease-standard), background var(--dur-fast) var(--ease-standard);
+}
+
+.fullscreen-exit:hover,
+.fullscreen-exit:focus-visible {
+  color: var(--text-primary);
+  background: rgba(var(--glass-rgb), 0.88);
 }
 
 /* ==========================================================================
@@ -893,9 +944,8 @@ html.glass-on .glass-surface {
 
 /* 侧栏、标题栏也上玻璃 */
 html.glass-on .titlebar {
-  background: rgba(var(--glass-rgb), calc(var(--glass-alpha) + 0.1));
-  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(180%);
-  backdrop-filter: blur(var(--glass-blur)) saturate(180%);
+  --titlebar-background: rgba(var(--glass-rgb), calc(var(--glass-alpha) + 0.1));
+  --titlebar-backdrop: blur(var(--glass-blur)) saturate(180%);
 }
 
 html.glass-on .sidebar.glass-surface {
@@ -1521,9 +1571,8 @@ html.native-glass .board-canvas {
    染色不透明度绑定设置里的"通透度"(--glass-alpha)：默认偏实、贴合主题，
    想更通透可自行调高。这样既保留玻璃质感，又几乎消除焦点变色。 */
 html.native-glass .titlebar {
-  background: rgba(var(--glass-rgb), calc(var(--glass-alpha) + 0.22));
-  -webkit-backdrop-filter: blur(calc(var(--glass-blur) * 0.6)) saturate(150%);
-  backdrop-filter: blur(calc(var(--glass-blur) * 0.6)) saturate(150%);
+  --titlebar-background: rgba(var(--glass-rgb), calc(var(--glass-alpha) + 0.22));
+  --titlebar-backdrop: blur(calc(var(--glass-blur) * 0.6)) saturate(150%);
   border-bottom-color: var(--glass-edge);
 }
 
@@ -1749,7 +1798,7 @@ html.motion-off .edge-line { animation: none; }
 
 .node-panel {
   position: absolute;
-  top: 12px;
+  top: calc(12px + var(--titlebar-overlap, 0px));
   right: 12px;
   bottom: 12px;
   z-index: 30;
@@ -2755,7 +2804,7 @@ html.motion-off .edge-line { animation: none; }
 .node-measure-layer {position:absolute;left:-100000px;top:0;pointer-events:none;visibility:hidden;}
 .node-measure-layer .node-card {position:relative;left:0!important;top:0!important;}
 
-.flow-panel {position:absolute;z-index:34;left:16px;top:64px;bottom:45px;width:clamp(310px,43%,520px);max-width:calc(100% - 32px);display:flex;flex-direction:column;border:1px solid color-mix(in srgb,var(--flow-color) 40%,var(--border-color));border-radius:14px;background:var(--bg-node);box-shadow:var(--shadow-node),0 0 22px color-mix(in srgb,var(--flow-color) 15%,transparent);overflow:hidden;}
+.flow-panel {position:absolute;z-index:34;left:16px;top:calc(64px + var(--titlebar-overlap,0px));bottom:45px;width:clamp(310px,43%,520px);max-width:calc(100% - 32px);display:flex;flex-direction:column;border:1px solid color-mix(in srgb,var(--flow-color) 40%,var(--border-color));border-radius:14px;background:var(--bg-node);box-shadow:var(--shadow-node),0 0 22px color-mix(in srgb,var(--flow-color) 15%,transparent);overflow:hidden;}
 .flow-panel>header {display:flex;align-items:center;gap:8px;padding:14px 16px;border-bottom:1px solid var(--border-color);}
 .flow-panel>header>div {display:flex;flex-direction:column;gap:4px;min-width:0;flex:1;}
 .flow-panel header strong {font-size:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}

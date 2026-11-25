@@ -118,6 +118,12 @@ let callbackId=0;const callbacks=new Map(),listeners=new Map();
 const fixtureRevision=id=>JSON.stringify(fixtureBoards.find(row=>row.id===id), (key,value)=>key==='_disk_revision'?undefined:value);
 const emitFixture=(event,payload)=>{for(const [id,listener]of [...listeners])if(listener.event===event)callbacks.get(id)?.({event,id,payload});};
 window.__fixtureEmit=emitFixture;window.__fixtureWindowCommands=[];
+let fixtureFullscreen = false;
+window.__fixtureFullscreenRequests = [];
+window.__fixtureSetNativeFullscreen = active => {
+  fixtureFullscreen = active;
+  emitFixture('tauri://resize', { width: window.innerWidth, height: window.innerHeight });
+};
 window.__fixtureImportCalls=[];window.__fixtureShareReads=[];
 const importPlan={schema:'lumen.conversation-tree/v1',title:'从对话形成的问题',nodes:[{reference:'root',title:'理解主题',summary:'先看全貌',markdown:'# AI 整理\n\n公式 $x_i^2$。',parent:null},{reference:'child',title:'继续追问',summary:'继续寻找证据',markdown:'## 下一步\n\n$$\\frac{1}{2}$$',parent:'root'}]};
 window.__TAURI_INTERNALS__={metadata:{currentWindow:{label:'main'},currentWebview:{label:'main'}},transformCallback:callback=>{callbacks.set(++callbackId,callback);return callbackId},unregisterCallback:id=>callbacks.delete(id),invoke:async(command,args)=>{
@@ -278,6 +284,12 @@ window.__TAURI_INTERNALS__={metadata:{currentWindow:{label:'main'},currentWebvie
   if(command==='boards_list')return fixtureBoards.filter(row=>row.projectId===args.projectId).map(row=>({id:row.id,name:row.name,created_at:now,updated_at:now}));
   if(command==='sync_settings_get')return{enabled:false,endpoint:'',username:'',libraryId:storageRoot.endsWith('other-library')?'other-fixture':'original-fixture',deviceId:'synthetic'};
   if(command==='plugin:window|is_maximized')return false;
+  if(command==='plugin:window|is_fullscreen')return fixtureFullscreen;
+  if(command==='plugin:window|set_fullscreen'){
+    window.__fixtureFullscreenRequests.push(args.value);
+    window.__fixtureSetNativeFullscreen(args.value);
+    return;
+  }
   if(command==='plugin:window|get_all_windows'){const {windowIdentity}=await import('/src/windowIdentity.ts');return window.__fixtureExistingAiWindow?['main',await windowIdentity('ai',['project','board',''])]:['main'];}
   if(command==='plugin:window|current_monitor')return{name:'合成显示器',size:{width:1440,height:900},position:{x:0,y:0},workArea:{position:{x:0,y:0},size:{width:1440,height:900}},scaleFactor:1};
   if(command==='plugin:webview|create_webview_window'){window.__fixtureWindowOptions.push(args.options);return;}

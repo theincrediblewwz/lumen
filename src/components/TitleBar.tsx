@@ -1,6 +1,6 @@
 import { getCurrentWindow } from '@tauri-apps/api/window';
-import { useEffect, useState, type ReactNode } from 'react';
-import { Menu, PanelLeftClose, PanelLeftOpen, Settings } from 'lucide-react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { Maximize2, Menu, PanelLeftClose, PanelLeftOpen, Settings } from 'lucide-react';
 import icon from '../../app-icon.png';
 
 /**
@@ -16,6 +16,9 @@ export function TitleBar({
   onMenu,
   onHome,
   onSettings,
+  onFullscreen,
+  fadeToCanvas = false,
+  fullscreen,
   onToggleIndex,
   indexCollapsed,
   path,
@@ -27,6 +30,9 @@ export function TitleBar({
   onMenu: (e: React.MouseEvent) => void;
   onHome?: () => void;
   onSettings: () => void;
+  onFullscreen: () => void;
+  fadeToCanvas?: boolean;
+  fullscreen: boolean;
   onToggleIndex?: () => void;
   indexCollapsed?: boolean;
   path?: ReactNode;
@@ -35,24 +41,31 @@ export function TitleBar({
 }) {
   const isMac = platform === 'macos';
   const showWinControls = Boolean(platform) && !isMac; // 平台确认后再显示自绘按钮
-  const win = getCurrentWindow();
+  const win = useMemo(getCurrentWindow, []);
   const [maximized, setMaximized] = useState(false);
+  const bar = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => {
+    if (bar.current) bar.current.inert = fullscreen;
+  }, [fullscreen]);
 
   useEffect(() => {
-    let un: (() => void) | undefined;
-    win.isMaximized().then(setMaximized).catch(() => {});
-    win
-      .onResized(() => {
-        win.isMaximized().then(setMaximized).catch(() => {});
-      })
-      .then((f) => (un = f))
-      .catch(() => {});
-    return () => un?.();
-  }, [win]);
+    if (!showWinControls) return;
+    let disposed = false;
+    let stop: (() => void) | undefined;
+    const refresh = () => void win.isMaximized().then(active => { if (!disposed) setMaximized(active); }).catch(() => {});
+    refresh();
+    void win.onResized(refresh).then(unlisten => {
+      if (disposed) unlisten();
+      else stop = unlisten;
+    }).catch(() => {});
+    return () => { disposed = true; stop?.(); };
+  }, [showWinControls, win]);
 
   return (
     <div
-      className={`titlebar${isMac ? ' is-mac' : ''}${!platform ? ' is-platform-pending' : ''}`}
+      ref={bar}
+      className={`titlebar${isMac ? ' is-mac' : ''}${!platform ? ' is-platform-pending' : ''}${fadeToCanvas ? ' fades-to-canvas' : ''}`}
+      aria-hidden={fullscreen || undefined}
       data-tauri-drag-region="deep"
     >
       {onHome ? (
@@ -67,6 +80,10 @@ export function TitleBar({
       {path}
       <div className="titlebar-actions">
         {boardAction}
+        <button type="button" className="titlebar-btn titlebar-menu titlebar-fullscreen"
+          aria-label="进入全屏" title="进入全屏 (F11)" onClick={onFullscreen}>
+          <Maximize2 size={17} aria-hidden="true" />
+        </button>
         {filter}
         {onToggleIndex && (
           <button type="button" className="titlebar-btn titlebar-menu"

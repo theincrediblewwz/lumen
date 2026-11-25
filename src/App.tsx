@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Minimize2 } from 'lucide-react';
 import { api, pickStorageDir, type AppInfo, type BoardEdge, type BoardFile, type BoardMeta, type BoardNode, type ProjectMeta } from './api';
 import { ContextMenu, type ContextMenuState } from './components/ContextMenu';
 import { TitleBar } from './components/TitleBar';
@@ -157,6 +158,7 @@ export default function App() {
   }, []);
 
   const [fullscreen, setFullscreen] = useState(false);
+  const fullscreenPending = useRef(false);
   const [settings, setSettings] = useState<Settings>(() => loadSettings());
   const [settingsOpen, setSettingsOpen] = useState(false);
 
@@ -336,17 +338,37 @@ export default function App() {
   }, []);
 
   /* ── 全屏模式 ── */
-  const applyFullscreen = useCallback((on: boolean) => {
-    setFullscreen(on);
-    getCurrentWindow().setFullscreen(on).catch(() => {});
+  useEffect(() => {
+    if (!('__TAURI_INTERNALS__' in window)) return;
+    const nativeWindow = getCurrentWindow();
+    let disposed = false;
+    let stop: (() => void) | undefined;
+    const refresh = () => {
+      if (fullscreenPending.current) return;
+      void nativeWindow.isFullscreen().then(active => {
+        if (!disposed && !fullscreenPending.current && typeof active === 'boolean') setFullscreen(active);
+      }).catch(() => {});
+    };
+    refresh();
+    void nativeWindow.onResized(refresh).then(unlisten => {
+      if (disposed) unlisten();
+      else stop = unlisten;
+    }).catch(() => {});
+    return () => { disposed = true; stop?.(); };
   }, []);
-  const toggleFullscreen = useCallback(() => {
-    setFullscreen((cur) => {
-      const next = !cur;
-      getCurrentWindow().setFullscreen(next).catch(() => {});
-      return next;
-    });
+  const applyFullscreen = useCallback(async (on: boolean) => {
+    if (fullscreenPending.current) return;
+    fullscreenPending.current = true;
+    try {
+      await getCurrentWindow().setFullscreen(on);
+      setFullscreen(on);
+    } catch (err) {
+      setError(`无法${on ? '进入' : '退出'}全屏。${String(err)}`);
+    } finally {
+      fullscreenPending.current = false;
+    }
   }, []);
+  const enterFullscreen = () => { void applyFullscreen(true); };
 
   /* 全局快捷键（M6-9）：全屏 / 搜索 / 帮助；Esc 退出全屏。画布级快捷键在 BoardCanvas 内处理 */
   useEffect(() => {
@@ -355,7 +377,7 @@ export default function App() {
         e.preventDefault();void flushBoards().catch(err=>setError(String(err)));
       } else if (matchShortcut(e, shortcut('fullscreen')!, { mac })) {
         e.preventDefault();
-        toggleFullscreen();
+        if (!e.repeat) void applyFullscreen(!fullscreen);
       } else if (matchShortcut(e, shortcut('search')!, { mac })) {
         // 全局搜索（M6-6）——在输入框里也允许（方便随时唤出）
         e.preventDefault();
@@ -365,12 +387,12 @@ export default function App() {
         e.preventDefault();
         setHelpOpen((v) => !v);
       } else if (e.key === 'Escape' && fullscreen && !branchFocusActive) {
-        applyFullscreen(false);
+        void applyFullscreen(false);
       }
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [fullscreen, toggleFullscreen, applyFullscreen, mac,flushBoards,branchFocusActive]);
+  }, [fullscreen, applyFullscreen, mac,flushBoards,branchFocusActive]);
 
   useEffect(() => {
     if (editing) {
@@ -779,7 +801,6 @@ export default function App() {
       ...(activeBoard ? [{ type: 'item', label: '快照与恢复…', onClick: () => setSnapshotOpen(true) }] as ContextMenuState['items'] : []),
       { type: 'separator' },
       { type: 'group', label: '视图与帮助', items: [
-        { type: 'item', label: fullscreen ? '退出全屏  Esc' : '进入全屏  F11', onClick: () => applyFullscreen(!fullscreen) },
         { type: 'item', label: '快捷键帮助  ?', onClick: () => setHelpOpen(true) },
       ] },
       { type: 'item', label: '设置…', onClick: () => setSettingsOpen(true) },
@@ -907,10 +928,17 @@ export default function App() {
   /* ── 首屏加载 ── */
   if (phase === 'loading') return <div className="screen-center">正在载入…</div>;
 
+  const fullscreenExit = fullscreen && (
+    <button type="button" className="fullscreen-exit" aria-label="退出全屏" title="退出全屏 (Esc)" onClick={() => void applyFullscreen(false)}>
+      <Minimize2 size={17} aria-hidden="true" />
+    </button>
+  );
+
   if (phase === 'setup') {
     return (
-      <div className="board-surface">
-        <TitleBar platform={platform} brand="脉络" onMenu={appMenu} onSettings={() => setSettingsOpen(true)} />
+      <div className={`board-surface${fullscreen ? ' is-fullscreen' : ''}`}>
+        <TitleBar platform={platform} brand="脉络" onMenu={appMenu} onFullscreen={enterFullscreen} fullscreen={fullscreen} onSettings={() => setSettingsOpen(true)} />
+        {fullscreenExit}
         <div className="screen-center">
           <div className="setup-card">
             <h1 className="setup-title">脉络</h1>
@@ -942,6 +970,9 @@ export default function App() {
         onMenu={appMenu}
         onHome={() => navigateProject(null)}
         onSettings={() => setSettingsOpen(true)}
+        onFullscreen={enterFullscreen}
+        fullscreen={fullscreen}
+        fadeToCanvas={!knowledgeOpen && !error && !archiveStatus}
         boardAction={activeBoard && !knowledgeOpen && <span className="titlebar-board-action" ref={setBoardActionSlot}/>}
         filter={!knowledgeOpen && !branchFocusActive && <TagFilter key={filterKey} tags={tags} active={tagFilter}
           onChange={ids => setTagFilters(old => ({ ...old, [filterKey]: ids }))} />}
@@ -958,6 +989,7 @@ export default function App() {
             key={`${activeBoard.id}:${boardGeneration}`}
             board={activeBoardRef.current ?? activeBoard}
             scope={canvasScope || root || ''}
+            fullscreen={fullscreen}
             focusSlot={boardActionSlot} onBranchFocusChange={setBranchFocusActive}
             onChange={onCanvasChange} onViewportChange={onViewportChange} onFlush={flushBoards} saveState={saveState}
             guessMath={settings.guessMath}
@@ -1008,7 +1040,8 @@ export default function App() {
           />
         )}
       </div>
-      {activeBoard&&!knowledgeOpen&&!branchFocusActive&&<button className={`board-save-state is-${saveState}`} title="内容自动保存 · Cmd/Ctrl+S立即保存" onClick={()=>void flushBoards().catch(e=>setError(String(e)))}>{saveState==='saved'?'已保存':saveState==='saving'?'保存中…':saveState==='error'?'保存失败 · 点击重试':'等待保存…'}</button>}
+      {fullscreenExit}
+      {activeBoard&&!knowledgeOpen&&!branchFocusActive&&!fullscreen&&<button className={`board-save-state is-${saveState}`} title="内容自动保存 · Cmd/Ctrl+S立即保存" onClick={()=>void flushBoards().catch(e=>setError(String(e)))}>{saveState==='saved'?'已保存':saveState==='saving'?'保存中…':saveState==='error'?'保存失败 · 点击重试':'等待保存…'}</button>}
       {syncLocked&&<div className="sync-edit-lock" role="status">正在保存并同步资料…</div>}
 
       {menu && <ContextMenu state={menu} onClose={() => setMenu(null)} />}
@@ -1057,7 +1090,7 @@ export default function App() {
         projectId={activeProject?.id ?? null}
         boardId={activeBoard?.id ?? null}
         boardName={activeBoard?.name ?? null}
-        suspended={knowledgeOpen || !activeBoard || branchFocusActive}
+        suspended={knowledgeOpen || !activeBoard || branchFocusActive || fullscreen}
         onBoardSettings={()=>window.dispatchEvent(new CustomEvent('lumen:board-settings',{detail:activeBoard?.id}))}
       />
       <WorkspaceAssistant key={canvasScope} open={workspaceAiOpen} scope={canvasScope} onClose={() => setWorkspaceAiOpen(false)}

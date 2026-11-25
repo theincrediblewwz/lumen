@@ -137,7 +137,8 @@ try{
  checks.push('a still click queues no save; repeated pans coalesce to a single latest viewport with the graph intact and restore on reload');
 
  const otherNode = page.locator('.node-card').filter({ hasText: '明确双击' });
- const dragEquation = async (dx, dy) => {
+ const questionPanel = page.locator('.node-panel');
+ const dragEquation = async (dx, dy, afterRelease) => {
    const { x, y } = await equation.locator('.node-title').evaluate(el => {
      const title = el.getBoundingClientRect();
      const y = Math.round(title.y + title.height / 2);
@@ -151,25 +152,44 @@ try{
    await page.mouse.down();
    await page.mouse.move(x + dx, y + dy, { steps: 8 });
    await page.mouse.up();
+   await afterRelease?.(x + dx, y + dy);
    await saved();
  };
  assert.equal(await equation.evaluate(el => el.classList.contains('is-selected')), false);
- await dragEquation(88, 42);
+ await dragEquation(88, 42, async (x, y) => {
+   assert.equal(await questionPanel.count(), 0);
+   assert.equal(await page.evaluate(() => window.getSelection().toString()), '');
+   await page.mouse.click(x, y);
+ });
  const afterNodePan = (await capture()).boards.board;
  assert.deepEqual(afterNodePan.nodes, boardAfterPan.nodes);
  assert.deepEqual(afterNodePan.viewport, { x: 232, y: 114, zoom: 0.68 });
- assert.equal(await page.locator('.node-panel').count(), 0);
- assert.equal(await page.evaluate(() => window.getSelection().toString()), '');
- await equation.click();
- const questionPanel = page.locator('.node-panel');
  await questionPanel.waitFor();
  assert.equal(await equation.evaluate(el => el.classList.contains('is-selected')), true);
+
+ // A completed drag can have no corresponding DOM click. A later click still needs to select the card.
+ await blank();
+ const releaseClickGuard = await page.evaluateHandle(() => {
+   const guard = new AbortController();
+   window.addEventListener('click', event => event.stopImmediatePropagation(), { capture: true, signal: guard.signal });
+   return guard;
+ });
+ await dragEquation(-24, 17);
+ assert.equal(await questionPanel.count(), 0);
+ await releaseClickGuard.evaluate(guard => guard.abort());
+ await releaseClickGuard.dispose();
+ await equation.dispatchEvent('click', { button: 0, detail: 1 });
+ assert.equal(await equation.evaluate(el => el.classList.contains('is-selected')), true);
+ const afterSecondPan = (await capture()).boards.board;
+ assert.deepEqual(afterSecondPan.nodes, afterNodePan.nodes);
+ assert.deepEqual(afterSecondPan.viewport, { x: 208, y: 131, zoom: 0.68 });
+
  await dragEquation(62, -34);
  const afterNodeMove = (await capture()).boards.board;
- assert.equal(Math.round((afterNodeMove.nodes[0].x - afterNodePan.nodes[0].x) * afterNodeMove.viewport.zoom), 62);
- assert.equal(Math.round((afterNodeMove.nodes[0].y - afterNodePan.nodes[0].y) * afterNodeMove.viewport.zoom), -34);
- assert.deepEqual(afterNodeMove.viewport, afterNodePan.viewport);
- checks.push('dragging from an unselected node pans without selecting or moving it; a click enables dragging just that node');
+ assert.equal(Math.round((afterNodeMove.nodes[0].x - afterSecondPan.nodes[0].x) * afterNodeMove.viewport.zoom), 62);
+ assert.equal(Math.round((afterNodeMove.nodes[0].y - afterSecondPan.nodes[0].y) * afterNodeMove.viewport.zoom), -34);
+ assert.deepEqual(afterNodeMove.viewport, afterSecondPan.viewport);
+ checks.push('an unselected node pans without moving; the first subsequent click selects it even when the drag emitted no click');
 
  const expandedRect = await questionPanel.boundingBox();
  const savedRect = () => page.evaluate(() => localStorage.getItem('lumen.nodePanel.rect.v1'));
