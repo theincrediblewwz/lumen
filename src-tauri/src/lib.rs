@@ -223,6 +223,7 @@ pub fn run() {
             board_operations::chat_document_attach,
             board_operations::chat_conversation_upsert,
             workspace_ai::workspace_ai_prepare,
+            workspace_ai::workspace_ai_place_layout,
             workspace_ai::workspace_ai_apply,
             workspace_ai::workspace_ai_discard,
             workspace_ai::workspace_ai_latest,

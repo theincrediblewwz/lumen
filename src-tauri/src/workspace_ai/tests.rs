@@ -142,13 +142,19 @@ fn markdown_revisions_original_and_cross_board_images_survive_batch_and_undo() {
     let original_doc = lib.read(&format!("{base}/{}", mark.path));
     let id = &original.nodes[0].id;
     let target = json!({"projectId":project.id,"boardId":"@copy"});
-    let prepared = stage(&lib, json!([
+    let mut prepared = stage(&lib, json!([
         {"op":"update_node","board":initial,"nodeId":id,"fields":{"title":"新标题","summary":"新问题"}},
         {"op":"edit_markdown","board":initial,"nodeId":id,"documentId":draft::resources::doc_id(&mark.path),"revision":documents::hash(&original_doc),"markdown":"新正文"},
         {"op":"create_board","key":"@copy","projectId":project.id,"name":"复用图片"},
         {"op":"create_node","key":"@image","board":target,"fields":{}},
-        {"op":"attach_document","board":target,"sourceBoard":initial,"fromNodeId":id,"toNodeId":"@image","documentId":image_id}
+        {"op":"attach_document","board":target,"sourceBoard":initial,"fromNodeId":id,"toNodeId":"@image","documentId":image_id},
+        {"op":"arrange_nodes","board":target,"nodeIds":["@image"],"direction":"down","spacing":"airy","reason":"留出阅读图片的空间"}
     ])).unwrap();
+    let job = &prepared.plan.layout_jobs[0];
+    let image_source = job.documents.values().next().unwrap().source.as_ref().unwrap();
+    assert_eq!(image_source.board_id, b.id);
+    let measured = measured_layout(job, json!({"x":120,"y":120,"w":280,"h":280}));
+    super::layout::place(&lib.0, &mut prepared, vec![measured]).unwrap();
     let changed = commit_at(&lib.0, &prepared).unwrap();
     let new_id = changed.destinations[0].board_id.as_deref().unwrap();
     let new = storage::load_board(&lib.0, &project.id, new_id).unwrap();
@@ -177,6 +183,56 @@ fn markdown_revisions_original_and_cross_board_images_survive_batch_and_undo() {
         .0
         .join(format!("{}/{new_id}/board.json", project.id))
         .exists());
+}
+
+fn measured_layout(job: &super::layout::LayoutJob, bounds: Value) -> super::layout::MeasuredLayout {
+    let nodes: serde_json::Map<_, _> = job.nodes.iter().map(|node| (node.id.clone(), bounds.clone())).collect();
+    serde_json::from_value(json!({"projectId":job.project_id,"boardId":job.board_id,"nodes":nodes})).unwrap()
+}
+
+#[test]
+fn measured_workspace_arrangement_is_required_before_apply_and_undo_restores_positions() {
+    let lib = Library::new();
+    let p = storage::create_project(&lib.0, "布局验收").unwrap();
+    let b = storage::create_board(&lib.0, &p.id, "合成题目").unwrap();
+    let board = json!({"projectId":p.id,"boardId":b.id});
+    let original = stage(&lib, json!([
+        {"op":"create_node","key":"@old","board":board,"fields":{"title":"原位置","position":{"x":0,"y":0},"height":100}},
+    ])).unwrap();
+    commit_at(&lib.0, &original).unwrap();
+    let board_path = format!("{}/{}/board.json", p.id, b.id);
+    let original_bytes = lib.read(&board_path);
+    let mut prepared = stage(&lib, json!([
+        {"op":"create_node","key":"@root","board":board,"fields":{"title":"=={#FFF146}核心==","color":"#345FA8"}},
+        {"op":"create_node","key":"@step","board":board,"fields":{"title":"分支"}},
+        {"op":"add_markdown","board":board,"nodeId":"@step","title":"公式","markdown":"$x^2+y^2$"},
+        {"op":"connect_nodes","board":board,"from":"@root","to":"@step"},
+        {"op":"arrange_nodes","board":board,"nodeIds":["@root","@step"],"direction":"right","spacing":"balanced","reason":"先核心再看证据"},
+    ])).unwrap();
+    assert!(commit_at(&lib.0, &prepared).is_err());
+    assert_eq!(lib.read(&board_path), original_bytes);
+    let job = &prepared.plan.layout_jobs[0];
+    assert_eq!(job.nodes.len(), 2);
+    assert_eq!(job.documents.values().next().unwrap().markdown, "$x^2+y^2$");
+    let overlapping = measured_layout(job, json!({"x":500,"y":40,"w":260,"h":75}));
+    assert!(super::layout::place(&lib.0, &mut prepared, vec![overlapping]).is_err());
+    let job = &prepared.plan.layout_jobs[0];
+    let id = job.nodes[0].id.clone();
+    let nodes = json!({ (id.clone()): {"x":500,"y":40,"w":260,"h":75}, (job.nodes[1].id.clone()): {"x":870,"y":40,"w":410,"h":217} });
+    let measured = serde_json::from_value(json!({"projectId":p.id,"boardId":b.id,"nodes":nodes})).unwrap();
+    super::layout::place(&lib.0, &mut prepared, vec![measured]).unwrap();
+    assert_eq!(prepared.plan.layouts.len(), 1);
+    assert_eq!(lib.read(&board_path), original_bytes);
+    let applied = commit_at(&lib.0, &prepared).unwrap();
+    let state = storage::load_board(&lib.0, &p.id, &b.id).unwrap();
+    assert_eq!(state.nodes[0].x, 0.0);
+    assert_eq!(state.nodes[0].y, 0.0);
+    let root = state.nodes.iter().find(|node| node.id == id).unwrap();
+    assert_eq!((root.x, root.y, root.w), (500.0, 40.0, 260.0));
+    assert_eq!(root.color.as_deref(), Some("#345FA8"));
+    assert_eq!(root.title, "=={#FFF146}核心==");
+    undo_at(&lib.0, &applied.id).unwrap();
+    assert_eq!(lib.read(&board_path), original_bytes);
 }
 
 #[test]

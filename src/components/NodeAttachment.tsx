@@ -13,33 +13,40 @@ import { imageDoc } from '../canvas/composition';
 const GAP = 24;
 const ignorePageCount = () => {};
 type PageProps = { page: number; onPages: (count: number) => void };
+export type StagedDocumentPreview = { markdown: string; source?: { projectId: string; boardId: string } };
 /** Only the current resource is loaded; source order and original bytes are untouched. */
-export function NodeAttachment({ projectId, boardId, doc, refresh = 0, page = 0, onPages = ignorePageCount, onImageSize }: {
+export function NodeAttachment({ projectId, boardId, doc, refresh = 0, page = 0, onPages = ignorePageCount, onImageSize, staged, expectedScope }: {
   projectId: string; boardId: string; doc: DocRef; refresh?: number; page?: number;
   onPages?: (count: number) => void; onImageSize?: (size: { width: number; height: number }) => void;
+  staged?: StagedDocumentPreview; expectedScope?: string;
 }) {
-  useEffect(() => { if (imageDoc(doc)) onPages(1); }, [doc.path, onPages]);
-  if (imageDoc(doc)) return <div className="node-primary-image"><StickerImage projectId={projectId} boardId={boardId} path={doc.path} onSize={onImageSize}/></div>;
-  return <DocumentOpening projectId={projectId} boardId={boardId} doc={doc} refresh={refresh} page={page} onPages={onPages}/>;
+  const image = imageDoc(doc);
+  useEffect(() => { if (image) onPages(1); }, [image, onPages]);
+  const source = staged?.source ?? { projectId, boardId };
+  if (image) return <div className="node-primary-image"><StickerImage {...source} path={doc.path} onSize={onImageSize} expectedScope={expectedScope}/></div>;
+  if (staged && !staged.source) return <DocumentPages markdown={staged.markdown} page={page} onPages={onPages}/>;
+  return <DocumentOpening {...source} doc={doc} refresh={refresh} page={page} onPages={onPages} markdownOverride={staged?.markdown} expectedScope={expectedScope}/>;
 }
-function DocumentOpening({ projectId, boardId, doc, refresh, page, onPages }: {
+function DocumentOpening({ projectId, boardId, doc, refresh, page, onPages, markdownOverride, expectedScope }: {
   projectId: string; boardId: string; doc: DocRef; refresh: number;
+  markdownOverride?: string; expectedScope?: string;
 } & PageProps) {
   const [payload, setPayload] = useState<DocumentPayload>(), [error, setError] = useState('');
   useEffect(() => {
     let active = true; setPayload(undefined); setError('');
-    void documentPayload(projectId, boardId, doc.path).then(p => active && setPayload(p)).catch(e => {
+    void documentPayload(projectId, boardId, doc.path, expectedScope).then(p => active && setPayload(p)).catch(e => {
       if (active) { setError(String(e)); onPages(1); }
     });
     return () => { active = false; };
-  }, [projectId, boardId, doc.path, doc.bytes, refresh, onPages]);
+  }, [projectId, boardId, doc.path, doc.bytes, refresh, onPages, expectedScope]);
   const images = useDocumentImages(projectId, boardId, doc.path, payload?.attachment, payload?.scope);
-  const html = useMemo(() => payload?.attachment?.kind === 'markdown_bundle' ? renderRichMarkdown(payload.markdown, payload.attachment, images.urls).html : undefined, [payload, images.urls]);
+  const markdown = markdownOverride ?? payload?.markdown ?? '';
+  const html = useMemo(() => payload?.attachment?.kind === 'markdown_bundle' ? renderRichMarkdown(markdown, payload.attachment, images.urls).html : undefined, [payload, images.urls, markdown]);
   if (error) return <div className="node-resource-error" data-content-status="error">文档暂时无法预览</div>;
   if (!payload) return <div className="node-resource-loading" data-content-status="loading">正在读取文档…</div>;
   if (payload.attachment?.kind === 'pdf') return <PdfPagePreview projectId={projectId} boardId={boardId} doc={doc} payload={payload} page={page} onPages={onPages}/>;
   const waiting = !!payload.attachment && Object.values(payload.attachment.images).some(a => !images.urls[a.path]) && !images.error;
-  return <DocumentPages markdown={payload.markdown} html={html} page={page} onPages={onPages} waiting={waiting} error={images.error}/>;
+  return <DocumentPages markdown={markdown} html={html} page={page} onPages={onPages} waiting={waiting} error={images.error}/>;
 }
 
 /** Native column fragmentation preserves text, links, lists and formula markup across pages. */

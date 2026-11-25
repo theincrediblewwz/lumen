@@ -73,14 +73,20 @@ export type BoardFile = {
 };
 
 const boardRevisions = new Map<string, string>();
+const boardLabels = new Map<string, string>();
+export const BOARD_LABELS_CHANGED = 'lumen://board-labels-changed';
+const labelSignature = (board: BoardFile) => JSON.stringify(board.nodes.map(node => [node.id, node.title]));
 /** Only adopt a revision returned atomically with that exact board snapshot. */
 export function rememberBoardRevision(board:BoardFile):void { if(board._disk_revision)boardRevisions.set(board.id,board._disk_revision); }
 const chatRevisions = new Map<string,string>();
 let chatQueue:Promise<unknown>=Promise.resolve();
 let saveQueue: Promise<unknown> = Promise.resolve();
+const boardSnapshot = (projectId: string, boardId: string, expectedScope?: string) =>
+  invoke<BoardFile>('board_load', { projectId, boardId, expectedScope });
 async function loadBoard(projectId: string, boardId: string): Promise<BoardFile> {
-  const board = await invoke<BoardFile>('board_load', { projectId, boardId });
+  const board = await boardSnapshot(projectId, boardId);
   if (board._disk_revision) boardRevisions.set(boardId, board._disk_revision);
+  boardLabels.set(boardId, labelSignature(board));
   return board;
 }
 function saveBoard(board: BoardFile): Promise<void> {
@@ -88,6 +94,13 @@ function saveBoard(board: BoardFile): Promise<void> {
     const expectedRevision = boardRevisions.get(board.id) ?? board._disk_revision ?? '';
     const revision = await invoke<string>('board_save', { board, expectedRevision });
     boardRevisions.set(board.id, revision);
+    const labels = labelSignature(board);
+    if (boardLabels.get(board.id) !== labels) {
+      boardLabels.set(board.id, labels);
+      if (typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window) {
+        void import('@tauri-apps/api/event').then(({ emit }) => emit(BOARD_LABELS_CHANGED, { projectId: board.projectId, boardId: board.id })).catch(() => {});
+      }
+    }
   });
   saveQueue = save.catch(() => {});
   return save;
@@ -144,6 +157,7 @@ export const api = {
   boardCreate: (projectId: string, name: string) =>
     invoke<BoardMeta>('board_create', { projectId, name }),
   boardLoad: loadBoard,
+  boardSnapshot,
   boardSave: saveBoard,
   boardDelete: (projectId: string, boardId: string) =>
     invoke<void>('board_delete', { projectId, boardId }),

@@ -2,6 +2,7 @@ import { memo, useCallback, useEffect, useLayoutEffect, useRef, useState } from 
 import type { BoardNode } from '../api';
 import { MarkdownView } from './MarkdownView';
 import { NodePreview, type PreviewMemory, type PreviewPresentation } from './NodePreview';
+import type { StagedDocumentPreview } from './NodeAttachment';
 import { contentDocs, imageDoc, nodeHeading } from '../canvas/composition';
 import { flowHighlight, materialImageSize } from '../canvas/preview';
 import { imageDisplay, type ImagePixels } from '../canvas/imageSizing';
@@ -115,10 +116,12 @@ export const NodeCard = memo(function NodeCard({
   onMeasure,
   onHoverChange,
   onImageSize,
-  onResizeStart, projectId, boardId, docVersions={}, measuring=false, hideHandles=false, previewCollapsed=false, previewMemory, flowStep, imageWidthLimit,
+  onResizeStart, projectId, boardId, docVersions={}, measuring=false, hideHandles=false, previewCollapsed=false, previewMemory, flowStep, imageWidthLimit, stagedDocuments, expectedScope,
 }: {
   projectId:string; boardId:string; docVersions?:Record<string,number>; measuring?:boolean; hideHandles?:boolean; previewCollapsed?:boolean;
   previewMemory?: PreviewMemory;
+  stagedDocuments?: Record<string, StagedDocumentPreview>;
+  expectedScope?: string;
   flowStep?: boolean;
   imageWidthLimit?: number;
   onResizeStart:(e:React.PointerEvent,id:string,corner:string,image?:PreviewImage)=>void;
@@ -260,7 +263,7 @@ export const NodeCard = memo(function NodeCard({
       ) : (
         <>
           {(heading.trim()||previewCollapsed)&&<MarkdownView className="node-title" inline value={heading.trim()?heading:primary?.title||'流程步骤'}/>}
-          {!previewCollapsed&&<NodePreview summary={node.summary} docs={docs} projectId={projectId} boardId={boardId} docVersions={docVersions} onPresentation={onPresentation} memory={previewMemory} viewKey={`${projectId}/${boardId}/${node.id}/${(flowStep ?? (hideHandles&&!measuring))?'flow':'board'}`}/>}
+          {!previewCollapsed&&<NodePreview summary={node.summary} docs={docs} projectId={projectId} boardId={boardId} docVersions={docVersions} onPresentation={onPresentation} memory={previewMemory} stagedDocuments={stagedDocuments} expectedScope={expectedScope} viewKey={`${projectId}/${boardId}/${node.id}/${(flowStep ?? (hideHandles&&!measuring))?'flow':'board'}`}/>}
           {contentOnly&&!previewCollapsed&&<span className="sticker-info">{presentation?.title||primary?.title||node.title}</span>}
         </>
       )}

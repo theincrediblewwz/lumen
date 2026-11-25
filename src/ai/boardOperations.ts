@@ -23,9 +23,9 @@ export function sameBoardContent(a:BoardFile,b:BoardFile):boolean {
  };
  return content(a)===content(b);
 }
-export async function loadFlushedBoard(projectId:string,boardId:string):Promise<BoardFile>{
+export async function loadFlushedBoard(projectId:string,boardId:string,expectedScope?:string):Promise<BoardFile>{
  let locked=false;
- try{await requestEditorFlush();locked=true;return await api.boardLoad(projectId,boardId);}
+ try{await requestEditorFlush();locked=true;return await (expectedScope ? api.boardSnapshot(projectId,boardId,expectedScope) : api.boardLoad(projectId,boardId));}
  finally{if(locked)await releaseEditorLock().catch(()=>{});}
 }
 export async function commitBoardOperations(projectId:string,boardId:string,batch:OperationBatch,requestId:string,permission:PolicySnapshot,baseline:BoardFile,cancelled:()=>boolean=()=>false):Promise<OperationResult>{

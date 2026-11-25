@@ -7,6 +7,8 @@ import { workspaceApi, workspacePrompt, workspaceTools, type WorkspaceContext, t
 import { notifyLibraryChanged, releaseEditorLock, requestEditorFlush } from '../sync/events';
 import { AiSettingsForm } from './AiSettingsForm';
 import { MarkdownView } from './MarkdownView';
+import { WorkspaceLayoutPreview } from './WorkspaceLayoutPreview';
+import { measureWorkspaceLayout, type MeasuredLayout } from '../ai/workspaceLayout';
 import './workspaceAssistant.css';
 
 type Entry = { role: 'user' | 'assistant'; text: string };
@@ -43,6 +45,7 @@ export function WorkspaceAssistant({ open, scope, context, onClose, onOpenLocati
   const heading = useRef<HTMLHeadingElement>(null);
   const serial = useRef(0);
   const handle = useRef<StreamHandle>();
+  const measuring = useRef<AbortController>();
   const planId = useRef<string>();
   const receiptRevision = useRef(0);
   const historyStart = useRef(0);
@@ -70,6 +73,7 @@ export function WorkspaceAssistant({ open, scope, context, onClose, onOpenLocati
 
   useEffect(() => () => {
     serial.current++;
+    measuring.current?.abort();
     handle.current?.cancel();
     if (planId.current) void workspaceApi.discard(planId.current).catch(() => {});
   }, []);
@@ -81,6 +85,7 @@ export function WorkspaceAssistant({ open, scope, context, onClose, onOpenLocati
 
   function stop() {
     serial.current++;
+    measuring.current?.abort();
     handle.current?.cancel();
     handle.current = undefined;
     setRunning(false);
@@ -150,6 +155,7 @@ export function WorkspaceAssistant({ open, scope, context, onClose, onOpenLocati
         tools: {
           definitions: workspaceTools(share),
           async execute(name, args) {
+            let stagedId: string | undefined;
             try {
               if (!active()) return { status: 'cancelled' };
               if (name === 'inspect_workspace') {
@@ -165,16 +171,36 @@ export function WorkspaceAssistant({ open, scope, context, onClose, onOpenLocati
               }
               if (name !== 'propose_workspace_changes') return { status: 'error', message: '该工具不受支持' };
               if (planId.current) return { status: 'awaiting_confirmation', message: '本轮已有方案等待用户确认' };
-              const draft = await workspaceApi.prepare(args, scope, revisions);
+              let draft = await workspaceApi.prepare(args, scope, revisions);
+              stagedId = draft.id;
               if (!active()) {
                 await workspaceApi.discard(draft.id);
                 return { status: 'cancelled' };
+              }
+              if (draft.layoutJobs?.length) {
+                const host = modal.current;
+                if (!host) throw Error('布局预览窗口已关闭');
+                const controller = new AbortController();
+                measuring.current = controller;
+                const layouts: MeasuredLayout[] = [];
+                for (const job of draft.layoutJobs) {
+                  setMessage(`正在排布 ${job.name} · ${job.nodes.length} 个节点`);
+                  layouts.push(await measureWorkspaceLayout(job, host, scope, controller.signal, done => {
+                    if (active()) setMessage(`正在测量 ${job.name} · ${done}/${job.nodes.length}`);
+                  }));
+                }
+                if (!active()) { await workspaceApi.discard(draft.id); return { status: 'cancelled' }; }
+                draft = await workspaceApi.placeLayout(draft.id, scope, layouts);
+                if (!active()) { await workspaceApi.discard(draft.id); return { status: 'cancelled' }; }
               }
               planId.current = draft.id;
               setPlan(draft);
               return { status: 'awaiting_confirmation', operations: draft.changes.length };
             } catch (error) {
+              if (stagedId) await workspaceApi.discard(stagedId).catch(() => {});
               return { status: 'error', message: messageOf(error) };
+            } finally {
+              if (active()) measuring.current = undefined;
             }
           },
         },
@@ -317,6 +343,7 @@ export function WorkspaceAssistant({ open, scope, context, onClose, onOpenLocati
             <header><ListChecks size={18}/><h3>待确认方案</h3><span>{plan.changes.length} 项变更</span></header>
             {removals > 0 && <p className="workspace-ai-removals">含 {removals} 项移除。附件原件保留，可撤销本批变更。</p>}
             <ol className="workspace-ai-changes">
+              {plan.layouts?.map(layout => <li key={layout.boardId}><WorkspaceLayoutPreview layout={layout}/></li>)}
               {plan.changes.map((change, i) => <li key={i} className={change.removes ? 'is-removal' : undefined}>
                 {change.before !== null || change.after !== null ? <details>
                   <summary><strong>{change.action}</strong><span>{change.location}</span></summary>

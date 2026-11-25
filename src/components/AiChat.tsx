@@ -1,5 +1,5 @@
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { api, type BoardFile } from '../api';
+import { api, BOARD_LABELS_CHANGED, type BoardFile } from '../api';
 import { renderMarkdown } from '../reader/engine';
 import { typesetMath } from '../reader/reader';
 import {
@@ -29,7 +29,6 @@ import {
   type StoredMessage,
 } from '../ai/chatStore';
 import { requestInputTokens, type ChatMessage } from '../ai/provider';
-import type { BoardNode } from '../api';
 import { invoke } from '@tauri-apps/api/core';
 import { captureKey, captureTurnsForSelection, completedCaptureTurns, conversationMarkdown } from '../ai/chatCapture';
 import { openReaderWindow } from '../reader/windowManager';
@@ -47,6 +46,7 @@ import {ContextMenu,type ContextMenuState} from './ContextMenu';
 import {createPortal} from 'react-dom';
 import {deleteConversation,HISTORY_CHANGED,type DeletedConversation,type HistoryChange} from '../ai/historyActions';
 import {removeMemory} from '../ai/chatMemory';
+import { ChatResponseTiming, type ChatTimingReport } from './ChatResponseTiming';
 export { AiChat } from './AiChatHost';
 
 export interface Props {
@@ -84,6 +84,8 @@ const TOOL_LABELS: Record<string, string> = {
   list_nodes: '浏览节点列表',
   read_node_doc: '阅读节点文档',
   search_board: '检索白板内容',
+  search_conversation: '检索对话历史',
+  read_conversation: '阅读对话原文',
   apply_board_operations: '整理白板并保存版本',
 };
 
@@ -91,31 +93,26 @@ const TOOL_LABELS: Record<string, string> = {
  *  节点引用 [[node:id]] 做两级保护 → 显示为节点标题胶囊，点击跳白板高亮。 */
 const MessageBody=memo(function MessageBody({
   content,
-  nodes,
+  nodeTitles,
   projectId,
   boardId,
 }: {
   content: string;
-  nodes: BoardNode[];
+  nodeTitles?: ReadonlyMap<string, string>;
   projectId: string;
   boardId: string;
 }) {
   const ref = useRef<HTMLDivElement>(null);
-  const titleOf = useCallback(
-    (id: string) => nodes.find((n) => n.id === id)?.title ?? null,
-    [nodes],
-  );
-  const html = useMemo(() => {
+  const rendered = useMemo(() => {
     // 1) 渲染前把 [[node:id]] 换成 markdown 不会破坏的占位 token
     const { text, ids } = maskNodeRefs(content);
     // 2) 正常渲染 markdown + 公式占位
     // 关键：AI 输出的是规范 markdown（表格/加粗/需要公式时自己写 $…$），
     // 绝不能开 guessMath —— 那个启发式是给缺分界符的导入文档用的，
     // 会把表格分隔行 |---| 和加粗 ** 误当公式，把整段 markdown 搅烂。
-    const rendered = renderMarkdown(text, undefined, { guessMath: false }).html;
-    // 3) 渲染后把占位换成显示标题的可点击胶囊
-    return unmaskNodeRefs(rendered, ids, titleOf);
-  }, [content, titleOf]);
+    return { html: renderMarkdown(text, undefined, { guessMath: false }).html, ids };
+  }, [content]);
+  const html = useMemo(() => unmaskNodeRefs(rendered.html, rendered.ids, id => nodeTitles ? nodeTitles.get(id) ?? null : undefined), [rendered, nodeTitles]);
 
   useEffect(() => {
     if (ref.current) {
@@ -154,15 +151,31 @@ export function ChatPane({ projectId, boardId, boardName, nodeId: requestedNode,
   const [settings, setSettings] = useState<AiSettings>(() => loadAiSettingsDeferred());
   const [settingsReady, setSettingsReady] = useState(false);
   const [board, setBoard] = useState<BoardFile | null>(null);
+  const boardReadEpoch = useRef(0);
+  const nodeTitles = useMemo(() => board ? new Map(board.nodes.map(node => [node.id, node.title])) : undefined, [board]);
   const [messages, renderMessages] = useState<UiMessage[]>([]);
   const [visibleMessages,setVisibleMessages]=useState(80);
   const messagesRef=useRef<UiMessage[]>([]);
+  const messagePaint = useRef<ReturnType<typeof setTimeout>>();
+  const nextMessagePaintAt = useRef(0);
   // Event callbacks always see the newest transcript, even before React paints.
   // Persistence must run outside React state updaters (which may be replayed).
-  const setMessages=useCallback((next:UiMessage[]|((current:UiMessage[])=>UiMessage[]))=>{
+  const setMessages=useCallback((next:UiMessage[]|((current:UiMessage[])=>UiMessage[]), streaming = false)=>{
     messagesRef.current=typeof next==='function'?next(messagesRef.current):next;
-    renderMessages(messagesRef.current);
+    const paint = () => {
+      messagePaint.current = undefined;
+      nextMessagePaintAt.current = streaming ? performance.now() + 50 : 0;
+      renderMessages(messagesRef.current);
+    };
+    const wait = nextMessagePaintAt.current - performance.now();
+    if (streaming && wait > 0) {
+      if (messagePaint.current === undefined) messagePaint.current = setTimeout(paint, wait);
+      return;
+    }
+    clearTimeout(messagePaint.current);
+    paint();
   },[]);
+  useEffect(() => () => clearTimeout(messagePaint.current), []);
   const [input, setInput] = useState('');
   const [busy, setBusy] = useState(false);
   const generation=useRef(0);
@@ -174,6 +187,7 @@ export function ChatPane({ projectId, boardId, boardName, nodeId: requestedNode,
   const [savingTranscript,setSavingTranscript]=useState(false);
   const [transcriptError,setTranscriptError]=useState(false);
   const [progress,setProgress]=useState('');
+  const [timing, setTiming] = useState<ChatTimingReport>();
   const [memory,setMemory]=useState<ChatMemory>();
   const [loadError,setLoadError]=useState('');
   const [writingBoard,setWritingBoard]=useState(false);
@@ -257,14 +271,41 @@ export function ChatPane({ projectId, boardId, boardName, nodeId: requestedNode,
     };
   }, []);
 
-  // 拉取白板结构做上下文
+  const adoptBoard = useCallback((snapshot: BoardFile) => {
+    setBoard(current => snapshot._disk_revision && snapshot._disk_revision === current?._disk_revision ? current : snapshot);
+  }, []);
+  const readChatBoard = useCallback(async (read = () => api.boardSnapshot(projectId, boardId, conversationScope.current)) => {
+    const epoch = ++boardReadEpoch.current;
+    const snapshot = await read();
+    if (mounted.current && epoch === boardReadEpoch.current) adoptBoard(snapshot);
+    return snapshot;
+  }, [projectId, boardId, adoptBoard]);
+
+  // 独立聊天窗口读取白板快照，写入基线仍由主编辑器维护。
   useEffect(() => {
-    if (!projectId || !boardId) return;
-    api
-      .boardLoad(projectId, boardId)
-      .then(setBoard)
-      .catch(() => setBoard(null));
-  }, [projectId, boardId]);
+    if (!projectId || !boardId || !visible) return;
+    let disposed = false;
+    const stops: (() => void)[] = [];
+    const refresh = () => { if (!disposed) void readChatBoard().catch(() => {}); };
+    window.addEventListener('focus', refresh);
+    if ('__TAURI_INTERNALS__' in window) void import('@tauri-apps/api/event').then(async ({ listen }) => {
+      const retain = (stop: () => void) => { if (disposed) stop(); else stops.push(stop); };
+      await Promise.all([
+        listen('lumen://library-changed', refresh).then(retain),
+        listen<{ projectId: string; boardId: string }>(BOARD_LABELS_CHANGED, ({ payload }) => {
+          if (payload.projectId === projectId && payload.boardId === boardId) refresh();
+        }).then(retain),
+      ]);
+      refresh();
+    }).catch(refresh);
+    else refresh();
+    return () => {
+      disposed = true;
+      boardReadEpoch.current++;
+      window.removeEventListener('focus', refresh);
+      stops.forEach(stop => stop());
+    };
+  }, [projectId, boardId, visible, readChatBoard]);
 
   // 加载本白板的历史对话（长期持久化，退出不丢）。
   // 若已有会话，默认续接最近一条；否则开新会话。
@@ -430,6 +471,24 @@ export function ChatPane({ projectId, boardId, boardName, nodeId: requestedNode,
     }
     if (preparingKnowledge.current) return;
     preparingKnowledge.current = true; requestActive.current=true; activity.current = true; setPreparing(true);setProgress('正在读取白板与参考资料');
+    const startedAt = performance.now();
+    let phaseStarted = startedAt;
+    let firstAnswer = false;
+    let roundWriting = false;
+    setTiming({ startedAt, local: {}, rounds: [], memoryRequests: 0, toolCount: 0, toolMs: 0 });
+    const updateTiming = (update: (report: ChatTimingReport) => ChatTimingReport) => {
+      setTiming(report => report?.startedAt === startedAt && report.finishedAt === undefined ? update(report) : report);
+    };
+    const markPhase = (phase: keyof ChatTimingReport['local']) => {
+      const now = performance.now();
+      const elapsed = now - phaseStarted;
+      phaseStarted = now;
+      updateTiming(report => ({ ...report, local: { ...report.local, [phase]: (report.local[phase] ?? 0) + elapsed } }));
+    };
+    const finishTiming = (outcome: ChatTimingReport['outcome']) => {
+      const finishedAt = performance.now();
+      updateTiming(report => ({ ...report, finishedAt, outcome }));
+    };
     loadEpoch.current++;
     let streamStarted=false;
     let claimed:GenerationLease|undefined;
@@ -444,16 +503,21 @@ export function ChatPane({ projectId, boardId, boardName, nodeId: requestedNode,
     try {
     const permission=await loadWritePolicy().catch(()=>null);
     if(!permission?.scope||permission.scope!==conversationScope.current)throw Error('资料目录已变化，请返回原资料目录后再续聊；原对话未改动。');
+    const scope = permission.scope;
     let refs: KnowledgeReference[] = [];
-    let requestBoard = board;
+    let requestBoard: BoardFile;
     try {
-      requestBoard = permission?.policy.enabled && settings.shareBoard ? await loadFlushedBoard(projectId,boardId) : await api.boardLoad(projectId, boardId);
-      const snapshot = await loadKnowledge();
+      const [freshBoard, snapshot] = await Promise.all([
+        readChatBoard(permission.policy.enabled && settings.shareBoard ? () => loadFlushedBoard(projectId, boardId, scope) : undefined),
+        settings.shareBoard ? loadKnowledge() : undefined,
+      ]);
+      requestBoard = freshBoard;
       if (!currentRequest()) return;
-      refs = settings.shareBoard ? resolveKnowledgeReferences(snapshot.library, boardId, text, { nodeId: sourceNodeId, sourceBound: requestBoard?._sync_content_policy?.mode === 'summary', allowOutside: requestBoard?._sync_content_policy?.allowOutsideKnowledge }) : [];
-      if (checked && (snapshot.revision !== checked.revision || JSON.stringify(refs) !== JSON.stringify(checked.refs))) throw new Error('知识或白板在预览后改变，请重新预览');
-      if (!checked && refs.length) { setKnowledgePreview({ text, refs, revision: snapshot.revision }); return; }
+      refs = snapshot ? resolveKnowledgeReferences(snapshot.library, boardId, text, { nodeId: sourceNodeId, sourceBound: requestBoard._sync_content_policy?.mode === 'summary', allowOutside: requestBoard._sync_content_policy?.allowOutsideKnowledge }) : [];
+      if (checked && (snapshot?.revision !== checked.revision || JSON.stringify(refs) !== JSON.stringify(checked.refs))) throw new Error('知识或白板在预览后改变，请重新预览');
+      if (!checked && snapshot && refs.length) { setKnowledgePreview({ text, refs, revision: snapshot.revision }); return; }
     } catch (e) { setCaptureStatus(String(e)); return; }
+    finally { markPhase('context'); }
     setKnowledgePreview(undefined);
     const knowledgeMessage: ChatMessage = { role: 'user', content: knowledgeReferenceText(refs) };
     const knowledgeTokens = refs.length ? messageTokens(knowledgeMessage) : 0;
@@ -464,12 +528,15 @@ export function ChatPane({ projectId, boardId, boardName, nodeId: requestedNode,
     const nodeContext=requestBoard&&settings.shareBoard?focusedNodeContext(requestBoard,sourceNodeId):'';
     if(!currentRequest())return;
     const canWrite=!!permission?.policy.enabled && settings.shareBoard;
-    const systemMessage:ChatMessage = { role: 'system', content: buildSystemPrompt(requestBoard&&settings.shareBoard ? buildBoardContext(requestBoard,settings.contextBudget) : '', settings.shareBoard) + nodeContext + (canWrite?'\n\n用户已在本机授权白板整理。需要新建节点/追加文档/连线时调用 apply_board_operations，操作参数只放工具通道。不要在正文贴操作JSON；操作成功后用节点引用简述结果。每次发送最多4批；失败不得声称成功。':'\n\n当前未开启AI修改白板，只能读取与建议。可说明设置中的“AI整理白板”入口。') };
+    const systemMessage:ChatMessage = { role: 'system', content: buildSystemPrompt(requestBoard&&settings.shareBoard ? buildBoardContext(requestBoard,settings.contextBudget) : '', settings.shareBoard) + nodeContext + (canWrite?'\n\n用户已在本机授权白板整理。需要新建节点/追加文档/连线时调用 apply_board_operations，操作参数只放工具通道。在生成新节点的内容前先理清主线、父子关系和阅读顺序，可在 Markdown 中用 =={#RRGGBB}关键词== 突出少量重点。需要调整已有节点的位置、颜色或整板布局时，引导用户用 AI 工作区。不要在正文贴操作 JSON。操作成功后用节点引用简述结果。每次发送最多4批，失败须如实报告。':'\n\n当前未开启AI修改白板，只能读取与建议。可说明设置中的“AI整理白板”入口。') };
     const definitions=[...(settings.shareBoard&&requestBoard?TOOL_DEFS:[]),...CONVERSATION_TOOLS,...(canWrite?[WRITE_TOOL]:[])];
     const toolTokens=requestInputTokens([],definitions);
     if(requestInputTokens([systemMessage,{role:'user',content:text}],definitions)+knowledgeTokens+32>settings.contextBudget){setCaptureStatus('问题、白板和个人参考超过当前预算，请减少内容或增大上下文预算');return;}
     if (!currentRequest()) return;
+    markPhase('context');
+    setProgress('正在确认对话写入状态');
     claimed=await claimGeneration(projectId,boardId,convId,messagesRef.current.filter(m=>!m.streaming),conversationScope.current);
+    markPhase('lease');
     leaseRef.current=claimed;
     if(!currentRequest()){await releaseLease(claimed);return;}
     let connection: AiSettings;
@@ -480,7 +547,7 @@ export function ChatPane({ projectId, boardId, boardName, nodeId: requestedNode,
       if (!isAiConfigured(connection)) throw new Error('未找到可用密钥');
       setCaptureStatus('');
     } catch { if (mounted.current) setCaptureStatus('未能读取已保存密钥。原连接和密钥已保留；再次发送可重试授权，也可在设置中填写密钥。'); return; }
-    finally { resolvingCredentials.current = false; if (mounted.current) setUnlocking(false); }
+    finally { markPhase('credentials'); resolvingCredentials.current = false; if (mounted.current) setUnlocking(false); }
     setInput('');
     pendingMessageJump.current = null; setHighlightedMessages([]); setSavedCapture(undefined);
 
@@ -494,7 +561,7 @@ export function ChatPane({ projectId, boardId, boardName, nodeId: requestedNode,
     setBusy(true);
     streamStarted=true;
 
-    const patchLast = (fn: (m: UiMessage) => UiMessage) =>
+    const patchLast = (fn: (m: UiMessage) => UiMessage, streaming = false) =>
       setMessages((prev) => {
         const copy = prev.slice();
         for (let i = copy.length - 1; i >= 0; i--) {
@@ -504,15 +571,19 @@ export function ChatPane({ projectId, boardId, boardName, nodeId: requestedNode,
           }
         }
         return copy;
-      });
+      }, streaming);
 
     // Persist the user's original question before any extra summary/provider work.
-    if(!await persist(messagesRef.current)){setMessages(prev=>prev.filter(m=>m.id!==replyId));streamStarted=false;setBusy(false);return;}
+    setProgress('正在保存原始提问');
+    const questionSaved = await persist(messagesRef.current);
+    markPhase('question');
+    if(!questionSaved){setMessages(prev=>prev.filter(m=>m.id!==replyId));streamStarted=false;setBusy(false);return;}
     if(!currentRequest())return;
     const originalMessages=messagesRef.current.filter(m=>m.content&&!m.streaming).map(({id,at,role,content,error})=>({id,at,role,content,error}));
     const priorMessages=originalMessages.slice(0,-1);
     const memoryBudget=settings.contextBudget-toolTokens-knowledgeTokens-messageTokens(systemMessage)-messageTokens({role:'user',content:text})-160;
     const prepared=connection.memoryMode==='off'?{memory:undefined,remaining:priorMessages,notice:''}:await prepareMemory({id:convId,messages:priorMessages,budget:memoryBudget,model:connection.model,current:currentRequest,progress:setProgress,generate:prompt=>new Promise<string>((resolve,reject)=>{
+      updateTiming(report => ({ ...report, memoryRequests: report.memoryRequests + 1 }));
       let output='';const compactSettings={...connection,contextBudget:Math.min(settings.contextBudget,12000),maxTokens:Math.min(connection.maxTokens??2400,2400)};
       handleRef.current=streamChat(compactSettings,prompt,{sessionId:convId,beforeRequest:validateRequest,onDelta:d=>{output+=d;},onDone:()=>resolve(output),onError:reject});
     })});
@@ -524,11 +595,12 @@ export function ChatPane({ projectId, boardId, boardName, nodeId: requestedNode,
     const history=fitWithinBudget(rawHistory,settings.contextBudget-knowledgeTokens-toolTokens-(useMemory?messageTokens(remembered!):0)-64,0).messages;
     if(useMemory)history.splice(1,0,remembered!);
     if(refs.length)history.splice(history.length-1,0,knowledgeMessage);
-    if(requestInputTokens(history,definitions)>settings.contextBudget){patchLast(m=>({...m,streaming:false,error:true,content:'上下文仍超出预算，本次未发送回答请求；问题原文已保存，请增大预算后重试。'}));if(await persist(messagesRef.current))await releaseLease(claimed);requestActive.current=false;setBusy(false);setProgress('');return;}
+    markPhase('memory');
+    if(requestInputTokens(history,definitions)>settings.contextBudget){patchLast(m=>({...m,streaming:false,error:true,content:'上下文仍超出预算，本次未发送回答请求；问题原文已保存，请增大预算后重试。'}));if(await persist(messagesRef.current))await releaseLease(claimed);finishTiming('notSent');requestActive.current=false;setBusy(false);setProgress('');return;}
 
     // 白板共享开启且已加载白板时，注入工具上下文让 AI 主动查阅（M5-3）
-    const toolCtx:ToolContext|undefined=requestBoard?{board:requestBoard,shareBoard:settings.shareBoard,allowBoard:()=>loadAiSettingsDeferred().shareBoard,conversationMessages:originalMessages,readDoc:p=>api.docRead(projectId,boardId,p,conversationScope.current)}:undefined;
-    if(toolCtx && canWrite && permission){
+    const toolCtx: ToolContext = {board:requestBoard,shareBoard:settings.shareBoard,allowBoard:()=>loadAiSettingsDeferred().shareBoard,conversationMessages:originalMessages,readDoc:p=>api.docRead(projectId,boardId,p,conversationScope.current)};
+    if(canWrite){
       let writes=0;const receipts=new Map<string,string>();
       toolCtx.applyOperations=async(args,callId)=>{
         const requestId=receipts.get(callId)??`op_${crypto.randomUUID().replace(/-/g,'')}`;receipts.set(callId,requestId);
@@ -538,7 +610,8 @@ export function ChatPane({ projectId, boardId, boardName, nodeId: requestedNode,
         try{
           const result=await commitBoardOperations(projectId,boardId,args as unknown as OperationBatch,requestId,permission,toolCtx.board,()=>!!toolCtx.cancelled?.()||!mounted.current);
           toolCtx.board=result.board;
-          setBoard(toolCtx.board);
+          boardReadEpoch.current++;
+          adoptBoard(toolCtx.board);
           const links=Object.values(result.nodes??{}).map(id=>`[[node:${id}]]`).join('、');
           const receipt=`${result.summary}${links?` ${links}`:''}${result.warning?` ${result.warning}`:''} 可在白板历史中恢复。`;
           patchLast(m=>({...m,content:`${m.content}\n\n${receipt}\n\n`}));if(await persist(messagesRef.current))setCaptureStatus(`${result.summary} 可在白板历史中恢复。${result.warning??""}`);
@@ -552,9 +625,13 @@ export function ChatPane({ projectId, boardId, boardName, nodeId: requestedNode,
       patchLast(m=>({...m,content:error?(m.content||`⚠️ ${error}`):m.content+knowledgeReferenceLinks(refs),streaming:false,tool:undefined,error:!!error}));
       if(error)setCaptureStatus(error);
       setProgress('正在保存对话');
+      phaseStarted = performance.now();
       handleRef.current=null;
       currentReplyId.current=undefined;
-      if(await persist(messagesRef.current))await releaseLease(claimed);
+      const saved = await persist(messagesRef.current);
+      if(saved)await releaseLease(claimed);
+      markPhase('save');
+      finishTiming(error || !saved || leaseRef.current === claimed ? 'failed' : 'completed');
       requestActive.current=false;
       if(mounted.current){setBusy(false);setProgress('');}
     };
@@ -564,20 +641,44 @@ export function ChatPane({ projectId, boardId, boardName, nodeId: requestedNode,
       {
         sessionId: convId,
         beforeRequest: async () => {
+          if (currentRequest()) setProgress('正在检查连接与资料权限');
           await validateRequest();
           const nowPolicy=await loadWritePolicy();if(nowPolicy.scope!==conversationScope.current)throw Error('资料目录已变化，已停止原会话后续请求；原内容仍保留。');
-          if(settings.shareBoard&&!loadAiSettingsDeferred().shareBoard)throw Error('白板共享已关闭，已停止原会话后续请求。');
-          const [latestKnowledge, latestBoard] = await Promise.all([loadKnowledge(), api.boardLoad(projectId, boardId)]);
-          const current = settings.shareBoard ? resolveKnowledgeReferences(latestKnowledge.library, boardId, text, { nodeId: sourceNodeId, sourceBound: latestBoard._sync_content_policy?.mode === 'summary', allowOutside: latestBoard._sync_content_policy?.allowOutsideKnowledge }) : [];
+          if(!settings.shareBoard)return;
+          if(!loadAiSettingsDeferred().shareBoard)throw Error('白板共享已关闭，已停止原会话后续请求。');
+          const [latestKnowledge, latestBoard] = await Promise.all([loadKnowledge(), readChatBoard()]);
+          const current = resolveKnowledgeReferences(latestKnowledge.library, boardId, text, { nodeId: sourceNodeId, sourceBound: latestBoard._sync_content_policy?.mode === 'summary', allowOutside: latestBoard._sync_content_policy?.allowOutsideKnowledge });
           if (JSON.stringify(current) !== JSON.stringify(refs)) throw new Error('知识内容或引用权限已变化，已停止后续 AI 请求，请重新预览');
         },
-        onRoundStart:()=>{if(currentRequest()){setProgress('正在等待模型响应');patchLast(m=>({...m,tool:undefined}));}},
+        onRoundStart:()=>{if(currentRequest()){roundWriting=false;setProgress('正在等待模型响应');patchLast(m=>({...m,tool:undefined}));}},
         onRetry:notice=>{if(currentRequest())setProgress(`${notice.reason}，${Math.ceil(notice.delayMs/1000)} 秒后自动重试（${notice.attempt}/${notice.maxRetries}）`);},
-        onReasoning:()=>{if(currentRequest())setProgress('模型正在思考');},
+        onReasoning:()=>{if(currentRequest()&&!roundWriting)setProgress('模型正在思考');},
+        onRoundTiming: round => {
+          if (!currentRequest()) return;
+          updateTiming(report => {
+            const rounds = report.rounds.slice();
+            rounds[round.round - 1] = round;
+            return { ...report, rounds };
+          });
+          if (round.streamMs === undefined && round.firstTextMs === undefined && round.firstReasoningMs === undefined) {
+            if (round.firstDeliveryMs !== undefined) setProgress('已收到流数据，等待模型正文或工具指令');
+            else if (round.headersMs !== undefined) setProgress('服务已响应，等待首个流数据块');
+          }
+        },
+        onToolTiming: ms => updateTiming(report => ({ ...report, toolCount: report.toolCount + 1, toolMs: report.toolMs + ms })),
         onToolEnd:()=>{if(currentRequest()){setProgress('正在整理工具结果');patchLast(m=>({...m,tool:undefined}));}},
         onDelta: (d) => {
           if(!currentRequest())return;
-          setProgress('正在生成回答');patchLast((m) => ({ ...m, content: m.content + d, tool: undefined }));
+          if (!firstAnswer && d.trim()) {
+            firstAnswer = true;
+            const firstAnswerMs = performance.now() - startedAt;
+            updateTiming(report => ({ ...report, firstAnswerMs }));
+          }
+          if (!roundWriting && d.trim()) {
+            roundWriting = true;
+            setProgress('正在生成回答');
+          }
+          patchLast(m => ({ ...m, content: m.content + d, tool: undefined }), true);
         },
         onToolStart: (name) => {
           if(!currentRequest())return;
@@ -588,18 +689,23 @@ export function ChatPane({ projectId, boardId, boardName, nodeId: requestedNode,
       },
       toolCtx,
     );
-    } catch(e){if(mounted.current){setCaptureStatus(String(e));if(streamStarted){setMessages(prev=>prev.map(m=>m.streaming?{...m,streaming:false,error:true,content:m.content||`回答未完成：${String(e)}`}:m));if(await persist(messagesRef.current))await releaseLease(claimed);setBusy(false);requestActive.current=false;setProgress('');}}} finally { if(!streamStarted&&!unsaved.current)await releaseLease(claimed);preparingKnowledge.current = false;if(!streamStarted)requestActive.current=false; if (mounted.current) {setPreparing(false);if(!streamStarted)setProgress('');} }
-  }, [input, busy, configured, messages, settings, board, projectId, boardId, persist, convId, sourceNodeId]);
+    } catch(e){if(mounted.current&&generation.current===requestGeneration){setCaptureStatus(String(e));if(streamStarted){setMessages(prev=>prev.map(m=>m.streaming?{...m,streaming:false,error:true,content:m.content||`回答未完成：${String(e)}`}:m));if(await persist(messagesRef.current))await releaseLease(claimed);finishTiming('failed');setBusy(false);requestActive.current=false;setProgress('');}}} finally { if(!streamStarted&&!unsaved.current)await releaseLease(claimed);preparingKnowledge.current = false;if(!streamStarted){requestActive.current=false;if(mounted.current&&generation.current===requestGeneration)finishTiming(unsaved.current?'failed':'notSent');} if (mounted.current) {setPreparing(false);if(!streamStarted)setProgress('');} }
+  }, [input, configured, settings, readChatBoard, projectId, boardId, persist, convId, sourceNodeId, adoptBoard]);
 
   const stop = useCallback(async () => {
     if(pendingSaves.current)return;
+    const saveStarted = performance.now();
+    const reportStopped = (saved: boolean) => {
+      const finishedAt = performance.now();
+      setTiming(report => report && report.finishedAt === undefined ? { ...report, finishedAt, outcome: 'stopped', local: saved ? { ...report.local, save: finishedAt - saveStarted } : report.local } : report);
+    };
     const lease=leaseRef.current;
     generation.current++;
     handleRef.current?.cancel();
     handleRef.current = null;
     await pendingWrite.current;
     const reply=currentReplyId.current;currentReplyId.current=undefined;
-    if(!reply&&!unsaved.current){await releaseLease(lease);requestActive.current=false;if(mounted.current){setBusy(false);setProgress('');}return;}
+    if(!reply&&!unsaved.current){await releaseLease(lease);requestActive.current=false;if(mounted.current){reportStopped(false);setBusy(false);setProgress('');}return;}
     setMessages((prev) => {
       const copy = prev.slice();
       for (let i = copy.length - 1; i >= 0; i--) {
@@ -613,7 +719,7 @@ export function ChatPane({ projectId, boardId, boardName, nodeId: requestedNode,
     setProgress('正在保存已生成内容');
     if(await persist(messagesRef.current))await releaseLease(lease);
     requestActive.current=false;
-    if(mounted.current){setBusy(false);setProgress('');}
+    if(mounted.current){reportStopped(true);setBusy(false);setProgress('');}
   }, [persist]);
 
   const onKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
@@ -662,7 +768,8 @@ export function ChatPane({ projectId, boardId, boardName, nodeId: requestedNode,
       if (!mounted.current || activeConversation.current !== convId) return;
       const captured = targetNode?next.nodes.find(node=>node.id===targetNode):next.nodes.find(node => node.docs.some(doc => doc.path === `docs/chat_${key}.md`));
       if (captured) setSavedCapture({path:targetNode?attached!.documents![0]:`docs/chat_${key}.md`,title});
-      setBoard(next);
+      boardReadEpoch.current++;
+      adoptBoard(next);
       const savedChats=await loadBoardChats(projectId,boardId,conversationScope.current);
       if (!mounted.current || activeConversation.current !== convId) return;
       const savedConversation=savedChats.conversations.find(c=>c.id===convId);
@@ -849,7 +956,7 @@ export function ChatPane({ projectId, boardId, boardName, nodeId: requestedNode,
                 {m.content ? (
                   <MessageBody
                     content={m.content}
-                    nodes={board?.nodes ?? []}
+                    nodeTitles={nodeTitles}
                     projectId={projectId}
                     boardId={boardId}
                   />
@@ -878,8 +985,30 @@ export function ChatPane({ projectId, boardId, boardName, nodeId: requestedNode,
               <button type="button" className="ai-btn-secondary" disabled={interactionLocked || !selectedMessages.size} onClick={() => { const selected = messages.filter(m => selectedMessages.has(m.id) && !m.streaming && !m.error); if (selected.length) void openKnowledge(undefined, undefined, { title: `${boardName} · 讨论材料`.slice(0,200), body: selected.map(m => `## ${m.role === 'user' ? '我的问题' : 'AI 回答'}\n\n${m.content}`).join('\n\n'), source: `白板讨论 ${boardId} · 保留 AI 来源`, authorship: selected.some(m => m.role === 'assistant') ? 'ai_adopted' : 'user' }).catch(e => setCaptureStatus(String(e))); }}>存入知识库</button>
               <button type="button" className="ai-btn-secondary" disabled={interactionLocked} onClick={() => void saveSelection(selectedMessages)}>保存为节点</button>
             </div>}
-            {messages.length > 0 && <details className="ai-conversation-tools"><summary>对话操作</summary><div className="ai-conversation-action-list"><div className="ai-conversation-action"><span>导出文件</span><button type="button" className="ai-btn-secondary" onClick={()=>void exportTranscript()}>导出当前对话 Markdown</button></div><div className="ai-conversation-action"><span>新建节点</span><select aria-label="新节点的来源节点" disabled={interactionLocked} value={captureParent} onChange={e=>setCaptureParent(e.target.value)}><option value="">独立节点</option>{board?.nodes.map(n=><option key={n.id} value={n.id}>接在：{n.title}</option>)}</select><button type="button" className="ai-btn-secondary" disabled={interactionLocked || !captureTurns.length} onClick={() => void saveSelection(new Set(messages.map(m=>m.id)))}>保存全部问答</button></div><div className="ai-conversation-action"><span>加入已有节点</span><select aria-label="文档保存到" disabled={interactionLocked} value={documentTarget} onChange={e=>setDocumentTarget(e.target.value)}><option value="">选择已有节点</option>{board?.nodes.map(n=><option key={n.id} value={n.id}>{n.title}</option>)}</select><button type="button" className="ai-btn-secondary" disabled={interactionLocked||!documentTarget||!captureTurns.length} onClick={()=>void saveSelection(selectedMessages.size?selectedMessages:new Set(messages.map(m=>m.id)),documentTarget)}>存为节点文档</button></div></div></details>}
-            {progress && <p role="status" className="ai-tool-status ai-progress" aria-live="polite"><span className="ai-tool-spinner"/>{progress}…</p>}
+            {messages.length > 0 && <details className="ai-conversation-tools">
+              <summary>对话操作</summary>
+              <div className="ai-conversation-action-list">
+                <div className="ai-conversation-action">
+                  <span>导出文件</span>
+                  <button type="button" className="ai-btn-secondary" onClick={() => void exportTranscript()}>导出当前对话 Markdown</button>
+                </div>
+                <div className="ai-conversation-action">
+                  <span>把本对话存为新节点</span>
+                  <select aria-label="新节点的来源节点" disabled={interactionLocked} value={captureParent} onChange={e => setCaptureParent(e.target.value)}>
+                    <option value="">独立节点</option>{board?.nodes.map(n => <option key={n.id} value={n.id}>接在：{n.title || '无标题节点'}</option>)}
+                  </select>
+                  <button type="button" className="ai-btn-secondary" disabled={interactionLocked || !captureTurns.length} onClick={() => void saveSelection(new Set(messages.map(m => m.id)))}>保存全部问答</button>
+                </div>
+                <div className="ai-conversation-action">
+                  <span>{selectedMessages.size ? '把所选问答存为已有节点的文档' : '把本对话存为已有节点的文档'}</span>
+                  <select aria-label="文档保存到" disabled={interactionLocked} value={documentTarget} onChange={e => setDocumentTarget(e.target.value)}>
+                    <option value="">选择已有节点</option>{board?.nodes.map(n => <option key={n.id} value={n.id}>{n.title || '无标题节点'}</option>)}
+                  </select>
+                  <button type="button" className="ai-btn-secondary" disabled={interactionLocked || !documentTarget || !captureTurns.length} onClick={() => void saveSelection(selectedMessages.size ? selectedMessages : new Set(messages.map(m => m.id)), documentTarget)}>存为节点文档</button>
+                </div>
+              </div>
+            </details>}
+            {timing && <ChatResponseTiming report={timing} progress={progress}/>}
             {loadError && <p className="ai-warn" role="alert">{loadError}</p>}
             {memory && <details className="ai-memory-details"><summary>对话记忆 · 原始问答保留</summary><p>AI整理了 {memory.cursor.index} 条较早消息{memory.cursor.offset>0?"及下一条的部分内容":""}；原始问答完整保留，准确引述时会重新查阅。</p>{(["requirements","conclusions","unresolved"] as const).map((key,index)=><section key={key}><strong>{["你的要求与理解","AI结论与建议","未决事项"][index]}</strong>{memory.content[key].map((item,i)=><p key={i}>{item.text} <button className="ai-btn-secondary" onClick={()=>{pendingMessageJump.current=item.sources;setHighlightedMessages([]);setMessages(prev=>prev.slice());}}>查看原文</button></p>)}</section>)}</details>}
             {captureStatus && <p role="status" className="ai-hint">{captureStatus}</p>}

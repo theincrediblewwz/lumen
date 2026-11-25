@@ -125,7 +125,17 @@ impl Draft<'_> {
                         }
                         self.copy_file(doc_path(&target, &asset.path), bytes)?;
                     }
-                    self.copy_file(doc_path(&target, &doc.path), raw)?;
+                    let target_path = doc_path(&target, &doc.path);
+                    self.copy_file(target_path.clone(), raw)?;
+                    let original = self
+                        .attachment_sources
+                        .get(&doc_path(&source, &doc.path))
+                        .cloned()
+                        .unwrap_or(SourceBoard {
+                            project_id: source.0,
+                            board_id: source.1,
+                        });
+                    self.attachment_sources.insert(target_path, original);
                 }
                 let docs = &mut self.node_mut(&target, &to)?.docs;
                 if docs.iter().any(|current| current.path == doc.path) {
@@ -193,7 +203,7 @@ impl Draft<'_> {
         Ok((key, id))
     }
 
-    fn file(&mut self, path: &str) -> Result<Option<Vec<u8>>, String> {
+    pub(super) fn file(&mut self, path: &str) -> Result<Option<Vec<u8>>, String> {
         if let Some(bytes) = self.files.get(path) {
             return Ok(Some(bytes.clone()));
         }
@@ -247,6 +257,6 @@ pub(in crate::workspace_ai) fn find_doc<'a>(
     Ok(doc)
 }
 
-fn doc_path(key: &BoardKey, doc: &str) -> String {
+pub(super) fn doc_path(key: &BoardKey, doc: &str) -> String {
     format!("{}/{}/{doc}", key.0, key.1)
 }

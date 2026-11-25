@@ -43,6 +43,15 @@ describe('unmaskNodeRefs', () => {
     expect(html).toContain('未知节点');
     expect(html).toContain('data-node-id="zzz"');
   });
+
+  it('区分正在加载、存在但无标题和找不到的节点', () => {
+    const { text, ids } = maskNodeRefs('[[node:loading]] [[node:untitled]] [[node:absent]]');
+    const html = unmaskNodeRefs(text, ids, id => id === 'loading' ? undefined : id === 'untitled' ? '' : null);
+    expect(html).toContain('正在加载节点');
+    expect(html).toContain('class="node-ref" data-node-id="untitled"');
+    expect(html).toContain('无标题节点');
+    expect(html).toContain('未知节点');
+  });
   it('同一 id 多次出现全部替换', () => {
     const { text, ids } = maskNodeRefs('[[node:n1]] ... [[node:n1]]');
     const html = unmaskNodeRefs(text, ids, titleOf);

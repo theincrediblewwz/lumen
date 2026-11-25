@@ -3,7 +3,7 @@ import { ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight } from 'lucide-r
 import type { DocRef } from '../api';
 import { imageDoc } from '../canvas/composition';
 import { stepPreview, type PreviewPosition } from '../canvas/preview';
-import { NodeAttachment, DocumentPages } from './NodeAttachment';
+import { NodeAttachment, DocumentPages, type StagedDocumentPreview } from './NodeAttachment';
 
 export type PreviewPresentation = { resourceKey: string; image: boolean; navigated: boolean; title: string; dimensions?: { width: number; height: number } };
 type PreviewResource = { key: string; title: string } & ({ summary: string } | { doc: DocRef });
@@ -11,6 +11,7 @@ export type PreviewMemory = Map<string, { signature: string; position: PreviewPo
 type PreviewProps = {
   summary?: string | null; docs: DocRef[]; projectId: string; boardId: string; docVersions: Record<string, number>;
   onPresentation: (value: PreviewPresentation) => void; viewKey: string; memory?: PreviewMemory;
+  stagedDocuments?: Record<string, StagedDocumentPreview>; expectedScope?: string;
 };
 const positions: PreviewMemory = new Map();
 
@@ -28,7 +29,7 @@ export function NodePreview({ summary, docs, onPresentation, viewKey, ...context
   </>;
 }
 
-function PreviewPager({ resources, projectId, boardId, docVersions, onPresentation, viewKey, memory = positions }: Omit<PreviewProps, 'summary' | 'docs' | 'onPresentation'> & {
+function PreviewPager({ resources, projectId, boardId, docVersions, onPresentation, viewKey, memory = positions, stagedDocuments, expectedScope }: Omit<PreviewProps, 'summary' | 'docs' | 'onPresentation'> & {
   resources: PreviewResource[];
   onPresentation?: PreviewProps['onPresentation'];
 }) {
@@ -109,7 +110,7 @@ function PreviewPager({ resources, projectId, boardId, docVersions, onPresentati
     }}
     onPointerLeave={event => event.currentTarget.removeAttribute('data-preview-hover')}
     data-preview-resource={resource.key} data-preview-index={resourceIndex} data-preview-page={page} data-preview-pages={pages}>
-    {'doc' in resource ? <NodeAttachment key={resource.key} projectId={projectId} boardId={boardId} doc={resource.doc} refresh={docVersions[resource.key] ?? 0} page={page} onPages={onPages} onImageSize={onImageSize}/>
+    {'doc' in resource ? <NodeAttachment key={resource.key} projectId={projectId} boardId={boardId} doc={resource.doc} refresh={docVersions[resource.key] ?? 0} page={page} onPages={onPages} onImageSize={onImageSize} staged={stagedDocuments?.[resource.key]} expectedScope={expectedScope}/>
       : <DocumentPages key={resource.key} markdown={resource.summary ?? ''} page={page} onPages={onPages} question/>}
     {canGoBack && pageButton(-1)}
     {hasPager && <div className="node-preview-progress" role="status"

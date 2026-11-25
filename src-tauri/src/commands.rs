@@ -112,9 +112,12 @@ pub fn board_create(project_id: String, name: String) -> Result<storage::BoardMe
 }
 
 #[tauri::command]
-pub fn board_load(project_id: String, board_id: String) -> Result<serde_json::Value, String> {
+pub fn board_load(project_id: String, board_id: String, expected_scope: Option<String>) -> Result<serde_json::Value, String> {
     let _io_guard = crate::sync::IO_LOCK.lock().map_err(|e| e.to_string())?;
     let root = root()?;
+    if let Some(scope) = expected_scope {
+        crate::board_operations::ensure_scope(&root, &scope)?;
+    }
     board_snapshot(&root, &project_id, &board_id)
 }
 

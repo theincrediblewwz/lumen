@@ -1,11 +1,34 @@
 import { afterEach, expect, it, vi } from 'vitest';
-import { streamChatAgentic } from './aiClient';
+import { streamChatAgentic, type AiRoundTiming } from './aiClient';
 import { DEFAULT_AI_SETTINGS } from './aiSettings';
 import type { ToolContext } from './tools';
 import { setCatalogProviders } from './modelCatalog';
 
 afterEach(() => {vi.unstubAllGlobals();setCatalogProviders([]);});
 const settings = { ...DEFAULT_AI_SETTINGS, baseUrl: 'https://synthetic.invalid/v1', apiKey: 'mock-key' };
+
+it('measures each request and tool without reporting the contents of thinking, arguments, or answers', async () => {
+  const event = (delta: Record<string, unknown>, finish_reason: string) => 'data: ' + JSON.stringify({ choices: [{ delta, finish_reason }] }) + '\n\ndata: [DONE]\n\n';
+  vi.stubGlobal('fetch', vi.fn()
+    .mockResolvedValueOnce(new Response(event({ tool_calls: [{ index: 0, id: 'synthetic-call', type: 'function', function: { name: 'test', arguments: '{"source":"synthetic-private-argument"}' } }] }, 'tool_calls')))
+    .mockResolvedValueOnce(new Response(event({ reasoning_content: 'synthetic-private-thought', content: 'synthetic-private-answer' }, 'stop'))));
+  const rounds = new Map<number, AiRoundTiming>();
+  const toolTiming = vi.fn();
+  await new Promise<void>((resolve, reject) => streamChatAgentic(settings, [], {
+    onDelta: () => {}, onDone: resolve, onError: reject,
+    onRoundTiming: row => rounds.set(row.round, row), onToolTiming: toolTiming,
+    tools: { definitions: [{ type: 'function', function: { name: 'test' } }], execute: async () => 'synthetic-private-value' },
+  }));
+  expect(rounds.size).toBe(2);
+  expect(rounds.get(1)?.firstTextMs).toBeUndefined();
+  const final = rounds.get(2)!;
+  expect(final.headersMs).toBeLessThanOrEqual(final.firstBodyMs!);
+  expect(final.firstReasoningMs).toBeLessThanOrEqual(final.firstTextMs!);
+  expect(final.firstTextMs).toBeLessThanOrEqual(final.streamMs!);
+  expect(toolTiming).toHaveBeenCalledOnce();
+  expect(toolTiming.mock.calls[0][0]).toBeGreaterThanOrEqual(0);
+  expect(JSON.stringify([...rounds])).not.toContain('synthetic-private');
+});
 
 it.each([
  ['thinking length',{reasoning_content:'private thought'},'length',true,'思考已达到输出上限'],

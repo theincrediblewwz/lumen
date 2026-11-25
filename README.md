@@ -5,7 +5,9 @@
 
 ## 当前版本
 
-[0.4.11 源码预览](https://github.com/theincrediblewwz/lumen/releases/tag/mac-v0.4.11) · [下载 Mac 0.4.0 安装包](https://github.com/theincrediblewwz/lumen/releases/tag/mac-v0.4.0) · [白板编辑与保存](./docs/CANVAS_AUTHORING.md)
+[0.4.12 源码预览](https://github.com/theincrediblewwz/lumen/releases/tag/mac-v0.4.12) · [下载 Mac 0.4.0 安装包](https://github.com/theincrediblewwz/lumen/releases/tag/mac-v0.4.0) · [白板编辑与保存](./docs/CANVAS_AUTHORING.md)
+
+**0.4.12 AI 排版与对话诊断。** AI 工作区可按阅读顺序排布节点，选择方向和间距，并在应用前预览配色与高亮。普通对话可查看本次响应各阶段的耗时，节点引用会随白板更新。
 
 **0.4.11 快速移动与 AI 配置管理。** 白板右上角可开启快速移动，直接拖动未选中的节点。顶栏按钮有悬停说明，AI 设置可删除选中的已保存配置。
 

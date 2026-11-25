@@ -102,6 +102,13 @@ pub(super) enum Operation {
         owner_id: String,
         step_ids: Vec<String>,
     },
+    ArrangeNodes {
+        board: BoardRef,
+        node_ids: Option<Vec<String>>,
+        direction: LayoutDirection,
+        spacing: LayoutSpacing,
+        reason: String,
+    },
     AddMarkdown {
         board: BoardRef,
         node_id: String,
@@ -174,6 +181,21 @@ pub(super) enum Operation {
 pub(crate) struct BoardRef {
     pub project_id: String,
     pub board_id: String,
+}
+
+#[derive(Clone, Copy, Deserialize, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+pub(super) enum LayoutDirection {
+    Down,
+    Right,
+}
+
+#[derive(Clone, Copy, Deserialize, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+pub(super) enum LayoutSpacing {
+    Compact,
+    Balanced,
+    Airy,
 }
 
 fn present_nullable<'de, D: Deserializer<'de>>(input: D) -> Result<Option<String>, D::Error> {

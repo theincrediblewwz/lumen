@@ -1,3 +1,4 @@
+use super::layout::{Bounds, LayoutJob, PreviewDocument, SourceBoard};
 use super::{operations::*, read_bytes, Change, Destination, Files, Prepared, Revisions};
 use crate::{
     documents,
@@ -21,6 +22,13 @@ struct BoardDraft {
     original_nodes: Vec<storage::BoardNode>,
 }
 
+struct LayoutIntent {
+    node_ids: Option<Vec<String>>,
+    direction: LayoutDirection,
+    spacing: LayoutSpacing,
+    reason: String,
+}
+
 pub(super) struct Draft<'a> {
     root: &'a Path,
     index: IndexFile,
@@ -40,6 +48,8 @@ pub(super) struct Draft<'a> {
     changes: Vec<Change>,
     destinations: Vec<Destination>,
     created_projects: BTreeSet<String>,
+    layouts: BTreeMap<BoardKey, LayoutIntent>,
+    attachment_sources: BTreeMap<String, SourceBoard>,
 }
 
 impl<'a> Draft<'a> {
@@ -73,6 +83,8 @@ impl<'a> Draft<'a> {
             changes: Vec::new(),
             destinations: Vec::new(),
             created_projects: BTreeSet::new(),
+            layouts: BTreeMap::new(),
+            attachment_sources: BTreeMap::new(),
         })
     }
 
@@ -379,6 +391,41 @@ impl<'a> Draft<'a> {
                 self.layout_changed = true;
                 self.record("设置标签", location, Some(before), Some(after), false);
             }
+            Operation::ArrangeNodes {
+                board,
+                node_ids,
+                direction,
+                spacing,
+                reason,
+            } => {
+                let key = self.board_key(&board)?;
+                if self.layouts.contains_key(&key) {
+                    return Err("同一白板在一批方案中只安排一次布局".into());
+                }
+                if node_ids
+                    .as_ref()
+                    .is_some_and(|ids| ids.is_empty() || ids.len() > 160)
+                {
+                    return Err("每次布局需要 1 到 160 个指定节点".into());
+                }
+                let node_ids = node_ids
+                    .map(|ids| {
+                        ids.iter()
+                            .map(|id| self.resolve(id))
+                            .collect::<Result<Vec<_>, _>>()
+                    })
+                    .transpose()?;
+                let reason = name_text(&reason, 320)?;
+                self.layouts.insert(
+                    key,
+                    LayoutIntent {
+                        node_ids,
+                        direction,
+                        spacing,
+                        reason,
+                    },
+                );
+            }
             op => self.apply_canvas_or_resource(op)?,
         }
         Ok(())
@@ -401,6 +448,7 @@ impl<'a> Draft<'a> {
                 return Err("节点需要有标题、正文、附件或子流程".into());
             }
         }
+        let layout_jobs = self.prepare_layouts()?;
         for key in &self.dirty_boards {
             let state = self.boards.get_mut(key).unwrap();
             state.board.version = storage::FORMAT_VERSION;
@@ -458,7 +506,137 @@ impl<'a> Draft<'a> {
             self.files,
             self.changes,
             self.destinations,
+            layout_jobs,
         )
+    }
+
+    fn prepare_layouts(&mut self) -> Result<Vec<LayoutJob>, String> {
+        let mut jobs = Vec::new();
+        let mut selected_count = 0;
+        for (key, intent) in std::mem::take(&mut self.layouts) {
+            let board = &self.boards.get(&key).ok_or("布局白板已移除")?.board;
+            let top_level: BTreeMap<_, _> = board
+                .nodes
+                .iter()
+                .filter(|node| !node.extra.contains_key("flowOwnerId"))
+                .map(|node| (node.id.as_str(), node))
+                .collect();
+            let ids = intent.node_ids.unwrap_or_else(|| {
+                board
+                    .nodes
+                    .iter()
+                    .filter(|node| top_level.contains_key(node.id.as_str()))
+                    .map(|node| node.id.clone())
+                    .collect()
+            });
+            selected_count += ids.len();
+            if ids.is_empty() || selected_count > 160 {
+                return Err("一批自动布局需要 1 到 160 个主白板节点，请选择节点或分批处理".into());
+            }
+            let selected: BTreeSet<_> = ids.iter().map(String::as_str).collect();
+            if selected.len() != ids.len() {
+                return Err("布局节点不能重复".into());
+            }
+            let nodes = ids
+                .iter()
+                .map(|id| {
+                    top_level
+                        .get(id.as_str())
+                        .map(|node| (**node).clone())
+                        .ok_or("只能排列仍存在的主白板节点，子流程顺序使用 set_flow")
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            let reserved = top_level
+                .iter()
+                .filter(|(id, _)| !selected.contains(*id))
+                .map(|(_, node)| Bounds::reserved(node))
+                .reduce(Bounds::union);
+            let edges = board
+                .edges
+                .iter()
+                .filter(|edge| {
+                    selected.contains(edge.from.as_str()) && selected.contains(edge.to.as_str())
+                })
+                .cloned()
+                .collect();
+            let appearance = board.extra.get("appearance").cloned();
+            let name = board.name.clone();
+            let mut previews = BTreeMap::new();
+            let mut seen_docs = BTreeSet::new();
+            for node in &nodes {
+                let question = question_path(&node.id);
+                let Some(doc) = node.docs.iter().find(|doc| doc.path != question) else {
+                    continue;
+                };
+                let path = resources::doc_path(&key, &doc.path);
+                if !seen_docs.insert(&doc.path) {
+                    continue;
+                }
+                let staged = self.files.contains_key(&path);
+                let raw = self.file(&path)?.ok_or("布局中首个挂载资料已不存在")?;
+                if staged {
+                    let decoded = storage::decode_text(&raw);
+                    let (attachment, markdown) = documents::split(&decoded)?;
+                    let source = attachment.map(|_| {
+                        self.attachment_sources
+                            .get(&path)
+                            .cloned()
+                            .unwrap_or_else(|| SourceBoard {
+                                project_id: key.0.clone(),
+                                board_id: key.1.clone(),
+                            })
+                    });
+                    previews.insert(
+                        doc.path.clone(),
+                        PreviewDocument {
+                            markdown: markdown.into(),
+                            source,
+                        },
+                    );
+                }
+            }
+            let placement = match intent.direction {
+                LayoutDirection::Down => "从上到下",
+                LayoutDirection::Right => "从左到右",
+            };
+            let density = match intent.spacing {
+                LayoutSpacing::Compact => "紧凑",
+                LayoutSpacing::Balanced => "适中",
+                LayoutSpacing::Airy => "宽松",
+            };
+            self.record(
+                "整理节点布局",
+                format!("{name} · {} 个节点", nodes.len()),
+                None,
+                Some(format!("{placement} · {density}间距\n{}", intent.reason)),
+                false,
+            );
+            self.dirty_boards.insert(key.clone());
+            if !self.destinations.iter().any(|destination| {
+                destination.project_id == key.0
+                    && destination.board_id.as_deref() == Some(key.1.as_str())
+            }) {
+                self.destinations.push(Destination {
+                    project_id: key.0.clone(),
+                    board_id: Some(key.1.clone()),
+                    name: name.clone(),
+                });
+            }
+            jobs.push(LayoutJob {
+                project_id: key.0,
+                board_id: key.1,
+                name,
+                nodes,
+                edges,
+                appearance,
+                reserved,
+                direction: intent.direction,
+                spacing: intent.spacing,
+                reason: intent.reason,
+                documents: previews,
+            });
+        }
+        Ok(jobs)
     }
 
     fn project_id(&self, reference: &str) -> Result<String, String> {

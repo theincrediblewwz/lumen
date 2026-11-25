@@ -12,6 +12,7 @@ use std::{
 };
 
 mod draft;
+mod layout;
 mod operations;
 pub(crate) mod read;
 #[cfg(test)]
@@ -35,6 +36,10 @@ pub struct Plan {
     id: String,
     changes: Vec<Change>,
     destinations: Vec<Destination>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    layout_jobs: Vec<layout::LayoutJob>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    layouts: Vec<layout::LayoutPreview>,
 }
 
 #[derive(Clone, Serialize)]
@@ -122,13 +127,14 @@ impl Prepared {
         files: Files,
         changes: Vec<Change>,
         destinations: Vec<Destination>,
+        layout_jobs: Vec<layout::LayoutJob>,
     ) -> Result<Self, String> {
         let mut before = Before::new();
         let mut writes = Files::new();
         let mut size = 0;
         for (path, after) in files {
             let old = draft::observe(root, &mut observed, &path)?;
-            if old.as_ref() == Some(&after) {
+            if old.as_ref() == Some(&after) && !layout_jobs.iter().any(|job| job.path() == path) {
                 continue;
             }
             size += after.len() + old.as_ref().map_or(0, Vec::len);
@@ -146,6 +152,8 @@ impl Prepared {
                 id,
                 changes,
                 destinations,
+                layout_jobs,
+                layouts: vec![],
             },
             scope,
             observed,
@@ -168,6 +176,9 @@ fn prepare_at(root: &Path, batch: Value) -> Result<Prepared, String> {
 }
 
 fn commit_at(root: &Path, prepared: &Prepared) -> Result<Applied, String> {
+    if !prepared.plan.layout_jobs.is_empty() {
+        return Err("请等待布局预览完成后再应用方案".into());
+    }
     board_operations::ensure_scope(root, &prepared.scope)?;
     check_revisions(
         root,
@@ -406,6 +417,21 @@ pub fn workspace_ai_apply(plan_id: String, expected_scope: String) -> Result<App
     let applied = commit_at(&root, plan)?;
     *pending = None;
     Ok(applied)
+}
+
+#[tauri::command]
+pub fn workspace_ai_place_layout(
+    plan_id: String,
+    expected_scope: String,
+    layouts: Vec<layout::MeasuredLayout>,
+) -> Result<Plan, String> {
+    let _io = sync::IO_LOCK.lock().map_err(|e| e.to_string())?;
+    let root = commands::root()?;
+    board_operations::ensure_scope(&root, &expected_scope)?;
+    let mut pending = PENDING.lock().map_err(|e| e.to_string())?;
+    let prepared = pending.as_mut().filter(|plan| plan.plan.id == plan_id).ok_or("方案已过期，请重新生成")?;
+    layout::place(&root, prepared, layouts)?;
+    Ok(prepared.plan.clone())
 }
 
 #[tauri::command]

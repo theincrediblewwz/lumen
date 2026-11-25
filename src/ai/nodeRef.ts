@@ -41,22 +41,19 @@ export function maskNodeRefs(src: string): { text: string; ids: string[] } {
  * 渲染后：把 HTML 里的占位 token 换成节点胶囊。titleOf 把 id 映射到标题；
  * 未知 id 显示「未知节点」但仍可点击（跳转时提示）。
  */
-export function unmaskNodeRefs(html: string, ids: string[], titleOf: (id: string) => string | null): string {
-  let out = html;
-  for (let i = 0; i < ids.length; i++) {
-    const id = ids[i];
+export function unmaskNodeRefs(html: string, ids: string[], titleOf: (id: string) => string | null | undefined): string {
+  return html.replace(/LUMENNODEREF(\d+)X/g, (token, index: string) => {
+    const id = ids[Number(index)];
+    if (!id) return token;
     const title = titleOf(id);
-    const label = title ?? '未知节点';
-    const cls = title ? 'node-ref' : 'node-ref is-missing';
-    const chip =
-      `<a class="${cls}" data-node-id="${esc(id)}" title="${esc(title ? '跳转到：' + title : '未找到该节点')}" role="button">` +
+    const label = title === undefined ? '正在加载节点' : title === null ? '未知节点' : title.trim() || '无标题节点';
+    const cls = title == null ? 'node-ref is-missing' : 'node-ref';
+    const help = title === undefined ? label : title === null ? '未找到该节点' : '跳转到：' + label;
+    return `<a class="${cls}" data-node-id="${esc(id)}" title="${esc(help)}" role="button">` +
       `<svg class="node-ref-icon" width="12" height="12" viewBox="0 0 16 16" aria-hidden="true">` +
       `<rect x="2" y="3.5" width="12" height="9" rx="2" fill="none" stroke="currentColor" stroke-width="1.4"/>` +
       `<path d="M5 7h6M5 9.5h4" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/>` +
       `</svg>` +
       `<span class="node-ref-label">${esc(label)}</span></a>`;
-    // 全局替换所有出现（同一引用可能出现多次）
-    out = out.split(`${TOKEN_PREFIX}${i}X`).join(chip);
-  }
-  return out;
+  });
 }

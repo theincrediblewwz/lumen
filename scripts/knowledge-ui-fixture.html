@@ -351,6 +351,7 @@ window.__TAURI_INTERNALS__={metadata:{currentWindow:{label:'main'},currentWebvie
   if(command==='ai_cancel'){window.__fixtureAiCancelled.push(args.requestId);streamCompletionGates.get(args.requestId)?.();return;}
   if(command==='ai_chat_stream'){
     if(!fixtureParams.has('catalogQA')&&!fixtureParams.has('keychainQA')&&!fixtureParams.has('operationsQA')&&!fixtureParams.has('importQA'))throw Error('页面验收禁止 Provider 调用');
+    const started=performance.now();
     const request=JSON.parse(args.body);window.__fixtureCatalogRequests.push(request);window.__fixtureAiRequests.push({requestId:args.requestId,request});if(window.__fixtureImportNeverReply)return;
     // Exercise the actual frontend native-event listener without calling a Provider.
     // A retry hook is consumed once so later analysis batches can finish normally.
@@ -358,6 +359,13 @@ window.__TAURI_INTERNALS__={metadata:{currentWindow:{label:'main'},currentWebvie
     if(window.__fixtureStructuredFailure){const partial=window.__fixtureStructuredFailure==='partial';emitFixture('ai://chunk',{requestId:args.requestId,data:'data: '+JSON.stringify({choices:[{delta:partial?{content:'{"schema":'}:{reasoning_content:'synthetic hidden thought'},finish_reason:'length'}]})+'\n\ndata: [DONE]\n\n'});emitFixture('ai://done',{requestId:args.requestId});return;}
     if(window.__fixtureStreamDelay)await new Promise(r=>setTimeout(r,window.__fixtureStreamDelay));
     if(window.__fixtureAiCancelled.includes(args.requestId))return;
+    if(args.observeTiming&&fixtureParams.has('timingQA')){
+      const timing=milestone=>emitFixture('ai://timing',{requestId:args.requestId,milestone,elapsedMs:Math.round(performance.now()-started)});
+      timing('headers');
+      if(window.__fixtureBodyDelay)await new Promise(resolve=>setTimeout(resolve,window.__fixtureBodyDelay));
+      if(window.__fixtureAiCancelled.includes(args.requestId))return;
+      timing('firstBody');
+    }
     if(window.__fixtureReasoning){emitFixture('ai://chunk',{requestId:args.requestId,data:'data: '+JSON.stringify({choices:[{delta:{reasoning_content:'synthetic private reasoning must stay hidden'}}]})+'\n\n'});await new Promise(r=>setTimeout(r,window.__fixtureReasoning));}
     if(window.__fixtureRevokeBeforeApply){writePolicy={...writePolicy,enabled:false,revision:writePolicy.revision+1};localStorage.setItem('lumen.fixture-board-policy',JSON.stringify(writePolicy));}
     const retrievalStep=request.messages.filter(m=>m.role==='tool').length;
@@ -381,7 +389,8 @@ window.__TAURI_INTERNALS__={metadata:{currentWindow:{label:'main'},currentWebvie
         memoryDelta=window.__fixtureHistoryRead&&!toolMessages.length?{tool_calls:[{index:0,id:'history-search',type:'function',function:{name:'search_conversation',arguments:JSON.stringify({keywords:['最早秘密标识']})}}]}:window.__fixtureHistoryRead&&toolMessages.length===1?{tool_calls:[{index:0,id:'history-read',type:'function',function:{name:'read_conversation',arguments:JSON.stringify({messageId:JSON.parse(toolMessages[0].content).hits[0].messageId,length:200})}}]}:{content:'合成回答：'+question.slice(0,80)+'。原文可重读。公式 $x_i^2$。'};
       }
     }
-    const delta=faithfulDelta??memoryDelta??(fixtureParams.has('retrievalQA')?retrievalDelta:fixtureParams.has('importQA')?{content:JSON.stringify(window.__fixtureImportDeep?{...importPlan,nodes:Array.from({length:window.__fixtureImportCount??32},(_,i)=>({reference:'level'+i,title:'层级 '+i,summary:'继续追问',markdown:'# 第'+i+'层\\n\\n$x_i$',parent:i?'level'+(i-1):null}))}:importPlan)}:fixtureParams.has('operationsQA')?(request.messages.filter(m=>m.role==='tool').length>=(window.__fixtureWriteBatches??1)?{content:'已完成整理。公式 $x_i^2$。'}:request.tools?.some(t=>t.function.name==='apply_board_operations')?{tool_calls:[{index:0,id:'create-synthetic-'+request.messages.filter(m=>m.role==='tool').length,type:'function',function:{name:'apply_board_operations',arguments:JSON.stringify({schema:'lumen.board-operations/v1',operations:[{type:'create_node',reference:'new_topic',title:'AI 生成的方向',parentId:'synthetic-node',markdown:'# 新的理解\n\n公式 $x_i^2$。'}]})}}]}:{content:'当前只读，尚未获得修改授权。'}):fixtureParams.has('keychainQA')?{content:'合成凭据验收通过，未调用真实模型。'}:request.messages.some(m=>m.role==='tool')?{content:JSON.stringify(catalogueProposal)}:{tool_calls:[{index:0,id:'catalog-read',type:'function',function:{name:'catalog_read',arguments:JSON.stringify({url:'https://example.com/model-docs'})}}]});
+    const citationDelta=fixtureParams.has('timingQA')?{content:'新节点 [[node:fresh-node]]，空标题 [[node:untitled-node]]，未找到 [[node:missing-node]]。'}:undefined;
+    const delta=faithfulDelta??memoryDelta??citationDelta??(fixtureParams.has('retrievalQA')?retrievalDelta:fixtureParams.has('importQA')?{content:JSON.stringify(window.__fixtureImportDeep?{...importPlan,nodes:Array.from({length:window.__fixtureImportCount??32},(_,i)=>({reference:'level'+i,title:'层级 '+i,summary:'继续追问',markdown:'# 第'+i+'层\\n\\n$x_i$',parent:i?'level'+(i-1):null}))}:importPlan)}:fixtureParams.has('operationsQA')?(request.messages.filter(m=>m.role==='tool').length>=(window.__fixtureWriteBatches??1)?{content:'已完成整理。公式 $x_i^2$。'}:request.tools?.some(t=>t.function.name==='apply_board_operations')?{tool_calls:[{index:0,id:'create-synthetic-'+request.messages.filter(m=>m.role==='tool').length,type:'function',function:{name:'apply_board_operations',arguments:JSON.stringify({schema:'lumen.board-operations/v1',operations:[{type:'create_node',reference:'new_topic',title:'AI 生成的方向',parentId:'synthetic-node',markdown:'# 新的理解\n\n公式 $x_i^2$。'}]})}}]}:{content:'当前只读，尚未获得修改授权。'}):fixtureParams.has('keychainQA')?{content:'合成凭据验收通过，未调用真实模型。'}:request.messages.some(m=>m.role==='tool')?{content:JSON.stringify(catalogueProposal)}:{tool_calls:[{index:0,id:'catalog-read',type:'function',function:{name:'catalog_read',arguments:JSON.stringify({url:'https://example.com/model-docs'})}}]});
     if(window.__fixtureTokenDelay&&delta.content){
       for(const piece of delta.content.match(/.{1,18}/gs)??[]){if(window.__fixtureAiCancelled.includes(args.requestId))return;emitFixture('ai://chunk',{requestId:args.requestId,data:'data: '+JSON.stringify({choices:[{delta:{content:piece}}]})+'\n\n'});await new Promise(r=>setTimeout(r,window.__fixtureTokenDelay));}
       if(!await waitForStreamCompletion(args.requestId))return;

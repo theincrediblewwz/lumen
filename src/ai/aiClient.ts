@@ -32,6 +32,20 @@ export interface RetryNotice {
   reason: string;
 }
 
+export interface AiRoundTiming {
+  round: number;
+  preparationMs?: number;
+  bridgeSetupMs?: number;
+  headersMs?: number;
+  firstBodyMs?: number;
+  firstDeliveryMs?: number;
+  firstReasoningMs?: number;
+  firstTextMs?: number;
+  streamMs?: number;
+  retries: number;
+  retryDelayMs: number;
+}
+
 export interface StreamHandlers {
   onDelta: (text: string) => void;
   onDone: () => void;
@@ -49,6 +63,9 @@ export interface StreamHandlers {
   /** Presence only; raw model reasoning never crosses this UI callback. */
   onReasoning?: (characters:number) => void;
   onToolEnd?: () => void;
+  /** Durations and counts only. Each round publishes an updated snapshot. */
+  onRoundTiming?: (timing: AiRoundTiming) => void;
+  onToolTiming?: (elapsedMs: number) => void;
   /** Caller-scoped tools for workflows with their own reads and confirmation. */
   tools?: { definitions: unknown[]; execute: (name: string, args: Record<string, unknown>) => Promise<unknown> };
 }
@@ -87,7 +104,10 @@ interface RoundCallbacks {
   onContent: (text: string) => void;
   onReasoning?: (characters:number) => void;
   onRetry?: (notice: RetryNotice) => void;
+  onTiming?: (metric: TransportMetric, elapsedMs: number) => void;
 }
+
+type TransportMetric = 'bridgeSetupMs' | 'headersMs' | 'firstBodyMs' | 'firstDeliveryMs';
 
 /** 可取消令牌 */
 interface CancelToken {
@@ -129,6 +149,9 @@ function runRoundTauri(spec: HttpSpec, cb: RoundCallbacks, token: CancelToken): 
     let finishReason: string | null = null;
     let terminated=false;
     let settled = false;
+    const setupStarted = cb.onTiming ? performance.now() : 0;
+    let dispatchedAt = 0;
+    let delivered = false;
     const unlisten: Array<() => void> = [];
 
     const cleanup = () => {
@@ -164,8 +187,8 @@ function runRoundTauri(spec: HttpSpec, cb: RoundCallbacks, token: CancelToken): 
     };
 
     (async () => {
-      const { invoke } = await import('@tauri-apps/api/core');
-      const { listen } = await import('@tauri-apps/api/event');
+      const [{ invoke }, { listen }] = await Promise.all([import('@tauri-apps/api/core'), import('@tauri-apps/api/event')]);
+      if (settled) return;
 
       const handleData = (data: string) => {
         buffer += data;
@@ -185,43 +208,50 @@ function runRoundTauri(spec: HttpSpec, cb: RoundCallbacks, token: CancelToken): 
       };
 
       const retain=(stop:()=>void)=>{if(settled||token.cancelled)stop();else unlisten.push(stop);};
-      retain(
-        await listen<{ requestId: string; data: string }>('ai://chunk', (e) => {
+      const listeners = [
+        listen<{ requestId: string; data: string }>('ai://chunk', (e) => {
           if (e.payload.requestId !== requestId || settled) return;
+          if (cb.onTiming && !delivered) {
+            delivered = true;
+            cb.onTiming('firstDeliveryMs', performance.now() - dispatchedAt);
+          }
           handleData(e.payload.data);
-        }),
-      );
-      if(settled||token.cancelled)return;
-      retain(
-        await listen<{ requestId: string }>('ai://done', (e) => {
-          if (e.payload.requestId !== requestId) return;
+        }).then(retain),
+        listen<{ requestId: string }>('ai://done', (e) => {
+          if (e.payload.requestId !== requestId || settled) return;
           // Flush a final unterminated data line only when the transport ends.
           if(buffer.trim())handleData('\n\n');
           finish();
-        }),
-      );
-      if(settled||token.cancelled)return;
-      retain(
-        await listen<{ requestId: string; message: string }>('ai://error', (e) => {
+        }).then(retain),
+        listen<{ requestId: string; message: string }>('ai://error', (e) => {
           if (e.payload.requestId !== requestId) return;
           finish({ error: e.payload.message });
-        }),
-      );
-      if(settled||token.cancelled)return;
-      retain(
-        await listen<RetryNotice & { requestId: string }>('ai://retry', (e) => {
+        }).then(retain),
+        listen<RetryNotice & { requestId: string }>('ai://retry', (e) => {
           if (e.payload.requestId !== requestId || settled || token.cancelled) return;
           cb.onRetry?.(e.payload);
-        }),
+        }).then(retain),
+      ];
+      if (cb.onTiming) listeners.push(
+        listen<{ requestId: string; milestone: 'headers' | 'firstBody'; elapsedMs: number }>('ai://timing', ({payload}) => {
+          if (payload.requestId !== requestId || settled || token.cancelled) return;
+          cb.onTiming?.(payload.milestone === 'headers' ? 'headersMs' : 'firstBodyMs', payload.elapsedMs);
+        }).then(retain),
       );
+      await Promise.all(listeners);
 
       try {
-        if (token.cancelled) { finish({ cancelled: true }); return; }
+        if (settled || token.cancelled) return;
+        if (cb.onTiming) {
+          dispatchedAt = performance.now();
+          cb.onTiming('bridgeSetupMs', dispatchedAt - setupStarted);
+        }
         await invoke('ai_chat_stream', {
           requestId,
           url: spec.url,
           headers: spec.headers,
           body: spec.body,
+          observeTiming: !!cb.onTiming,
         });
       } catch (err) {
         finish({ error: String(err) });
@@ -255,6 +285,8 @@ function runRoundFetch(spec: HttpSpec, cb: RoundCallbacks, token: CancelToken): 
 
     (async () => {
       try {
+        const dispatchedAt = cb.onTiming ? performance.now() : 0;
+        cb.onTiming?.('bridgeSetupMs', 0);
         const resp = await fetch(spec.url, {
           method: 'POST',
           headers: spec.headers,
@@ -265,14 +297,22 @@ function runRoundFetch(spec: HttpSpec, cb: RoundCallbacks, token: CancelToken): 
           const text = await resp.text().catch(() => '');
           throw new Error(`HTTP ${resp.status}: ${text.slice(0, 300)}`);
         }
+        cb.onTiming?.('headersMs', performance.now() - dispatchedAt);
         const reader = resp.body?.getReader();
         if (!reader) throw new Error('无响应流');
         const decoder = new TextDecoder();
         let buffer = '';
+        let delivered = false;
         // eslint-disable-next-line no-constant-condition
         while (true) {
           const { value, done } = await reader.read();
           if (done) break;
+          if (cb.onTiming && !delivered && value.length) {
+            delivered = true;
+            const elapsed = performance.now() - dispatchedAt;
+            cb.onTiming('firstBodyMs', elapsed);
+            cb.onTiming('firstDeliveryMs', elapsed);
+          }
           buffer += decoder.decode(value, { stream: true });
           const r = parseSseChunkRich(buffer);
           if(r.done||r.finishReason)terminated=true;
@@ -335,13 +375,40 @@ export function streamChatAgentic(
       const maxRounds=handlers.tools?8:MAX_TOOL_ROUNDS;
       for (let round = 0; round < maxRounds; round++) {
         if (token.cancelled) break;
-        const tokens = requestInputTokens(convo,definitions);
-        if (tokens > settings.contextBudget) throw new Error('对话或工具资料超过上下文预算，请增大预算或开始新对话。');
-        await handlers.beforeRequest?.();
-        if (token.cancelled) break;
+        const timing: AiRoundTiming = { round: round + 1, retries: 0, retryDelayMs: 0 };
+        const publish = handlers.onRoundTiming ? (update: Partial<AiRoundTiming>) => {
+          Object.assign(timing, update);
+          handlers.onRoundTiming?.({ ...timing });
+        } : undefined;
+        const preparationStarted = publish ? performance.now() : 0;
+        let spec: HttpSpec;
+        try {
+          const tokens = requestInputTokens(convo,definitions);
+          if (tokens > settings.contextBudget) throw new Error('对话或工具资料超过上下文预算，请增大预算或开始新对话。');
+          await handlers.beforeRequest?.();
+          if (token.cancelled) break;
+          spec = specFor(settings, convo, definitions, policy, sessionId,finishWithoutTools||round===maxRounds-1);
+        } finally {
+          publish?.({ preparationMs: performance.now() - preparationStarted });
+        }
         handlers.onRoundStart?.();
-        const spec = specFor(settings, convo, definitions, policy, sessionId,finishWithoutTools||round===maxRounds-1);
-        const result = await runRound(spec, { onContent: handlers.onDelta, onReasoning: handlers.onReasoning, onRetry: handlers.onRetry }, token);
+        const roundStarted = publish ? performance.now() : 0;
+        const result = await runRound(spec, {
+          onTiming: publish ? (metric, elapsedMs) => publish({ [metric]: elapsedMs }) : undefined,
+          onContent: text => {
+            if (timing.firstTextMs === undefined && text.trim()) publish?.({ firstTextMs: performance.now() - roundStarted });
+            handlers.onDelta(text);
+          },
+          onReasoning: characters => {
+            if (timing.firstReasoningMs === undefined) publish?.({ firstReasoningMs: performance.now() - roundStarted });
+            handlers.onReasoning?.(characters);
+          },
+          onRetry: notice => {
+            publish?.({ retries: timing.retries + 1, retryDelayMs: timing.retryDelayMs + notice.delayMs });
+            handlers.onRetry?.(notice);
+          },
+        }, token);
+        publish?.({ streamMs: performance.now() - roundStarted });
 
         if (result.cancelled || token.cancelled) {
           handlers.onDone();
@@ -388,7 +455,15 @@ export function streamChatAgentic(
             if(toolCtx)toolCtx.maxDocChars=Math.max(0,settings.contextBudget-requestInputTokens(convo,definitions)-512);
             const noRoom=!!toolCtx&&toolCtx.maxDocChars!<128;
             if(noRoom)finishWithoutTools=true;
-            const output = noRoom?'本轮上下文空间不足，未继续读取或操作。请根据已有资料说明已知和未完成部分。':handlers.tools ? JSON.stringify(await handlers.tools.execute(call.function.name, args)) : await executeTool(call.function.name, args, toolCtx!,call.id);
+            let output = '本轮上下文空间不足，未继续读取或操作。请根据已有资料说明已知和未完成部分。';
+            if (!noRoom) {
+              const toolStarted = handlers.onToolTiming ? performance.now() : 0;
+              try {
+                output = handlers.tools ? JSON.stringify(await handlers.tools.execute(call.function.name, args)) : await executeTool(call.function.name, args, toolCtx!, call.id);
+              } finally {
+                handlers.onToolTiming?.(performance.now() - toolStarted);
+              }
+            }
             if(output.startsWith('上下文空间不足'))finishWithoutTools=true;
             handlers.onToolEnd?.();
             convo.push({ role: 'tool', tool_call_id: call.id, content: output });

@@ -9,6 +9,7 @@
 //!   ai://done   { requestId }         —— 正常结束
 //!   ai://error  { requestId, message }—— 出错（HTTP 状态非 2xx 或网络异常）
 //!   ai://retry  { requestId, attempt, maxRetries, delayMs, reason } —— 等待重试
+//!   ai://timing { requestId, milestone, elapsedMs } —— 可选的响应头及首块流数据耗时
 //!
 //! 取消：前端调用 ai_cancel(request_id) 置位；流循环检测到即中断。
 
@@ -18,7 +19,7 @@ use serde::Serialize;
 use std::collections::HashMap;
 use std::collections::HashSet;
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use tauri::{Emitter, Window};
 use tokio::sync::Notify;
 
@@ -26,6 +27,9 @@ use tokio::sync::Notify;
 static CANCELLED: Lazy<Mutex<HashSet<String>>> = Lazy::new(|| Mutex::new(HashSet::new()));
 static SIGNALS: Lazy<Mutex<HashMap<String, Arc<Notify>>>> =
     Lazy::new(|| Mutex::new(HashMap::new()));
+// Requests carry their own headers. Reuse the connection pool between tool rounds.
+static CHAT_CLIENT: Lazy<Result<reqwest::Client, reqwest::Error>> =
+    Lazy::new(|| reqwest::Client::builder().build());
 struct RequestGuard(String);
 impl Drop for RequestGuard {
     fn drop(&mut self) {
@@ -103,6 +107,14 @@ struct RetryEvent {
     reason: String,
 }
 
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct TimingEvent {
+    request_id: String,
+    milestone: &'static str,
+    elapsed_ms: u64,
+}
+
 const MAX_RETRIES: u32 = 3;
 const MAX_RETRY_WAIT: Duration = Duration::from_secs(60);
 
@@ -138,6 +150,7 @@ pub async fn ai_chat_stream(
     url: String,
     headers: HashMap<String, String>,
     body: String,
+    observe_timing: Option<bool>,
 ) -> Result<(), String> {
     let signal = Arc::new(Notify::new());
     SIGNALS
@@ -149,12 +162,13 @@ pub async fn ai_chat_stream(
         return Ok(());
     }
 
-    let client = reqwest::Client::builder()
-        .build()
+    let client = CHAT_CLIENT
+        .as_ref()
         .map_err(|e| format!("创建 HTTP 客户端失败: {e}"))?;
 
-    let response = request_before_stream(
-        &client,
+    let start = Instant::now();
+    let result = request_chat_stream(
+        client,
         &request_id,
         &signal,
         &url,
@@ -163,24 +177,26 @@ pub async fn ai_chat_stream(
         |notice| {
             let _ = window.emit("ai://retry", notice);
         },
-    )
-    .await;
-    let result = match response {
-        Ok(Some(resp)) => {
-            consume_stream(resp, &request_id, &signal, |data| {
+        |milestone| {
+            if observe_timing.unwrap_or(false) {
                 let _ = window.emit(
-                    "ai://chunk",
-                    ChunkEvent {
+                    "ai://timing",
+                    TimingEvent {
                         request_id: request_id.clone(),
-                        data,
+                        milestone,
+                        elapsed_ms: start.elapsed().as_millis() as u64,
                     },
                 );
-            })
-            .await
-        }
-        Ok(None) => Ok(()),
-        Err(message) => Err(message),
-    };
+            }
+        },
+        |data| {
+            let _ = window.emit(
+                "ai://chunk",
+                ChunkEvent { request_id: request_id.clone(), data },
+            );
+        },
+    )
+    .await;
     match result {
         Err(message) => {
             let _ = window.emit(
@@ -201,6 +217,31 @@ pub async fn ai_chat_stream(
         }
     }
     Ok(())
+}
+
+async fn request_chat_stream(
+    client: &reqwest::Client,
+    id: &str,
+    signal: &Notify,
+    url: &str,
+    headers: &HashMap<String, String>,
+    body: &str,
+    on_retry: impl FnMut(RetryEvent),
+    mut on_timing: impl FnMut(&'static str),
+    mut on_chunk: impl FnMut(String),
+) -> Result<(), String> {
+    let Some(response) = request_before_stream(client, id, signal, url, headers, body, on_retry).await? else {
+        return Ok(());
+    };
+    on_timing("headers");
+    let mut first_chunk = true;
+    consume_stream(response, id, signal, |data| {
+        if first_chunk {
+            first_chunk = false;
+            on_timing("firstBody");
+        }
+        on_chunk(data);
+    }).await
 }
 
 /// Retry only rejected HTTP requests. Once a successful response is returned, its stream
@@ -638,7 +679,9 @@ mod tests {
             response(200, "Content-Type: text/event-stream\r\n", expected, 0),
         ]);
         let mut notices = Vec::new();
-        let resp = request_before_stream(
+        let mut milestones = Vec::new();
+        let mut received = String::new();
+        request_chat_stream(
             &client(),
             "retry-success",
             &Notify::new(),
@@ -646,20 +689,16 @@ mod tests {
             &HashMap::new(),
             r#"{"model":"test"}"#,
             |n| notices.push(n),
+            |milestone| milestones.push(milestone),
+            |chunk| received.push_str(&chunk),
         )
-        .await
-        .unwrap()
-        .unwrap();
-        let mut received = String::new();
-        consume_stream(resp, "retry-success", &Notify::new(), |s| {
-            received.push_str(&s)
-        })
         .await
         .unwrap();
         peer.join().unwrap();
         assert_eq!(count.load(Ordering::SeqCst), 2);
         assert_eq!(notices.len(), 1);
         assert_eq!(notices[0].attempt, 1);
+        assert_eq!(milestones, ["headers", "firstBody"]);
         assert_eq!(received, expected);
     }
 

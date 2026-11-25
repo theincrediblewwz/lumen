@@ -31,11 +31,28 @@ async function main() {
       const at = '2026-11-19T01:00:00Z';
       const project = { id: 'p_generated', name: '方程讲义', created_at: at };
       const board = { id: 'b_generated', name: '求解路径', updated_at: at };
-      const receipt = { id: 'synthetic-plan', appliedAt: at, changeCount: 4, destinations: [
+      const layoutNodes = [
+        {id:'n_root',title:'=={#FFF146}线性方程==',summary:'比较各步骤的作用。',docs:[],color:'#345FA8'},
+        {id:'n_read',title:'观测量与证据',summary:'',docs:[{path:'docs/staged.md',title:'主要证据'}],color:'#2B8767'},
+        {id:'n_step',title:'检验例子',summary:'按假设验证。',docs:[],color:null},
+        {id:'n_target',title:'结论与边界',summary:'区分成立的条件和未给出的范围。',docs:[],color:'#345FA8'},
+      ].map(node=>({...node,x:120,y:120,w:280,created_at:at,updated_at:at}));
+      const layoutEdges = [['n_root','n_step'],['n_root','n_read'],['n_read','n_target']].map(([from,to],index)=>({id:`layout-line-${index}`,from,to,directed:true,label:null,created_at:at}));
+      const layoutJob = {projectId:project.id,boardId:board.id,name:board.name, nodes:layoutNodes,edges:layoutEdges,
+        direction:'right',spacing:'airy',reason:'顺着证据阅读，给公式保留空间。', reserved:{x:80,y:80,w:320,h:300},
+        documents:{'docs/staged.md':{markdown:'## 本机测量合成内容\n\n$$\\frac{x^2+y^2}{1+\\nu}$$\n\n'+('合成材料用于测量这一页的正文高度。'.repeat(38))}}};
+      const receipt = { id: 'synthetic-plan', appliedAt: at, changeCount: 5, destinations: [
         { projectId: project.id, boardId: null, name: project.name },
         { projectId: project.id, boardId: board.id, name: board.name },
       ] };
-      const view = window.__workspaceQA = { reads: [], prepares: [], applies: 0, discards: 0, undos: 0, requests: [] };
+      const changes = [
+        { action: '新建项目', location: '桌面夹 / 方程讲义', before: null, after: null, removes: false },
+        { action: '新建白板', location: '方程讲义 / 求解路径', before: null, after: null, removes: false },
+        { action: '新建节点', location: '求解路径 / 线性方程', before: null, after: '# 完整问题\n\n$\\nu x=f$', removes: false },
+        { action: '设置子流程顺序', location: '线性方程', before: '', after: '1. 列式\n2. 代回检验', removes: false },
+        { action: '整理节点布局', location: '求解路径 · 4 个节点', before: null, after: '从左到右 · 宽松间距', removes: false },
+      ];
+      const view = window.__workspaceQA = { reads: [], prepares: [], measures: [], applies: 0, discards: 0, undos: 0, requests: [] };
       window.__TAURI_INTERNALS__.invoke = async (command, args) => {
         if (command === 'workspace_ai_latest') return view.applies > view.undos ? receipt : null;
         if (command === 'workspace_ai_read') {
@@ -44,12 +61,12 @@ async function main() {
         }
         if (command === 'workspace_ai_prepare') {
           view.prepares.push(args);
-          return { ...receipt, changes: [
-            { action: '新建项目', location: '桌面夹 / 方程讲义', before: null, after: null, removes: false },
-            { action: '新建白板', location: '方程讲义 / 求解路径', before: null, after: null, removes: false },
-            { action: '新建节点', location: '求解路径 / 线性方程', before: null, after: '# 完整问题\n\n$\\nu x=f$', removes: false },
-            { action: '设置子流程顺序', location: '线性方程', before: '', after: '1. 列式\n2. 代回检验', removes: false },
-          ] };
+          return { ...receipt, changes, layoutJobs:[layoutJob] };
+        }
+        if (command === 'workspace_ai_place_layout') {
+          const measured = args.layouts[0];
+          view.measures.push(measured);
+          return { ...receipt, changes, layouts:[{...layoutJob,nodes:layoutNodes.map(node=>({...node,...measured.nodes[node.id]}))}] };
         }
         if (command === 'workspace_ai_discard') { view.discards++; return; }
         if (command === 'workspace_ai_apply') { view.applies++; return receipt; }
@@ -81,6 +98,7 @@ async function main() {
                 { op: 'create_node', key: '@n', board, fields: { title: '线性方程', summary: '$\\nu x=f$' } },
                 { op: 'create_node', key: '@s', board, fields: { title: '列式' } },
                 { op: 'set_flow', board, ownerId: '@n', stepIds: ['@s'] },
+                { op: 'arrange_nodes', board, nodeIds: ['@n'], direction: 'right', spacing:'airy', reason:layoutJob.reason },
               ],
             }) : { content: '已拟定方案，等待你确认。' };
           const event = 'data: ' + JSON.stringify({ choices: [{ delta, finish_reason: delta.tool_calls ? 'tool_calls' : 'stop' }] }) + '\n\ndata: [DONE]\n\n';
@@ -111,8 +129,19 @@ async function main() {
     assert.equal(staged.applies, 0);
     assert.equal(staged.reads[0].shareBoardContents, false);
     assert.deepEqual(staged.prepares[0].expectedRevisions, { 'index.json': 'synthetic-index' });
-    assert.equal(staged.prepares[0].batch.operations.at(-1).op, 'set_flow');
+    assert.equal(staged.prepares[0].batch.operations.at(-1).op, 'arrange_nodes');
+    assert.ok(staged.requests[0].messages[0].content.includes('=={#RRGGBB}关键词=='));
     assert.ok(!JSON.stringify(staged.requests[0].tools[0]).includes('"attachments"'));
+    assert.ok(JSON.stringify(staged.requests[0].tools[1]).includes('arrange_nodes'));
+    assert.ok(!JSON.stringify(staged.requests).includes('本机测量合成内容'));
+    const { n_root: root, n_read: reading, n_step: example, n_target: conclusion } = staged.measures[0].nodes;
+    assert.ok(root.x>=720&&reading.x-root.x-root.w>=176&&conclusion.x-reading.x-reading.w>=176);
+    assert.ok(reading.y+reading.h<=example.y&&reading.h>example.h+100);
+    const preview = modal.getByRole('figure', { name: '布局预览 求解路径' });
+    await preview.waitFor();
+    assert.equal(await preview.locator('mark.lumen-highlight').textContent(), '线性方程');
+    assert.equal(await preview.locator('[data-layout-node="n_root"] rect').getAttribute('stroke'), '#345FA8');
+    assert.ok(await preview.getByText('顺着证据阅读，给公式保留空间。',{exact:true}).isVisible());
     await modal.getByText('新建节点', { exact: true }).click();
     await modal.getByText(/完整问题/, { exact: false }).filter({ hasText: /nu x=f/ }).last().waitFor();
     await page.screenshot({ path: path.join(output, 'workspace-ai-review.png') });
@@ -128,7 +157,7 @@ async function main() {
     assert.ok(JSON.stringify((await state()).requests[3].tools[0]).includes('"attachments"'));
     assert.equal((await state()).requests[3].messages.length, 2);
     await apply.click();
-    await modal.getByText('已应用 4 项', { exact: true }).waitFor();
+    await modal.getByText('已应用 5 项', { exact: true }).waitFor();
     assert.equal((await state()).applies, 1);
 
     await modal.getByRole('button', { name: '方程讲义', exact: true }).click();
@@ -144,7 +173,8 @@ async function main() {
 
     fs.writeFileSync(path.join(output, 'workspace-ai-qa.json'), JSON.stringify({
       passed: true, makePlan: true, apply: true, discard: true, navigate: true, undo: true,
-      sharedScopeChecked: true, realProviderCalls: 0, nativeFilesystemVerifiedSeparately: true,
+      sharedScopeChecked: true, measuredHorizontalLayout: staged.measures[0], highlightedAndColoredPreview:true,
+      realProviderCalls: 0, nativeFilesystemVerifiedSeparately: true,
     }, null, 2));
   } finally { await browser.close(); }
 }
