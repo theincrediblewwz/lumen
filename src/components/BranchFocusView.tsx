@@ -2,9 +2,9 @@ import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useSta
 import { GitFork, LocateFixed, Maximize } from 'lucide-react';
 import type { BoardEdge, BoardNode } from '../api';
 import { fitToBounds, viewportToTransform, visibleWorldRect, worldToScreen, zoomByFactor, type Size, type Viewport } from '../canvas/CanvasEngine';
-import { focusBranch, layoutFocusBranch } from '../canvas/branchFocus';
+import { focusBranch, layoutFocusBranch, offsetFocusBranch } from '../canvas/branchFocus';
 import { routeBoardEdges } from '../canvas/edgeRouting';
-import type { Box } from '../canvas/geometry';
+import type { Box, Pt } from '../canvas/geometry';
 import { aggregateHeat, heatLevel, intersects, MIN_BOARD_ZOOM } from '../canvas/presentation';
 import { matchShortcut, shortcut } from '../canvas/shortcuts';
 import { EdgeLabel } from './EdgeLabel';
@@ -13,6 +13,7 @@ import { copyPreviewMemory } from './NodePreview';
 
 const FIT = { minZoom: MIN_BOARD_ZOOM, maxZoom: 1.12, fitPadding: 52 };
 const noop = () => {};
+type Drag = { pointer: number; start: Pt; viewport: Viewport; moved: boolean; nodeId?: string; offset?: Pt };
 
 function startViewport(scene: ReturnType<typeof layoutFocusBranch>, size: Size): Viewport {
   const overview = fitToBounds(scene.bounds, size, FIT);
@@ -41,10 +42,13 @@ export function BranchFocusView({ rootId, nodes, edges, projectId, boardId, docV
   const [sizes, setSizes] = useState<ReadonlyMap<string, Pick<Box, 'w' | 'h'>>>(() => new Map());
   const [camera, setCamera] = useState<Viewport | null>(null);
   const [selected, setSelected] = useState(rootId);
-  const [panning, setPanning] = useState(false);
-  const drag = useRef<{ pointer: number; startX: number; startY: number; viewport: Viewport }>();
+  const [dragging, setDragging] = useState(false);
+  const [offsets, setOffsets] = useState<ReadonlyMap<string, Pt>>(() => new Map());
+  const drag = useRef<Drag>();
+  const suppressClick = useRef(false);
   const branch = useMemo(() => focusBranch(nodes, edges, rootId), [nodes, edges, rootId]);
-  const scene = useMemo(() => branch && layoutFocusBranch(branch, sizes, size.width), [branch, sizes, size.width]);
+  const layout = useMemo(() => branch && layoutFocusBranch(branch, sizes, size.width), [branch, sizes, size.width]);
+  const scene = useMemo(() => layout && offsetFocusBranch(layout, offsets), [layout, offsets]);
   const viewport = camera ?? (scene ? startViewport(scene, size) : { x: 0, y: 0, zoom: 1 });
   const latest = useRef(viewport);
   latest.current = viewport;
@@ -56,7 +60,7 @@ export function BranchFocusView({ rootId, nodes, edges, projectId, boardId, docV
     ...node, w: box.w, h: box.h, color: step ? 'var(--focus-flow-ink)' : node.color,
   })), detailLevel) : [], [detailLevel, scene]);
   const boxes = useMemo(() => new Map(scene?.cards.map(card => [card.node.id, card.box])), [scene]);
-  const cards = detailLevel ? [] : scene?.cards.filter(card => intersects(card.box, visible, 100 / zoom)) ?? [];
+  const cards = detailLevel ? [] : scene?.cards.filter(card => card.node.id === drag.current?.nodeId || intersects(card.box, visible, 100 / zoom)) ?? [];
   const laid = useMemo(() => {
     if (!scene || detailLevel) return [];
     const bounds = visibleWorldRect(viewport, size);
@@ -116,28 +120,58 @@ export function BranchFocusView({ rootId, nodes, edges, projectId, boardId, docV
     setCamera(recenter(box, size, Math.max(0.7, preferred)));
   };
   const keepCamera = () => { if (!camera) setCamera(viewport); };
-  const endPan = (event: PointerEvent) => {
-    if (drag.current?.pointer !== event.pointerId) return;
+  const moveCard = (id: string, offset: Pt) => {
+    setOffsets(previous => {
+      const point = previous.get(id);
+      if ((point?.x ?? 0) === offset.x && (point?.y ?? 0) === offset.y) return previous;
+      const next = new Map(previous);
+      if (offset.x || offset.y) next.set(id, offset);
+      else next.delete(id);
+      return next;
+    });
+  };
+  const startDrag = (event: PointerEvent, id?: string) => {
+    if (!event.isPrimary || event.button !== 0 || event.ctrlKey || drag.current) return;
+    if ((event.target as Element).closest('button, input, textarea, select, a, [contenteditable]')) return;
+    const nodeId = selected === id ? id : undefined;
+    event.preventDefault();
+    drag.current = { pointer: event.pointerId, start: { x: event.clientX, y: event.clientY }, viewport, moved: false,
+      nodeId, offset: nodeId ? offsets.get(nodeId) ?? { x: 0, y: 0 } : undefined };
+    event.currentTarget.setPointerCapture(event.pointerId);
+  };
+  const moveDrag = (event: PointerEvent) => {
+    const d = drag.current;
+    if (!d || d.pointer !== event.pointerId) return;
+    const dx = event.clientX - d.start.x, dy = event.clientY - d.start.y;
+    if (!d.moved && Math.hypot(dx, dy) <= 4) return;
+    if (!d.moved) { d.moved = true; setDragging(true); }
+    if (d.nodeId && d.offset) {
+      const zoom = d.viewport.zoom;
+      moveCard(d.nodeId, { x: d.offset.x + dx / zoom, y: d.offset.y + dy / zoom });
+    } else {
+      setCamera({ ...d.viewport, x: d.viewport.x + dx, y: d.viewport.y + dy });
+    }
+  };
+  const endDrag = (event: PointerEvent) => {
+    const d = drag.current;
+    if (!d || d.pointer !== event.pointerId) return;
+    if (event.type === 'pointerup') moveDrag(event);
+    else if (d.moved && d.nodeId && d.offset) moveCard(d.nodeId, d.offset);
+    suppressClick.current = d.moved;
     drag.current = undefined;
-    setPanning(false);
-    if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
+    setDragging(false);
+  };
+  const stopDragClick = (event: React.MouseEvent) => {
+    if (event.detail && suppressClick.current) { event.preventDefault(); event.stopPropagation(); }
   };
 
-  return <div ref={host} className={`board-canvas board-branch-focus${panning ? ' is-panning' : ''}`}
+  return <div ref={host} className={`board-canvas board-branch-focus${dragging ? ' is-panning' : ''}`}
     aria-label="专注视图" role="region" data-focus-root={rootId} tabIndex={0}
     style={{ ...fontStyle, backgroundPosition: `${viewport.x}px ${viewport.y}px` }}
-    onPointerDownCapture={keepCamera} onKeyDownCapture={keepCamera}
-    onPointerDown={event => {
-      if (event.button !== 0 || drag.current || (event.target as Element).closest('button,.node-card')) return;
-      drag.current = { pointer: event.pointerId, startX: event.clientX, startY: event.clientY, viewport };
-      setPanning(true);
-      event.currentTarget.setPointerCapture(event.pointerId);
-    }}
-    onPointerMove={event => {
-      const start = drag.current;
-      if (start?.pointer === event.pointerId) setCamera({ ...start.viewport, x: start.viewport.x + event.clientX - start.startX, y: start.viewport.y + event.clientY - start.startY });
-    }}
-    onPointerUp={endPan} onPointerCancel={endPan} onLostPointerCapture={endPan}
+    onPointerDownCapture={() => { suppressClick.current = false; keepCamera(); }} onKeyDownCapture={keepCamera}
+    onPointerDown={event => startDrag(event)} onPointerMove={moveDrag}
+    onPointerUp={endDrag} onPointerCancel={endDrag} onLostPointerCapture={endDrag}
+    onClickCapture={stopDragClick} onDoubleClickCapture={stopDragClick}
     onContextMenu={event => event.preventDefault()} onDragOver={event => event.preventDefault()} onDrop={event => event.preventDefault()}
     onKeyDown={event => {
       const card = (event.target as HTMLElement).closest<HTMLElement>('.node-card');
@@ -180,7 +214,7 @@ export function BranchFocusView({ rootId, nodes, edges, projectId, boardId, docV
         <NodeCard node={{ ...node, x: 0, y: 0 }} projectId={projectId} boardId={boardId} docVersions={docVersions}
           selected={selected === node.id} editing={false} showAnchors={false} hideHandles previewMemory={memory}
           flowStep={!!node.flowOwnerId} imageWidthLimit={step || node.flowOwnerId ? Math.max(240, size.width - 100) : undefined}
-          onOpen={setSelected} onPointerDown={event => event.stopPropagation()} onMeasure={measure}
+          onOpen={setSelected} onPointerDown={event => { event.stopPropagation(); startDrag(event, node.id); }} onMeasure={measure}
           onAnchorPointerDown={noop} onResizeStart={noop} onStartEdit={noop} onContextMenu={noop} onCommit={noop} onEditCancel={noop} onExitEdit={noop} onHoverChange={noop}/>
         {step > 0 && <span className="flow-step-number" aria-label={`第 ${step} 步`}>{step}</span>}
       </div>)}

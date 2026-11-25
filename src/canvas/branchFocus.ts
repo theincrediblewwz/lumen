@@ -8,6 +8,7 @@ import type { Rect } from './CanvasEngine';
 type Link = Pick<BoardEdge, 'id' | 'from' | 'to' | 'directed' | 'label' | 'route'>;
 type Branch = { root: BoardNode; nodes: BoardNode[]; steps: BoardNode[]; edges: Link[]; flowEdges: Link[]; stepOffset: number };
 type CardSize = Pick<Box, 'w' | 'h'>;
+type Card = { node: BoardNode; box: Box; step: number };
 
 /** Flow steps are contained by their owner. Only the selected owner's flow is exposed. */
 export function focusBranch(nodes: BoardNode[], edges: BoardEdge[], rootId: string): Branch | undefined {
@@ -55,7 +56,7 @@ export function layoutFocusBranch(branch: Branch, measured: ReadonlyMap<string, 
   let branchRight = -Infinity;
   for (const node of branchSizes) if (node.id !== root.id) branchRight = Math.max(branchRight, positions.get(node.id)!.x + node.w - center);
   const shift = split ? Math.min(0, -56 - branchRight) : 0;
-  const cards = nodes.map(node => {
+  const cards: Card[] = nodes.map(node => {
     const at = positions.get(node.id)!;
     const box = { ...sizeOf(node), x: at.x - center + (node.id === root.id ? 0 : shift), y: at.y - rootAt.y };
     return { node: { ...node, x: box.x, y: box.y }, box, step: 0 };
@@ -84,6 +85,10 @@ export function layoutFocusBranch(branch: Branch, measured: ReadonlyMap<string, 
     y += size.h + 84;
   }
 
+  return { cards, links, workflow, bounds: focusBounds(cards, links) };
+}
+
+function focusBounds(cards: Card[], links: Link[]): Rect {
   let left = Infinity, top = Infinity, right = -Infinity, bottom = -Infinity;
   for (const { box } of cards) {
     left = Math.min(left, box.x); top = Math.min(top, box.y);
@@ -93,6 +98,23 @@ export function layoutFocusBranch(branch: Branch, measured: ReadonlyMap<string, 
     left = Math.min(left, route.control.x); top = Math.min(top, route.control.y);
     right = Math.max(right, route.control.x); bottom = Math.max(bottom, route.control.y);
   }
-  const bounds: Rect = { x: left, y: top, width: right - left, height: bottom - top };
-  return { cards, links, workflow, bounds };
+  return { x: left, y: top, width: right - left, height: bottom - top };
+}
+
+export function offsetFocusBranch(layout: ReturnType<typeof layoutFocusBranch>, offsets: ReadonlyMap<string, Pt>) {
+  if (!offsets.size) return layout;
+  const cards = layout.cards.map(card => {
+    const offset = offsets.get(card.node.id);
+    if (!offset) return card;
+    const x = card.box.x + offset.x, y = card.box.y + offset.y;
+    return { ...card, node: { ...card.node, x, y }, box: { ...card.box, x, y } };
+  });
+  const original = new Map(layout.cards.map(card => [card.node.id, card.box]));
+  const moved = new Map(cards.map(card => [card.node.id, card.box]));
+  const links = layout.links.map(edge => {
+    if (!edge.route?.control || (!offsets.has(edge.from) && !offsets.has(edge.to))) return edge;
+    const control = remapBend(edge.route.control, original.get(edge.from)!, original.get(edge.to)!, moved.get(edge.from)!, moved.get(edge.to)!);
+    return { ...edge, route: { ...edge.route, control } };
+  });
+  return { ...layout, cards, links, bounds: focusBounds(cards, links) };
 }

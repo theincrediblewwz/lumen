@@ -5,7 +5,9 @@
 
 ## 当前版本
 
-[0.4.4 源码预览](https://github.com/theincrediblewwz/lumen/releases/tag/mac-v0.4.4) · [下载 Mac 0.4.0 安装包](https://github.com/theincrediblewwz/lumen/releases/tag/mac-v0.4.0) · [白板编辑与保存](./docs/CANVAS_AUTHORING.md)
+[0.4.5 源码预览](https://github.com/theincrediblewwz/lumen/releases/tag/mac-v0.4.5) · [下载 Mac 0.4.0 安装包](https://github.com/theincrediblewwz/lumen/releases/tag/mac-v0.4.0) · [白板编辑与保存](./docs/CANVAS_AUTHORING.md)
+
+**0.4.5 白板与流程手势。** 未选中节点时，拖动会平移视野。流程图独立滚动和调宽，双指手势作用于流程面板。右侧问题面板可以缩成一行，并记住展开或缩小的状态。
 
 **0.4.4 画布交互。** 图片翻页控件在悬停时显示。带公式的节点可以缩回，空白双击区分关闭面板与新建。扩大了 Mac 顶栏拖动区，并减少了平移缩放时的重复刷新。
 

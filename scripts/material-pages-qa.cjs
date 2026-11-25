@@ -219,7 +219,32 @@ const base=process.env.LSQ_UI_URL||'http://127.0.0.1:5198',out=path.resolve(proc
   check('focus follows outgoing descendants and distinguishes only the selected owner’s steps with side glow, tinted arrows and proportional images');
 
   const focusWorld = focus.locator('.canvas-world');
+  const unselected = inside('focus-leaf');
+  const leafPosition = () => unselected.evaluate(el => ({ left: el.parentElement.style.left, top: el.parentElement.style.top }));
+  const dragLeaf = async (dx, dy) => {
+    const title = await unselected.locator('.node-title').boundingBox();
+    const x = Math.round(title.x + title.width / 2), y = Math.round(title.y + title.height / 2);
+    await page.mouse.move(x, y);
+    await page.mouse.down();
+    await page.mouse.move(x + dx, y + dy, { steps: 8 });
+    await page.mouse.up();
+  };
+  const originalLeaf = await leafPosition();
+  const originalCamera = await focusWorld.getAttribute('style');
+  await dragLeaf(52, -34);
+  assert.deepEqual(await leafPosition(), originalLeaf);
+  assert.notEqual(await focusWorld.getAttribute('style'), originalCamera);
+  assert.equal(await unselected.evaluate(el => el.classList.contains('is-selected')), false);
+  await unselected.locator('.node-title').click();
+  assert.equal(await unselected.evaluate(el => el.classList.contains('is-selected')), true);
   const focusFit = await focusWorld.getAttribute('style');
+  const leafEdge = focus.locator('path[data-to="focus-leaf"]');
+  const originalPath = await leafEdge.getAttribute('d');
+  await dragLeaf(-30, 44);
+  assert.notDeepEqual(await leafPosition(), originalLeaf);
+  assert.notEqual(await leafEdge.getAttribute('d'), originalPath);
+  assert.equal(await focusWorld.getAttribute('style'), focusFit);
+  check('focus pans when dragging from an unselected node and temporarily moves a selected node with its edge');
   const viewport = await focus.boundingBox();
   await page.mouse.move(viewport.x + viewport.width - 65, viewport.y + 145); await page.mouse.wheel(0, -240);
   await page.waitForFunction(previous => document.querySelector('.board-branch-focus .canvas-world')?.getAttribute('style') !== previous, focusFit);

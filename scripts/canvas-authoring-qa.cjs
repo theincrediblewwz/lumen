@@ -136,5 +136,64 @@ try{
  assert.deepEqual(restoredCamera, [144, 72, 0.68]);
  checks.push('a still click queues no save; repeated pans coalesce to a single latest viewport with the graph intact and restore on reload');
 
+ const otherNode = page.locator('.node-card').filter({ hasText: '明确双击' });
+ const dragEquation = async (dx, dy) => {
+   const { x, y } = await equation.locator('.node-title').evaluate(el => {
+     const title = el.getBoundingClientRect();
+     const y = Math.round(title.y + title.height / 2);
+     for (const fraction of [0.2, 0.5, 0.85]) {
+       const x = Math.round(title.x + title.width * fraction);
+       if (el.contains(document.elementFromPoint(x, y))) return { x, y };
+     }
+     throw Error('The equation title is covered by an open panel');
+   });
+   await page.mouse.move(x, y);
+   await page.mouse.down();
+   await page.mouse.move(x + dx, y + dy, { steps: 8 });
+   await page.mouse.up();
+   await saved();
+ };
+ assert.equal(await equation.evaluate(el => el.classList.contains('is-selected')), false);
+ await dragEquation(88, 42);
+ const afterNodePan = (await capture()).boards.board;
+ assert.deepEqual(afterNodePan.nodes, boardAfterPan.nodes);
+ assert.deepEqual(afterNodePan.viewport, { x: 232, y: 114, zoom: 0.68 });
+ assert.equal(await page.locator('.node-panel').count(), 0);
+ assert.equal(await page.evaluate(() => window.getSelection().toString()), '');
+ await equation.click();
+ const questionPanel = page.locator('.node-panel');
+ await questionPanel.waitFor();
+ assert.equal(await equation.evaluate(el => el.classList.contains('is-selected')), true);
+ await dragEquation(62, -34);
+ const afterNodeMove = (await capture()).boards.board;
+ assert.equal(Math.round((afterNodeMove.nodes[0].x - afterNodePan.nodes[0].x) * afterNodeMove.viewport.zoom), 62);
+ assert.equal(Math.round((afterNodeMove.nodes[0].y - afterNodePan.nodes[0].y) * afterNodeMove.viewport.zoom), -34);
+ assert.deepEqual(afterNodeMove.viewport, afterNodePan.viewport);
+ checks.push('dragging from an unselected node pans without selecting or moving it; a click enables dragging just that node');
+
+ const expandedRect = await questionPanel.boundingBox();
+ const savedRect = () => page.evaluate(() => localStorage.getItem('lumen.nodePanel.rect.v1'));
+ const rememberedRect = await savedRect();
+ await questionPanel.getByRole('button', { name: '缩小问题面板' }).click();
+ assert.ok((await questionPanel.boundingBox()).height < 55);
+ assert.equal(await questionPanel.locator('.np-body').count(), 0);
+ assert.equal(await savedRect(), rememberedRect);
+ await otherNode.click();
+ assert.equal(await questionPanel.locator('.np-compact-title').innerText(), '明确双击');
+ await questionPanel.locator('.np-close').click();
+ await equation.click();
+ assert.equal(await questionPanel.locator('.np-compact-title').innerText(), '公式节点');
+ await page.reload({ waitUntil: 'domcontentloaded' });
+ await page.waitForFunction(() => window.__fixtureReactMounted);
+ await openBoard();
+ await equation.click();
+ await questionPanel.getByRole('button', { name: '展开问题面板' }).waitFor();
+ await page.screenshot({ path: out + '/question-panel-collapsed.png' });
+ await questionPanel.getByRole('button', { name: '展开问题面板' }).click();
+ assert.deepEqual(await questionPanel.boundingBox(), expandedRect);
+ await otherNode.click();
+ assert.equal(await questionPanel.locator('.np-title').inputValue(), '明确双击');
+ checks.push('one-row question panel survives node switches, close and reload; expanding restores its original size and position');
+
  assert.deepEqual(errors,[]);fs.writeFileSync(out+'/editing-ui-report.json',JSON.stringify({browser:'WebKit',fallback:'Browser plugin not available',checks,errors,largeBoard:{nodes:10000,edges:9999,heatCellsAtFit:first}},null,2));console.log(JSON.stringify({checks:checks.length,errors,heatCellsAtFit:first}));
 }catch(e){await page.screenshot({path:out+'/editing-failure.png'});fs.writeFileSync(out+'/editing-failure.txt',e.stack+'\n'+JSON.stringify(errors));throw e;}finally{await browser.close();}})();

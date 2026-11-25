@@ -1,13 +1,15 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import type { BoardNode } from '../api';
 import { DocPreview } from './DocPreview';
-import { MessageCircle } from 'lucide-react';
+import { ChevronDown, MessageCircle, Minus } from 'lucide-react';
 import { openAiWindow } from '../ai/aiWindow';
 import { MarkdownView } from './MarkdownView';
 import { isQuestionDoc } from '../canvas/presentation';
 import { TagDots } from './CatalogTags';
 import { SYSTEM_TAGS, type CatalogTag } from '../projectCanvas/tags';
 import { useSelectionHighlight } from './SelectionHighlight';
+
+const COLLAPSED_KEY = 'lumen.nodePanel.collapsed.v1';
 
 /** 可选的节点颜色标记（左边框色条），null = 默认（用主题强调色） */
 const COLOR_SWATCHES: { id: string | null; label: string; color: string }[] = [
@@ -104,6 +106,9 @@ export function NodePanel({
   const [confirmDel, setConfirmDel] = useState(false);
   const [actionStatus,setActionStatus]=useState('');
   const [importing, setImporting] = useState(false);
+  const [collapsed, setCollapsed] = useState(() => {
+    try { return localStorage.getItem(COLLAPSED_KEY) === 'true'; } catch { return false; }
+  });
   useEffect(() => setConfirmDel(false), [node.id]);
 
   /* ── 面板位置与尺寸（可拖动 + 可四边/四角拉伸），持久化到 localStorage ── */
@@ -138,11 +143,13 @@ export function NodePanel({
   // 首次挂载（或双击标题栏复位后）：以默认停靠位（画布右侧）初始化为具体像素，方便后续拖拽。
   // 依赖里带 rect：rect 被置回 null 时会重新量一次，用于「复位到默认位置」。
   useLayoutEffect(() => {
-    if (rect || !asideRef.current) return;
-    const r = asideRef.current.getBoundingClientRect();
-    setRect(clamp({ left: r.left, top: r.top, width: r.width, height: r.height }));
+    const panel = asideRef.current;
+    if (rect || !panel) return;
+    const r = panel.getBoundingClientRect();
+    const height = collapsed ? (panel.parentElement?.clientHeight ?? window.innerHeight) - 24 : r.height;
+    setRect(clamp({ left: r.left, top: r.top, width: r.width, height }));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [rect]);
+  }, [rect, collapsed]);
 
   // 保存位置，下次打开面板时恢复。
   useEffect(() => {
@@ -170,12 +177,17 @@ export function NodePanel({
     }
     setRect(null);
   };
+  const toggleCollapsed = () => {
+    const next = !collapsed;
+    setCollapsed(next);
+    try { localStorage.setItem(COLLAPSED_KEY, String(next)); } catch { /* Storage may be unavailable. */ }
+  };
 
   // 拖动标题栏移动整个面板。
   // base 取自 getBoundingClientRect()（视口坐标），与 .is-floating(fixed) 下
   // style.left/top 的口径一致，所以起拖瞬间不会再跳位。
   const startMove = (e: React.PointerEvent) => {
-    if ((e.target as HTMLElement).closest('button')) return; // 关闭按钮等不触发拖动
+    if (e.button !== 0 || (e.target as HTMLElement).closest('button, a')) return;
     e.preventDefault();
     const base = asideRef.current!.getBoundingClientRect();
     const start = { x: e.clientX, y: e.clientY, left: base.left, top: base.top };
@@ -244,7 +256,7 @@ export function NodePanel({
   };
 
   const rectStyle: React.CSSProperties | undefined = rect
-    ? { left: rect.left, top: rect.top, width: rect.width, height: rect.height, right: 'auto', bottom: 'auto' }
+    ? { left: rect.left, top: rect.top, width: rect.width, height: collapsed ? undefined : rect.height, right: 'auto', bottom: 'auto' }
     : undefined;
 
   const doImport = async () => {
@@ -265,14 +277,14 @@ export function NodePanel({
   return (
     <aside
       ref={asideRef}
-      className={`node-panel glass-surface${rect ? ' is-floating' : ''}`}
+      className={`node-panel glass-surface${rect ? ' is-floating' : ''}${collapsed ? ' is-collapsed' : ''}`}
       style={rectStyle}
       onPointerDown={(e) => e.stopPropagation()}
       onWheel={(e) => e.stopPropagation()}
       onDoubleClick={(e) => e.stopPropagation()}
       onContextMenu={(e) => e.stopPropagation()}
     >
-      {/* 四边 + 四角拉伸手柄：按住哪条边往哪拖，就往哪个方向扩展 */}
+      {!collapsed && <>
       <span className="np-resize np-resize-n" onPointerDown={startResize('n')} />
       <span className="np-resize np-resize-s" onPointerDown={startResize('s')} />
       <span className="np-resize np-resize-e" onPointerDown={startResize('e')} />
@@ -281,21 +293,31 @@ export function NodePanel({
       <span className="np-resize np-resize-nw" onPointerDown={startResize('nw')} />
       <span className="np-resize np-resize-se" onPointerDown={startResize('se')} />
       <span className="np-resize np-resize-sw" onPointerDown={startResize('sw')} />
+      </>}
 
       <div
         className="np-head"
         onPointerDown={startMove}
-        onDoubleClick={resetDock}
+        onDoubleClick={event => { if (!(event.target as Element).closest('button, a')) resetDock(); }}
         title="按住此处拖动面板 · 双击复位到默认位置"
       >
-        <span className="np-kicker">{node.sticker?'贴图':'问题节点'}</span>
-        <button type="button" className="np-close" title="收起面板 (Esc)" onClick={onClose}>
-          <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true">
-            <path d="M3 3l10 10M13 3L3 13" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
-          </svg>
-        </button>
+        {collapsed
+          ? <MarkdownView className="np-compact-title" inline value={node.title || (node.sticker ? '贴图' : '问题节点')}/>
+          : <span className="np-kicker">{node.sticker?'贴图':'问题节点'}</span>}
+        <div className="np-head-actions">
+          <button type="button" className="np-toggle" title={collapsed ? '展开问题面板' : '缩小问题面板'}
+            aria-label={collapsed ? '展开问题面板' : '缩小问题面板'} aria-expanded={!collapsed} onClick={toggleCollapsed}>
+            {collapsed ? <ChevronDown size={16} aria-hidden="true"/> : <Minus size={16} aria-hidden="true"/>}
+          </button>
+          <button type="button" className="np-close" title="关闭面板 (Esc)" onClick={onClose}>
+            <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true">
+              <path d="M3 3l10 10M13 3L3 13" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+            </svg>
+          </button>
+        </div>
       </div>
 
+      {!collapsed && <>
       <div className="np-body">
         <div className="np-top">
         <button type="button" className="btn np-ask" onClick={()=>void openAiWindow({projectId,boardId,boardName:node.title,nodeId:node.id}).catch(e=>setActionStatus(String(e)))}><MessageCircle size={16} strokeWidth={1.7}/> 与 AI 对话</button>
@@ -390,6 +412,7 @@ export function NodePanel({
           </button>
         )}
       </div>
+      </>}
     </aside>
   );
 }

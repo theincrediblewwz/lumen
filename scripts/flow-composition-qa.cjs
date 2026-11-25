@@ -34,7 +34,7 @@ const base=process.env.LSQ_UI_URL||'http://127.0.0.1:5198',out=path.resolve(proc
   let s=await state(),owner=s.boards.board.nodes.find(n=>n.id==='owner'),order=owner.flow.nodeIds;
   assert.equal(order.length,3);assert.equal(await page.locator('.canvas-world>.node-card').count(),2);assert.equal(await page.locator('.flow-step').count(),3);assert.equal(s.boards.board.edges.filter(e=>order.includes(e.from)&&order.includes(e.to)).length,2);
   await page.locator('.flow-step').first().click({button:'right'});await page.getByText('在此步骤下方插入',{exact:true}).click();await page.locator('.np-title').fill('插入步骤');await saved();s=await state();owner=s.boards.board.nodes.find(n=>n.id==='owner');assert.equal(owner.flow.nodeIds[0],order[0]);assert.equal(owner.flow.nodeIds[2],order[1]);assert.equal(s.boards.board.edges.some(e=>e.from===order[0]&&e.to===order[1]),false);check('flow creation, append and insert produce exactly one adjacent chain; steps stay out of mother canvas');
-  order=owner.flow.nodeIds;const first=await page.locator('.flow-step').first().boundingBox(),last=await page.locator('.flow-step').last().boundingBox();await page.mouse.move(last.x+80,last.y+last.height/2);await page.mouse.down();await page.mouse.move(first.x+80,first.y+8,{steps:25});await page.waitForTimeout(220);const beforeRelease=await page.locator('.flow-step').evaluateAll(els=>Object.fromEntries(els.map(e=>[e.dataset.flowStep,e.getBoundingClientRect().top])));await page.mouse.up();const afterRelease=await page.locator('.flow-step').evaluateAll(els=>Object.fromEntries(els.map(e=>[e.dataset.flowStep,e.getBoundingClientRect().top])));for(const id of order)assert.ok(Math.abs(afterRelease[id]-beforeRelease[id])<40,JSON.stringify({id,beforeRelease,afterRelease}));await saved();s=await state();assert.equal(s.boards.board.nodes.find(n=>n.id==='owner').flow.nodeIds[0],order.at(-1));
+  order=owner.flow.nodeIds;await page.locator('.flow-step .node-card').last().click();const first=await page.locator('.flow-step').first().boundingBox(),last=await page.locator('.flow-step').last().boundingBox();await page.mouse.move(last.x+80,last.y+last.height/2);await page.mouse.down();await page.mouse.move(first.x+80,first.y+8,{steps:25});await page.waitForTimeout(220);const beforeRelease=await page.locator('.flow-step').evaluateAll(els=>Object.fromEntries(els.map(e=>[e.dataset.flowStep,e.getBoundingClientRect().top])));await page.mouse.up();const afterRelease=await page.locator('.flow-step').evaluateAll(els=>Object.fromEntries(els.map(e=>[e.dataset.flowStep,e.getBoundingClientRect().top])));for(const id of order)assert.ok(Math.abs(afterRelease[id]-beforeRelease[id])<40,JSON.stringify({id,beforeRelease,afterRelease}));await saved();s=await state();assert.equal(s.boards.board.nodes.find(n=>n.id==='owner').flow.nodeIds[0],order.at(-1));
   await page.getByRole('button',{name:'撤销',exact:true}).click();await saved();assert.deepEqual((await state()).boards.board.nodes.find(n=>n.id==='owner').flow.nodeIds,order);await page.getByRole('button',{name:'重做',exact:true}).click();await saved();check('flow drag reorders smoothly with a single undo/redo step');
   await page.locator('.flow-step').first().click();await page.locator('.np-kicker').click();await pasteText('# 流程原文\n\n此文档完整保存到流程步骤。');await pasteImage();s=await state();const child=s.boards.board.nodes.find(n=>n.id===s.boards.board.nodes.find(n=>n.id==='owner').flow.nodeIds[0]);assert.equal(child.docs.filter(d=>!d.path.includes('question_')).length,2);check('flow steps share real Markdown and image attachments with normal nodes');
   for(const theme of ['light','dark','paper']){await page.evaluate(async theme=>{const m=await import('/src/settings.ts');m.applySettings({...m.DEFAULT_SETTINGS,theme,glass:false},'macos');},theme);await page.screenshot({path:out+'/flow-'+theme+'.png'});}
@@ -45,6 +45,66 @@ const base=process.env.LSQ_UI_URL||'http://127.0.0.1:5198',out=path.resolve(proc
   await tapPartial();await page.locator('.flow-panel').getByRole('button',{name:'编辑',exact:true}).click();await tapPartial();await saved();assert.deepEqual((await state()).boards.board.nodes.find(n=>n.id==='clip-owner').flow.nodeIds,['clip-a','clip-b','clip-c']);
   const marker=await page.locator('.flow-step').nth(1).evaluate(el=>{const n=el.querySelector('.flow-step-number').getBoundingClientRect(),c=el.querySelector('.node-card').getBoundingClientRect();return{inside:n.left>=c.left&&n.right<=c.right&&n.top>=c.top&&n.bottom<=c.bottom,right:n.left>c.left+c.width/2};});assert.deepEqual(marker,{inside:true,right:true});assert.equal(await page.locator('.flow-panel>footer').count(),0);assert.equal(await page.locator('.flow-add-fab').evaluate(e=>getComputedStyle(e).position),'absolute');
   check('partially visible flow steps select immediately without scrolling or reordering; number is inside right and append button floats');
+  const flow = page.locator('.flow-panel');
+  const scroller = flow.locator('.flow-scroll');
+  const background = page.locator('.board-canvas-live > .canvas-world');
+  const backgroundStyle = await background.getAttribute('style');
+  const scrollTop = () => scroller.evaluate(el => el.scrollTop);
+  const flowWidth = () => flow.evaluate(el => el.getBoundingClientRect().width);
+  const clipOrder = ['clip-a', 'clip-b', 'clip-c'];
+  const drag = async (from, to) => {
+    await page.mouse.move(from.x, from.y);
+    await page.mouse.down();
+    await page.mouse.move(to.x, to.y, { steps: 8 });
+    await page.mouse.up();
+  };
+  for (const editing of [true, false]) {
+    if (!editing) await flow.getByRole('button', { name: '完成编辑', exact: true }).click();
+    await scroller.evaluate(el => { el.scrollTop = 0; });
+    const step = await flow.locator('[data-flow-step="clip-a"] .node-card').boundingBox();
+    await drag({ x: step.x + 70, y: step.y + 180 }, { x: step.x + 70, y: step.y + 34 });
+    assert.ok((await scrollTop()) >= 140);
+    assert.equal(await page.locator('.np-title').inputValue(), '步骤 b');
+    assert.deepEqual((await state()).boards.board.nodes.find(n => n.id === 'clip-owner').flow.nodeIds, clipOrder);
+  }
+  const widthBefore = await flowWidth();
+  await scroller.hover({ position: { x: 100, y: 150 } });
+  await page.mouse.wheel(0, -125);
+  await page.waitForFunction(width => document.querySelector('.flow-panel').offsetWidth > width + 25, widthBefore);
+  const widened = await flowWidth();
+  await scroller.evaluate(el => {
+    for (const [type, scale] of [['gesturestart', 1], ['gesturechange', 0.78], ['gestureend', 0.78]]) {
+      const event = new Event(type, { bubbles: true, cancelable: true });
+      Object.defineProperty(event, 'scale', { value: scale });
+      el.dispatchEvent(event);
+    }
+  });
+  await page.waitForFunction(width => document.querySelector('.flow-panel').offsetWidth < width - 25, widened);
+  assert.equal(await background.getAttribute('style'), backgroundStyle);
+  await scroller.evaluate(el => { el.scrollTop = 0; });
+  const scrollHandle = await scroller.evaluate(el => {
+    const rect = el.getBoundingClientRect();
+    const gutter = rect.width - el.clientWidth;
+    return { x: rect.right - gutter / 2, y: rect.top + el.clientHeight ** 2 / el.scrollHeight / 2, gutter };
+  });
+  assert.ok(scrollHandle.gutter >= 8);
+  const resizeHandle = await flow.getByRole('separator', { name: '调整子白板宽度' }).boundingBox();
+  assert.ok(scrollHandle.x < resizeHandle.x - 1);
+  const widthWithoutResize = await flowWidth();
+  await drag(scrollHandle, { x: scrollHandle.x, y: scrollHandle.y + 90 });
+  await page.waitForFunction(() => document.querySelector('.flow-scroll').scrollTop > 70, null, { timeout: 3000 });
+  assert.equal(await flowWidth(), widthWithoutResize);
+  await drag({ x: resizeHandle.x + 4, y: resizeHandle.y + 120 }, { x: resizeHandle.x + 64, y: resizeHandle.y + 120 });
+  assert.ok((await flowWidth()) > widthWithoutResize + 50);
+  await scroller.hover({ position: { x: 100, y: 150 } });
+  await page.mouse.wheel(0, -3000);
+  await page.waitForFunction(() => {
+    const flow = document.querySelector('.flow-panel').getBoundingClientRect();
+    const panel = document.querySelector('.node-panel').getBoundingClientRect();
+    return panel.left - flow.right >= 7 && panel.left - flow.right <= 9;
+  });
+  assert.equal(await background.getAttribute('style'), backgroundStyle);
+  check('an unselected step pans the flow only; dual-finger event paths resize the flow; scrollbar and width grip can be dragged separately');
   await page.setViewportSize({width:720,height:720});const narrow=await page.locator('.flow-panel').boundingBox();assert.ok(narrow.x>=0&&narrow.x+narrow.width<=720);await page.screenshot({path:out+'/flow-720.png'});await page.setViewportSize({width:1440,height:960});
   // Mixed resource composition and clipboard scoping.
   await seed([{id:'plain',title:'标题和资源'}]);await blank();const original='# 剪贴板长文档\n\n这是超过二十个字的原始文本，保留所有空白与公式 $\\nu$。\n';await pasteText(original);await page.waitForFunction(()=>document.querySelectorAll('.canvas-world>.node-card').length===2);s=await state();const pasted=s.boards.board.nodes.find(n=>n.id!=='plain');assert.equal(pasted.title,Array.from(original.trim().replace(/^[#>*\s-]+/,'').replace(/\s+/g,' ')).slice(0,10).join(''));assert.equal(s.documents[pasted.docs[0].path],original);await card(pasted.id).locator('.node-document-opening .katex').waitFor();check('long canvas paste creates a named node and byte-for-byte mounted Markdown');

@@ -661,7 +661,7 @@ export function BoardCanvas({
   /* ── 拖拽状态 ── */
   const drag = useRef<
     | null
-    | { kind: 'pan'; pointerId: number; startX: number; startY: number; vx: number; vy: number; moved: boolean; allowsNewNode: boolean }
+    | { kind: 'pan'; pointerId: number; startX: number; startY: number; vx: number; vy: number; moved: boolean; allowsNewNode: boolean; nodeId?: string }
     | { kind: 'node'; id: string; pointerId:number;startX:number;startY:number;zoom:number; moved: boolean; baseline: Graph; positions:Map<string,{x:number;y:number}>;group:boolean }
     | { kind: 'resize'; id:string; pointerId:number; startX:number;startY:number;zoom:number;corner:string;box:Box;baseline:Graph;sticker:boolean;image?:PreviewImage;primary:boolean }
     | { kind: 'connect'; fromId: string }
@@ -693,6 +693,7 @@ export function BoardCanvas({
     const canvas = wrapRef.current;
     if (!canvas) return;
     const onWheel = (event: WheelEvent) => {
+      if (event.target instanceof Element && event.target.closest('.flow-panel, .node-panel, .document-editor-modal, .board-appearance')) return;
       event.preventDefault();
       if (drag.current || branchRootRef.current || !event.deltaY) return;
       const before = engine.viewport;
@@ -710,6 +711,15 @@ export function BoardCanvas({
     return () => canvas.removeEventListener('wheel', onWheel);
   }, [appearance.zoomSensitivity, engine, onViewportChange, rect, scheduleViewportPaint]);
 
+  const startPan = useCallback((event: React.PointerEvent, allowsNewNode: boolean, nodeId?: string) => {
+    const { x, y } = engine.viewport;
+    drag.current = {
+      kind: 'pan', pointerId: event.pointerId, startX: event.clientX, startY: event.clientY,
+      vx: x, vy: y, moved: false, allowsNewNode, nodeId,
+    };
+    event.currentTarget.setPointerCapture(event.pointerId);
+  }, [engine]);
+
   /* ── 空白按下：平移 ── */
   const onCanvasPointerDown = (e: React.PointerEvent) => {
     if (drag.current || arrangeJob.current || mutationsBlocked() || e.target !== e.currentTarget
@@ -723,19 +733,23 @@ export function BoardCanvas({
     setPanelId(null);setFlowOwnerId(null);pasteTarget.current=null;pasteFlow.current=null;
     setMoveRoot(null);
     clearTip();
-    const vp = engine.viewport;
-    drag.current = { kind: 'pan', pointerId: e.pointerId, startX: e.clientX, startY: e.clientY, vx: vp.x, vy: vp.y, moved: false, allowsNewNode };
-    (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+    startPan(e, allowsNewNode);
   };
 
-  /* ── 节点按下：选中 + 准备拖拽 ── */
+  /* 节点只有已选中时才移动。未选中的节点上轻点仍由 NodeCard 打开面板。 */
   const onNodePointerDown = useCallback((e: React.PointerEvent, id: string) => {
-    if(drag.current)return;
-    if (e.button !== 0||e.ctrlKey&&detectMacOS()) return;
+    if (drag.current || arrangeJob.current || mutationsBlocked() || !e.isPrimary || e.button !== 0 || (e.ctrlKey && detectMacOS())) return;
+    if ((e.target as Element).closest('button, input, textarea, select, a, [contenteditable]')) return;
+    const focused = document.activeElement;
+    if (focused instanceof HTMLElement && focused.matches('input, textarea, [contenteditable]')) focused.blur();
+    e.preventDefault();
     e.stopPropagation();
-    setSelected(id);
+    suppressClick.current = false;
+    if (selectedRef.current !== id) {
+      startPan(e, false, id);
+      return;
+    }
     setSelectedEdge(null);
-    suppressClick.current=false;
     const baseline=historyRef.current.present;
     const group=moveRoot===id;
     const ids=group?descendantIds(baseline.nodes,baseline.edges,id):new Set([id]);
@@ -750,7 +764,7 @@ export function BoardCanvas({
     };
     setDraggingNodes(true);
     (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
-  }, [engine, moveRoot, moveIds]);
+  }, [engine, moveRoot, mutationsBlocked, startPan]);
 
   const onResizeStart = useCallback((e: React.PointerEvent, id: string, corner: string, image?: PreviewImage) => {
     if(e.button!==0||mutationsBlocked()||drag.current)return;e.preventDefault();e.stopPropagation();
@@ -887,6 +901,7 @@ export function BoardCanvas({
     if (d.kind === 'pan') {
       if (e.type === 'pointerup') previewPan(d, e);
       if (d.moved) onViewportChange(engine.viewport);
+      if (d.nodeId && d.moved) suppressClick.current = true;
       // Pointer capture can retarget a click to the canvas after the mouse has
       // moved off it. A creation gesture needs two releases over actual blank space.
       if (!d.moved && d.allowsNewNode && e.type === 'pointerup'
@@ -923,6 +938,7 @@ export function BoardCanvas({
     if (d.kind === 'pan') {
       drag.current = null;
       blankClicks.current = [];
+      if (d.nodeId && d.moved) suppressClick.current = true;
       if (d.moved) onViewportChange(engine.viewport);
     } else {
       cancelNodeDrag();
@@ -1030,6 +1046,7 @@ export function BoardCanvas({
       return;
     }
     if(moveRoot===id)return;
+    if (moveRoot) setMoveRoot(null);
     const target=graphRef.current.nodes.find(n=>n.id===id);setFlowOwnerId(target?.flow?id:target?.flowOwnerId??null);pasteTarget.current=null;
     setSelected(id);
     setSelectedEdge(null);
@@ -1338,7 +1355,8 @@ export function BoardCanvas({
   const heatCells=useMemo(()=>level?aggregateHeat(mainNodes,level,sizesRef.current):[],[mainNodes,level,sizesVer]);
   const visibleWorld=engine.visibleWorldRect(canvasSize);
   const visibleBox={x:visibleWorld.x,y:visibleWorld.y,w:visibleWorld.width,h:visibleWorld.height};
-  const visibleNodes=heatMode?[]:mainNodes.filter(n=>n.id===editingId||n.id===selected||intersects(boxOf(n),visibleBox,100/zoom));
+  const panNode = drag.current?.kind === 'pan' ? drag.current.nodeId : undefined;
+  const visibleNodes=heatMode?[]:mainNodes.filter(n=>n.id===editingId||n.id===selected||n.id===panNode||intersects(boxOf(n),visibleBox,100/zoom));
   const renderedHeat=heatMode?heatCells.filter(c=>intersects(c,visibleBox,80/zoom)):[];
 
   const laidEdges = useMemo(() => {
@@ -1625,7 +1643,8 @@ export function BoardCanvas({
         const owner = nodeById[flowOwnerId];
         const steps = flowNodes(owner, nodes);
         return <FlowPanel key={flowOwnerId} owner={owner} nodes={matches ? steps.filter(node => matches.matched.has(node.id)) : steps}
-          filtering={!!matches} projectId={board.projectId} boardId={board.id} selected={panelId} ownerBox={screenBoxOf(owner)}
+          filtering={!!matches} projectId={board.projectId} boardId={board.id} selected={selected} panelId={panelId}
+          ownerBox={screenBoxOf(owner)} zoomSensitivity={appearance.zoomSensitivity}
           docVersions={docVersions} onClose={() => setFlowOwnerId(null)}
           onSelect={id => { setPanelId(id); setSelected(id); pasteTarget.current = id; }}
           onAdd={after => addFlowStep(flowOwnerId, after)} onEditTags={onEditTags}
