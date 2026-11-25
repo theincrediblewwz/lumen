@@ -803,9 +803,7 @@ export default function App() {
             ] },
       ...(activeBoard ? [{ type: 'item', label: '快照与恢复…', onClick: () => setSnapshotOpen(true) }] as ContextMenuState['items'] : []),
       { type: 'separator' },
-      { type: 'group', label: '视图与帮助', items: [
-        { type: 'item', label: '快捷键帮助  ?', onClick: () => setHelpOpen(true) },
-      ] },
+      { type: 'item', label: '快捷键帮助  ?', onClick: () => setHelpOpen(true) },
       { type: 'item', label: '设置…', onClick: () => setSettingsOpen(true) },
     ]);
 
@@ -1044,7 +1042,7 @@ export default function App() {
         )}
       </div>
       {fullscreenExit}
-      {activeBoard&&!knowledgeOpen&&!branchFocusActive&&!fullscreen&&<button className={`board-save-state is-${saveState}`} title="内容自动保存 · Cmd/Ctrl+S立即保存" onClick={()=>void flushBoards().catch(e=>setError(String(e)))}>{saveState==='saved'?'已保存':saveState==='saving'?'保存中…':saveState==='error'?'保存失败 · 点击重试':'等待保存…'}</button>}
+      {activeBoard&&!knowledgeOpen&&!branchFocusActive&&<button className={`board-save-state is-${saveState}`} title="内容自动保存 · Cmd/Ctrl+S立即保存" onClick={()=>void flushBoards().catch(e=>setError(String(e)))}>{saveState==='saved'?'已保存':saveState==='saving'?'保存中…':saveState==='error'?'保存失败 · 点击重试':'等待保存…'}</button>}
       {syncLocked&&<div className="sync-edit-lock" role="status">正在保存并同步资料…</div>}
 
       {menu && <ContextMenu state={menu} onClose={() => setMenu(null)} />}
@@ -1093,7 +1091,7 @@ export default function App() {
         projectId={activeProject?.id ?? null}
         boardId={activeBoard?.id ?? null}
         boardName={activeBoard?.name ?? null}
-        suspended={knowledgeOpen || !activeBoard || branchFocusActive || fullscreen}
+        suspended={knowledgeOpen || !activeBoard || branchFocusActive}
         onBoardSettings={()=>window.dispatchEvent(new CustomEvent('lumen:board-settings',{detail:activeBoard?.id}))}
       />
       <WorkspaceAssistant key={canvasScope} open={workspaceAiOpen} scope={canvasScope} onClose={() => setWorkspaceAiOpen(false)}

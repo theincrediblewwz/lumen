@@ -895,7 +895,8 @@ html.motion-off .node-card.is-flash { animation: none; }
   margin-block-start: 0;
 }
 
-.board-surface.is-fullscreen :is(.canvas-toolbar, .canvas-zoom-label, .branch-focus-zoom, .project-canvas-actions, .project-canvas-fit) {
+.board-surface.is-fullscreen :is(.canvas-toolbar, .canvas-zoom-label, .branch-focus-zoom, .project-canvas-actions,
+  .project-canvas-fit, .board-save-state, .ai-fab, .board-settings-fab) {
   display: none;
 }
 
@@ -916,7 +917,7 @@ html.motion-off .node-card.is-flash { animation: none; }
   border: 1px solid var(--glass-edge);
   border-radius: 11px;
   cursor: pointer;
-  box-shadow: inset 0 1px 0 var(--glass-hi), var(--shadow-node);
+  box-shadow: inset 0 1px 0 var(--glass-hi), 0 1px 4px rgb(0 0 0 / 19%), 0 5px 14px rgb(0 0 0 / 12%);
   transition: color var(--dur-fast) var(--ease-standard), background var(--dur-fast) var(--ease-standard);
 }
 

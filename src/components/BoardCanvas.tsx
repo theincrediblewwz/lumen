@@ -604,6 +604,7 @@ export function BoardCanvas({
 
       if (e.key === 'Escape') {
         if(moveRoot){e.preventDefault();setMoveRoot(null);return;}
+        if (fullscreen) return; // App handles leaving fullscreen without closing the panel.
         if (panelId) {
           e.preventDefault();
           setPanelId(null);
@@ -657,6 +658,7 @@ export function BoardCanvas({
     panelId,
     moveRoot,
     setBranchFocus,
+    fullscreen,
   ]);
 
   /* ── 拖拽状态 ── */
@@ -1378,13 +1380,24 @@ export function BoardCanvas({
     });
   }, [mainEdges, nodeById, screenBoxOf, sizesVer, vpSig, heatMode, canvasSize]);
 
-  useEffect(()=>{
-    if(fullscreen||branchRootRef.current||!flowOwnerId||!canvasSize.width)return;const owner=graphRef.current.nodes.find(n=>n.id===flowOwnerId);if(!owner)return;
-    const left=Math.min(520,Math.max(310,canvasSize.width*.43))+16,right=canvasSize.width-332;
-    const at=engine.toScreen({x:owner.x+(sizesRef.current[owner.id]?.w??owner.w)/2,y:owner.y+(sizesRef.current[owner.id]?.h??owner.h??96)/2});
-    engine.setViewport({...engine.viewport,x:engine.viewport.x+(left+right)/2-at.x,y:engine.viewport.y+Math.max(120,Math.min(canvasSize.height-120,at.y))-at.y});
-    rerender();onViewportChange(engine.viewport);
-  },[fullscreen,flowOwnerId,canvasSize.width,canvasSize.height]);
+  // Opening a flow brings its owner into view. Resizing the window keeps the current camera.
+  useEffect(() => {
+    if (!flowOwnerId || branchRootRef.current) return;
+    const owner = graphRef.current.nodes.find(n => n.id === flowOwnerId);
+    if (!owner) return;
+    const { width, height } = rect();
+    const left = Math.min(520, Math.max(310, width * 0.43)) + 16;
+    const right = width - 332;
+    const size = sizesRef.current[owner.id];
+    const at = engine.toScreen({ x: owner.x + (size?.w ?? owner.w) / 2, y: owner.y + (size?.h ?? owner.h ?? 96) / 2 });
+    engine.setViewport({
+      ...engine.viewport,
+      x: engine.viewport.x + (left + right) / 2 - at.x,
+      y: engine.viewport.y + Math.max(120, Math.min(height - 120, at.y)) - at.y,
+    });
+    rerender();
+    onViewportChange(engine.viewport);
+  }, [engine, flowOwnerId, onViewportChange, rect, rerender]);
 
   // At overview scale, nearby relationship captions merge into bounded luminous hints.
   const overviewLabels=useMemo(()=>{
@@ -1612,13 +1625,13 @@ export function BoardCanvas({
       {moveRoot&&<div className="drop-hint tree-move-hint" role="status">拖动此节点，移动全部 {moveIds.size} 个节点<button className="btn" onClick={()=>{cancelNodeDrag();setMoveRoot(null);}}>取消</button></div>}
 
       {/* 悬停简介 tooltip（不拦截指针） */}
-      {!fullscreen && tip && !panelId && (() => {
+      {tip && !panelId && (() => {
         const tn = nodes.find((n) => n.id === tip.id);
         return tn ? <NodeTooltip node={tn} x={tip.x} y={tip.y} /> : null;
       })()}
 
       {/* 节点内容面板（选中节点后停靠右侧） */}
-      {!fullscreen && panelId && (() => {
+      {panelId && (() => {
         const pn = nodes.find((n) => n.id === panelId);
         if (!pn || (matches && !matches.matched.has(pn.id) && !matches.entrances.has(pn.id))) return null;
         const labels = assignedTags(tagStore, { kind: 'node', projectId: board.projectId, boardId: board.id, id: pn.id });
@@ -1643,7 +1656,7 @@ export function BoardCanvas({
         );
       })()}
 
-      {!fullscreen && flowOwnerId && nodeById[flowOwnerId]?.flow && mainIds.has(flowOwnerId) && (() => {
+      {flowOwnerId && nodeById[flowOwnerId]?.flow && mainIds.has(flowOwnerId) && (() => {
         const owner = nodeById[flowOwnerId];
         const steps = flowNodes(owner, nodes);
         return <FlowPanel key={flowOwnerId} owner={owner} nodes={matches ? steps.filter(node => matches.matched.has(node.id)) : steps}
@@ -1664,7 +1677,7 @@ export function BoardCanvas({
             apply(orderFlow(g.nodes, g.edges, flowOwnerId, all, newEdgeId));
           }} onRemove={removeNode} />;
       })()}
-      {!fullscreen&&appearanceOpen&&<BoardAppearancePanel name={board.name} value={board.appearance} onClose={()=>setAppearanceOpen(false)} onChange={v=>onChange(graphRef.current.nodes,graphRef.current.edges,engine.viewport,v)}/>}
+      {appearanceOpen&&<BoardAppearancePanel name={board.name} value={board.appearance} onClose={()=>setAppearanceOpen(false)} onChange={v=>onChange(graphRef.current.nodes,graphRef.current.edges,engine.viewport,v)}/>}
       {documentEditor&&(()=>{
         const node=nodes.find(n=>n.id===documentEditor.nodeId);if(!node)return null;
         const docs=node.docs.filter(d=>d.path!==questionPath(node.id)),counts=new Map<string,number>();for(const d of docs)counts.set(d.title,(counts.get(d.title)??0)+1);
