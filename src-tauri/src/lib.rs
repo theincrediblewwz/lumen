@@ -51,6 +51,47 @@ fn apply_native_material(window: &tauri::WebviewWindow) {
     }
 }
 
+#[cfg(target_os = "macos")]
+fn align_mac_window_controls(window: &tauri::Window) {
+    use objc2_app_kit::{NSWindow, NSWindowButton, NSWindowStyleMask};
+    use objc2_foundation::NSPoint;
+
+    // Match the 48-point title bar in styles.css, including after AppKit lays it out again.
+    const TITLEBAR_CENTER: f64 = 24.0;
+    let handle = window.clone();
+    let _ = window.run_on_main_thread(move || {
+        let Ok(raw) = handle.ns_window() else {
+            return;
+        };
+        // The Tauri handle owns this NSWindow, and AppKit runs on its main thread here.
+        let Some(window) = (unsafe { raw.cast::<NSWindow>().as_ref() }) else {
+            return;
+        };
+        if window.styleMask().contains(NSWindowStyleMask::FullScreen) {
+            return;
+        }
+
+        let center = NSPoint::new(0.0, window.frame().size.height - TITLEBAR_CENTER);
+        for kind in [
+            NSWindowButton::CloseButton,
+            NSWindowButton::MiniaturizeButton,
+            NSWindowButton::ZoomButton,
+        ] {
+            let Some(button) = window.standardWindowButton(kind) else {
+                continue;
+            };
+            let Some(parent) = (unsafe { button.superview() }) else {
+                continue;
+            };
+            let frame = button.frame();
+            let y = parent.convertPoint_fromView(center, None).y - frame.size.height / 2.0;
+            if (frame.origin.y - y).abs() > 0.5 {
+                button.setFrameOrigin(NSPoint::new(frame.origin.x, y));
+            }
+        }
+    });
+}
+
 /// 供前端调用：给「当前调用的窗口」应用 macOS 原生材质 + 圆角。
 /// AI 窗 / 阅读窗在运行时由 JS 动态创建（decorations:false），需要它们创建后
 /// 自行调用本命令，才能和主窗一样获得圆角与原生窗口阴影。非 macOS 为空操作。
@@ -115,7 +156,17 @@ pub fn run() {
     };
     let application=tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
-        .on_window_event(|window,event|{if matches!(event,tauri::WindowEvent::Destroyed){chat_generation::release_owner(window.label());}})
+        .on_window_event(|window, event| {
+            if matches!(event, tauri::WindowEvent::Destroyed) {
+                chat_generation::release_owner(window.label());
+            }
+            #[cfg(target_os = "macos")]
+            if window.label() == "main"
+                && matches!(event, tauri::WindowEvent::Resized(_) | tauri::WindowEvent::Focused(true))
+            {
+                align_mac_window_controls(window);
+            }
+        })
         .setup(|_app| {
             #[cfg(feature = "isolated-preview")]
             {
@@ -130,6 +181,7 @@ pub fn run() {
                 use tauri::Manager;
                 if let Some(window) = _app.get_webview_window("main") {
                     apply_native_material(&window);
+                    align_mac_window_controls(&window.as_ref().window());
                 }
             }
             Ok(())
