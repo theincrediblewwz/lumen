@@ -12,12 +12,13 @@ export interface ContextMenuState {
   x: number;
   y: number;
   items: MenuItem[];
+  trigger?: Element;
 }
 
 /**
  * 轻量右键/浮层菜单（自研，零依赖）。
- * - fixed 定位到 (x,y)，挂载后按实际尺寸夹进视口，避免溢出屏幕
- * - 点击外部 / Esc / 窗口 resize / blur 自动关闭
+ * - 右键菜单跟随点击坐标，按钮菜单在按钮上方或下方展开
+ * - 点击外部 / Esc / 窗口 resize / blur 自动关闭，按钮自身处理开关
  */
 export function ContextMenu({
   state,
@@ -28,15 +29,29 @@ export function ContextMenu({
 }) {
   const ref = useRef<HTMLDivElement>(null);
   const [expanded, setExpanded] = useState<number | null>(null);
-  const [pos, setPos] = useState({ x: state.x, y: state.y, ready: false });
+  const [pos, setPos] = useState<{ x: number; y: number; ready: boolean; maxHeight?: number }>({ x: state.x, y: state.y, ready: false });
 
   // 防溢出：布局后测量实际尺寸再定位（首帧不可见，避免闪跳）
   useLayoutEffect(() => {
     const el = ref.current;
     if (!el) return;
     const pad = 8;
-    const { width, height } = el.getBoundingClientRect();
+    const { offsetWidth: width, offsetHeight: height } = el;
     const x = Math.max(pad, Math.min(state.x, window.innerWidth - width - pad));
+    if (state.trigger) {
+      const trigger = state.trigger.getBoundingClientRect();
+      const below = trigger.bottom + 4;
+      const above = trigger.top - 4;
+      const roomBelow = window.innerHeight - pad - below;
+      const roomAbove = above - pad;
+      // Include hidden overflow when remeasuring a menu that already has a height limit.
+      const contentHeight = el.scrollHeight + height - el.clientHeight;
+      const openAbove = contentHeight > roomBelow && roomAbove > roomBelow;
+      const maxHeight = Math.max(0, openAbove ? roomAbove : roomBelow);
+      const y = openAbove ? above - Math.min(contentHeight, maxHeight) : below;
+      setPos({ x, y, maxHeight, ready: true });
+      return;
+    }
     const y = Math.max(pad, Math.min(state.y, window.innerHeight - height - pad));
     setPos({ x, y, ready: true });
   }, [state, expanded]);
@@ -45,11 +60,14 @@ export function ContextMenu({
 
   useEffect(() => {
     const onDown = (e: MouseEvent) => {
-      if (ref.current && !ref.current.contains(e.target as Node)) onClose();
+      const target = e.target as Node;
+      // The trigger's click handler owns toggling; closing on its mousedown would reopen the menu.
+      if (!ref.current?.contains(target) && !(e.button === 0 && state.trigger?.contains(target))) onClose();
     };
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
         e.preventDefault(); e.stopImmediatePropagation(); onClose();
+        if (state.trigger instanceof HTMLElement) state.trigger.focus({ preventScroll: true });
       } else if (['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(e.key)) {
         const items = [...(ref.current?.querySelectorAll<HTMLButtonElement>('button:not(:disabled)') ?? [])];
         if (!items.length) return;
@@ -69,14 +87,14 @@ export function ContextMenu({
       window.removeEventListener('resize', onClose);
       window.removeEventListener('blur', onClose);
     };
-  }, [onClose]);
+  }, [onClose, state.trigger]);
 
   return createPortal(
     <div
       ref={ref}
       className={`ctx-menu${state.items.some(item => item.type === 'group') ? ' has-groups' : ''}`}
       role="menu"
-      style={{ left: pos.x, top: pos.y, visibility: pos.ready ? 'visible' : 'hidden' }}
+      style={{ left: pos.x, top: pos.y, maxHeight: pos.maxHeight, visibility: pos.ready ? 'visible' : 'hidden' }}
       onContextMenu={(e) => e.preventDefault()}
       onPointerDown={(e) => e.stopPropagation()}
       onPointerUp={(e) => e.stopPropagation()}

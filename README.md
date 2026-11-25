@@ -5,9 +5,9 @@
 
 ## 当前版本
 
-[0.4.8 源码预览](https://github.com/theincrediblewwz/lumen/releases/tag/mac-v0.4.8) · [下载 Mac 0.4.0 安装包](https://github.com/theincrediblewwz/lumen/releases/tag/mac-v0.4.0) · [白板编辑与保存](./docs/CANVAS_AUTHORING.md)
+[0.4.9 源码预览](https://github.com/theincrediblewwz/lumen/releases/tag/mac-v0.4.9) · [下载 Mac 0.4.0 安装包](https://github.com/theincrediblewwz/lumen/releases/tag/mac-v0.4.0) · [白板编辑与保存](./docs/CANVAS_AUTHORING.md)
 
-**0.4.8 全屏白板阅读。** 节点面板和子流程在全屏中照常打开，进出全屏会保留选中步骤和面板状态。左上角的退出按钮有柔和阴影，菜单一级可直接打开快捷键帮助。
+**0.4.9 菜单开关。** 右上角菜单和项目里的「新建」点一下展开，再点一下收起。点击白板空白处也可关闭。
 
 **0.4.5 白板与流程手势。** 未选中节点时，拖动会平移视野。流程图独立滚动和调宽，双指手势作用于流程面板。右侧问题面板可以缩成一行，并记住展开或缩小的状态。
 

@@ -36,6 +36,7 @@ import { EMPTY_COVERS, readCover, type CoverTarget } from './projectCanvas/cover
 import { allTags, assignedTags, colorTag, NO_TAGS, tagKey, type TagDefinition, type TagTarget } from './projectCanvas/tags';
 
 type Phase = 'loading' | 'setup' | 'ready';
+type AppMenuState = ContextMenuState & { source?: 'titlebar' | 'create' };
 type CoverEdit = { target: CoverTarget; name: string; current: string | null; scope: string; trigger?: HTMLElement | null };
 
 type Editing =
@@ -165,7 +166,7 @@ export default function App() {
   const [settings, setSettings] = useState<Settings>(() => loadSettings());
   const [settingsOpen, setSettingsOpen] = useState(false);
 
-  const [menu, setMenu] = useState<ContextMenuState | null>(null);
+  const [menu, setMenu] = useState<AppMenuState | null>(null);
   const [editing, setEditing] = useState<Editing>(null);
   const [draft, setDraft] = useState('');
   const editingRef = useRef(editing);
@@ -686,13 +687,25 @@ export default function App() {
     })) });
   };
 
-  /* ── 右键菜单构造 ── */
-  const openAt = (e: React.MouseEvent, items: ContextMenuState['items'], atPointer = false) => {
+  /* ── 右键菜单与按钮菜单 ── */
+  const openAt = (
+    e: React.MouseEvent,
+    items: ContextMenuState['items'],
+    { atPointer, source }: { atPointer?: boolean; source?: AppMenuState['source'] } = {},
+  ) => {
     e.preventDefault();
     e.stopPropagation();
     const bounds = e.currentTarget.getBoundingClientRect();
-    const atControl = (e.type === 'click' && !atPointer) || (!e.clientX && !e.clientY);
-    setMenu({ x: atControl ? bounds.left : e.clientX, y: atControl ? bounds.bottom + 4 : e.clientY, items });
+    const trigger = e.type === 'click' && !atPointer ? e.currentTarget : undefined;
+    const atControl = trigger || (!e.clientX && !e.clientY);
+    const next: AppMenuState = {
+      x: atControl ? bounds.left : e.clientX,
+      y: atControl ? bounds.bottom + 4 : e.clientY,
+      items,
+      trigger,
+      source,
+    };
+    setMenu(current => trigger && current?.trigger === trigger ? null : next);
   };
 
   /* ── 导出（M6-7）：写入白板 exports/ 目录，完成后提示路径 ── */
@@ -805,7 +818,7 @@ export default function App() {
       { type: 'separator' },
       { type: 'item', label: '快捷键帮助  ?', onClick: () => setHelpOpen(true) },
       { type: 'item', label: '设置…', onClick: () => setSettingsOpen(true) },
-    ]);
+    ], { source: 'titlebar' });
 
   const coverMenuItem = (event: React.MouseEvent, target: CoverTarget, name: string) => {
     const trigger = event.currentTarget.closest('.project-tile')?.querySelector<HTMLElement>('.project-tile-open');
@@ -938,7 +951,7 @@ export default function App() {
   if (phase === 'setup') {
     return (
       <div className={`board-surface${fullscreen ? ' is-fullscreen' : ''}`} style={surfaceStyle}>
-        <TitleBar platform={platform} brand="脉络" onMenu={appMenu} onFullscreen={enterFullscreen} fullscreen={fullscreen} onSettings={() => setSettingsOpen(true)} />
+        <TitleBar platform={platform} brand="脉络" onMenu={appMenu} menuOpen={menu?.source === 'titlebar'} onFullscreen={enterFullscreen} fullscreen={fullscreen} onSettings={() => setSettingsOpen(true)} />
         {fullscreenExit}
         <div className="screen-center">
           <div className="setup-card">
@@ -969,6 +982,7 @@ export default function App() {
         platform={platform}
         brand="脉络"
         onMenu={appMenu}
+        menuOpen={menu?.source === 'titlebar'}
         onHome={() => navigateProject(null)}
         onSettings={() => setSettingsOpen(true)}
         onFullscreen={enterFullscreen}
@@ -1029,7 +1043,7 @@ export default function App() {
             onRelationMenu={(event, relation) => openAt(event, [
               ...(relation.bend ? [{ type: 'item' as const, label: '拉直连线', onClick: () => void bendRelation(relation, null) }] : []),
               { type: 'item', label: '删除连线', danger: true, onClick: () => relateCards(relation, false) },
-            ], true)}
+            ], { atPointer: true })}
             onFavorite={tile => toggleFavorite(tile.kind === 'project' ? 'projects' : 'boards', tile.row.id)}
             onWorkspaceAi={() => setWorkspaceAiOpen(true)}
             onMenu={(event, tile) => {
@@ -1037,7 +1051,8 @@ export default function App() {
               else if (tile.kind === 'project') projectItemMenu(event, tile.row);
               else boardItemMenu(event, tile.row);
             }}
-            onAdd={event => activeProject ? openAt(event, createItems()) : setEditing({ kind: 'new-project', parentId: null })}
+            addMenuOpen={menu?.source === 'create'}
+            onAdd={event => activeProject ? openAt(event, createItems(), { source: 'create' }) : setEditing({ kind: 'new-project', parentId: null })}
           />
         )}
       </div>

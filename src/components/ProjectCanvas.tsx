@@ -45,6 +45,7 @@ type Props = {
   onRelationMenu: (event: MouseEvent, relation: ProjectRelation) => void;
   onFavorite: (tile: CatalogTile) => void;
   onMenu: (event: MouseEvent, tile?: CatalogTile) => void;
+  addMenuOpen: boolean;
   onAdd: (event: MouseEvent) => void;
   onWorkspaceAi: () => void;
 };
@@ -115,7 +116,7 @@ const TileContent = memo(function TileContent({ tile, tags, drop }: { tile: Cata
   </>;
 });
 
-export function ProjectCanvas({ scope, folderId, folderName, tiles, relations, tags, filtering, disabled, readBoards, previewTiles, onOpen, onPlace, onConnect, onBend, onLabel, onRelationMenu, onFavorite, onMenu, onAdd, onWorkspaceAi }: Props) {
+export function ProjectCanvas({ scope, folderId, folderName, tiles, relations, tags, filtering, disabled, readBoards, previewTiles, onOpen, onPlace, onConnect, onBend, onLabel, onRelationMenu, onFavorite, onMenu, addMenuOpen, onAdd, onWorkspaceAi }: Props) {
   const element = useRef<HTMLElement>(null);
   const { viewport, view, setView, takeCamera, persistView, selected, scene, message, toggle, close } = useExpansion({
     host: element, scope, folderId, tiles, readBoards, previewTiles,
@@ -520,7 +521,8 @@ export function ProjectCanvas({ scope, folderId, folderName, tiles, relations, t
         <button type="button" className="project-canvas-ai" disabled={disabled} onClick={onWorkspaceAi}>
           <Sparkles size={17} aria-hidden="true" />AI 工作区
         </button>
-        <button className="project-canvas-add" type="button" title={folderId ? '新建' : '新建项目'} aria-label={folderId ? '新建' : '新建项目'} aria-haspopup={folderId ? 'menu' : undefined} disabled={disabled} onClick={onAdd}>
+        <button className="project-canvas-add" type="button" title={folderId ? '新建' : '新建项目'} aria-label={folderId ? '新建' : '新建项目'}
+          aria-haspopup={folderId ? 'menu' : undefined} aria-expanded={folderId ? addMenuOpen : undefined} disabled={disabled} onClick={onAdd}>
           <Plus size={24} strokeWidth={2} aria-hidden="true" />
         </button>
       </div>

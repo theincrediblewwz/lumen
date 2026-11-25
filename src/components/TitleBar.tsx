@@ -14,6 +14,7 @@ export function TitleBar({
   platform,
   brand,
   onMenu,
+  menuOpen,
   onHome,
   onSettings,
   onFullscreen,
@@ -28,6 +29,7 @@ export function TitleBar({
   platform: string; // 'macos' | 'windows' | 'linux' | ...
   brand: string;
   onMenu: (e: React.MouseEvent) => void;
+  menuOpen: boolean;
   onHome?: () => void;
   onSettings: () => void;
   onFullscreen: () => void;
@@ -108,6 +110,7 @@ export function TitleBar({
           title="菜单"
           aria-label="菜单"
           aria-haspopup="menu"
+          aria-expanded={menuOpen}
           onClick={onMenu}
         >
           <Menu size={19} aria-hidden="true" />
