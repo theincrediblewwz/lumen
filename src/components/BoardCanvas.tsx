@@ -69,7 +69,7 @@ type DocumentNotice = { text: string; autoDismiss: boolean; fading?: boolean };
  * - 命令栈：以上结构变更均可撤销/重做（Ctrl+Z / Ctrl+Shift+Z / Ctrl+Y）
  */
 export function BoardCanvas({
-  board, scope,
+  board, scope, syncMutationLock,
   onChange, onViewportChange, onFlush, saveState,
   guessMath = false,
   focusNode = null,
@@ -79,6 +79,7 @@ export function BoardCanvas({
   onFlush:()=>Promise<void>; saveState:'saved'|'dirty'|'saving'|'error';
   board: BoardFile;
   scope: string;
+  syncMutationLock: { readonly current: boolean };
   onChange: (nodes: BoardNode[], edges: BoardEdge[], viewport: Viewport, appearance?:BoardAppearance) => void;
   onViewportChange: (viewport: Viewport) => void;
   guessMath?: boolean;
@@ -106,13 +107,7 @@ export function BoardCanvas({
   useLayoutEffect(() => {
     if (wrapRef.current) wrapRef.current.inert = branchRoot !== null;
   }, [branchRoot]);
-  const syncMutationLock = useRef(!!document.querySelector('.sync-edit-lock'));
-  useEffect(() => {
-    const lock = (event: Event) => { syncMutationLock.current = !!(event as CustomEvent<boolean>).detail; };
-    window.addEventListener('lumen:sync-edit-lock', lock);
-    return () => window.removeEventListener('lumen:sync-edit-lock', lock);
-  }, []);
-  const mutationsBlocked = useCallback(() => syncMutationLock.current || !!document.querySelector('[aria-modal="true"]'), []);
+  const mutationsBlocked = useCallback(() => syncMutationLock.current || !!document.querySelector('[aria-modal="true"]'), [syncMutationLock]);
   const engineRef = useRef<CanvasEngine>(
     new CanvasEngine(board.viewport, { minZoom: MIN_BOARD_ZOOM, maxZoom: 3 }),
   );
@@ -406,7 +401,7 @@ export function BoardCanvas({
       const nextHistory=pushState(historyRef.current,next);historyRef.current=nextHistory;graphRef.current=next;setHistory(nextHistory);
       onChange(next.nodes, next.edges, engine.viewport);
     },
-    [engine, onChange],
+    [engine, onChange, syncMutationLock],
   );
 
   /** 树状自动布局（M6-4）：只重排位置、不改结构，进历史可撤销；带 360ms 归位过渡。 */
@@ -809,7 +804,7 @@ export function BoardCanvas({
      故不依赖锚点元素/指针捕获，直接挂 window 级监听全程自算，
      并用 graphRef 读取最新节点/连线（规避闭包旧值）。 */
   const onAnchorPointerDown = useCallback((e: React.PointerEvent, id: string) => {
-    if(drag.current)return;
+    if(drag.current||mutationsBlocked())return;
     if (e.button !== 0) return;
     e.stopPropagation();
     e.preventDefault();
@@ -860,7 +855,7 @@ export function BoardCanvas({
     const cancel=()=>{window.removeEventListener('pointermove',onMove);window.removeEventListener('pointerup',onUp);window.removeEventListener('pointercancel',cancel);window.removeEventListener('blur',cancel);drag.current=null;setConnect(null);connectCleanup.current=null;};
     connectCleanup.current=cancel;
     window.addEventListener('pointermove', onMove);window.addEventListener('pointerup', onUp);window.addEventListener('pointercancel',cancel);window.addEventListener('blur',cancel);
-  }, [apply, boxOf, engine, nodes, rect]);
+  }, [apply, boxOf, engine, mutationsBlocked, nodes, rect]);
 
   const previewPan = (d: Extract<NonNullable<typeof drag.current>, { kind: 'pan' }>, e: React.PointerEvent) => {
     const dx = e.clientX - d.startX, dy = e.clientY - d.startY;
@@ -875,6 +870,7 @@ export function BoardCanvas({
   const onPointerMove = (e: React.PointerEvent) => {
     const d = drag.current;
     if (!d || d.kind === 'connect' || d.pointerId !== e.pointerId) return;
+    if (!(e.buttons & 1)) { finishInterruptedDrag(); return; }
     if (d.kind === 'pan') {
       const wasPanning = d.moved;
       previewPan(d, e);
@@ -894,12 +890,33 @@ export function BoardCanvas({
     const next=replacePresent(historyRef.current,{...historyRef.current.present,nodes:translateFromBaseline(historyRef.current.present.nodes,d.positions,(e.clientX-d.startX)/d.zoom,(e.clientY-d.startY)/d.zoom)});
     historyRef.current=next;graphRef.current=next.present;setHistory(next);
   };
-  const cancelNodeDrag=()=>{
+  const cancelNodeDrag=useCallback(()=>{
     const d=drag.current;if(d?.kind!=='node'&&d?.kind!=='resize')return;
     drag.current=null;setDraggingNodes(false);setMoveRoot(null);suppressClick.current=true;
     const next=replacePresent(historyRef.current,d.baseline);historyRef.current=next;graphRef.current=d.baseline;setHistory(next);
-  };
-  useEffect(()=>{const cancel=()=>cancelNodeDrag();window.addEventListener('blur',cancel);return()=>window.removeEventListener('blur',cancel);},[]);
+  }, []);
+  const finishInterruptedDrag = useCallback(() => {
+    const active = drag.current;
+    if (!active || active.kind === 'connect') return;
+    if (active.kind === 'pan') {
+      drag.current = null;
+      blankClicks.current = [];
+      if (active.moved) onViewportChange(engine.viewport);
+    } else {
+      cancelNodeDrag();
+    }
+    const canvas = wrapRef.current;
+    if (canvas?.hasPointerCapture(active.pointerId)) canvas.releasePointerCapture(active.pointerId);
+  }, [cancelNodeDrag, engine, onViewportChange]);
+  useEffect(() => {
+    const onHidden = () => { if (document.hidden) finishInterruptedDrag(); };
+    window.addEventListener('blur', finishInterruptedDrag);
+    document.addEventListener('visibilitychange', onHidden);
+    return () => {
+      window.removeEventListener('blur', finishInterruptedDrag);
+      document.removeEventListener('visibilitychange', onHidden);
+    };
+  }, [finishInterruptedDrag]);
 
   const onPointerUp = (e: React.PointerEvent) => {
     const d = drag.current;
@@ -943,14 +960,9 @@ export function BoardCanvas({
   const onLostPointerCapture = (e: React.PointerEvent) => {
     const d = drag.current;
     if (!d || d.kind === 'connect' || d.pointerId !== e.pointerId) return;
-    if (d.kind === 'pan') {
-      if (e.target !== e.currentTarget && e.currentTarget.hasPointerCapture(e.pointerId)) return;
-      drag.current = null;
-      blankClicks.current = [];
-      if (d.moved) onViewportChange(engine.viewport);
-    } else {
-      cancelNodeDrag();
-    }
+    // WebKit may deliver the previous release after the next drag has captured the pointer.
+    if (e.currentTarget.hasPointerCapture(e.pointerId) || (e.target instanceof Element && e.target.hasPointerCapture(e.pointerId))) return;
+    finishInterruptedDrag();
   };
 
   /* ── 右键：空白 ── */
@@ -1463,7 +1475,11 @@ export function BoardCanvas({
       className={`board-canvas board-canvas-live${connect ? ' is-connecting' : ''}${branchRoot ? ' is-behind-focus' : ''}${quickMove ? ' is-quick-move' : ''}`}
       aria-hidden={branchRoot ? true : undefined}
       onScroll={e=>{if(e.target===e.currentTarget){e.currentTarget.scrollLeft=0;e.currentTarget.scrollTop=0;}}}
-      onPointerDownCapture={e => { if (e.target !== e.currentTarget) blankClicks.current = []; }}
+      onPointerDownCapture={e => {
+        if (e.target !== e.currentTarget) blankClicks.current = [];
+        const active = drag.current;
+        if (e.isPrimary && e.button === 0 && active?.kind === 'pan' && active.pointerId === e.pointerId) finishInterruptedDrag();
+      }}
       onPointerDown={onCanvasPointerDown}
       onPointerMove={onPointerMove}
       onPointerUp={onPointerUp}

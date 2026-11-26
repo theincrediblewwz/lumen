@@ -13,7 +13,7 @@ const LOCAL_PHASES = {
 export interface ChatTimingReport {
   startedAt: number;
   finishedAt?: number;
-  outcome?: 'completed' | 'stopped' | 'failed' | 'notSent';
+  outcome?: 'completed' | 'paused' | 'stopped' | 'failed' | 'notSent';
   local: Partial<Record<keyof typeof LOCAL_PHASES, number>>;
   rounds: AiRoundTiming[];
   firstAnswerMs?: number;
@@ -36,7 +36,7 @@ export function ChatResponseTiming({ report, progress }: { report: ChatTimingRep
     return () => clearInterval(timer);
   }, [running, report.startedAt]);
   const elapsed = duration(Math.max(0, (report.finishedAt ?? now) - report.startedAt));
-  const label = report.outcome === 'stopped' ? '已停止' : report.outcome === 'failed' ? '未完成' : report.outcome === 'notSent' ? '发送准备' : '本次响应耗时';
+  const label = report.outcome === 'paused' ? '已暂停' : report.outcome === 'stopped' ? '已停止' : report.outcome === 'failed' ? '未完成' : report.outcome === 'notSent' ? '发送准备' : '本次响应耗时';
 
   return (
     <details className="ai-response-timing">
@@ -65,8 +65,10 @@ export function ChatResponseTiming({ report, progress }: { report: ChatTimingRep
             ['本轮流式请求用时', round.streamMs],
           ];
           return <section key={round.round}>
-            <h4>模型第 {round.round} 轮</h4>
+            <h4>模型第 {round.round} 轮{round.summaryOnly ? ' · 收尾说明' : ''}</h4>
             <dl>
+              {round.inputTokens !== undefined && <div><dt>请求上下文（估算）</dt><dd>{round.inputTokens.toLocaleString()} / {round.inputBudget?.toLocaleString()} tokens</dd></div>}
+              {!!round.compactedRounds && <div><dt>已压缩的较早工具轮次</dt><dd>{round.compactedRounds} 轮</dd></div>}
               {measurements.map(([name, ms]) => ms !== undefined && <div key={name}><dt>{name}</dt><dd>{duration(ms)}</dd></div>)}
               {round.retries > 0 && <div><dt>自动重试 · {round.retries} 次预定等待</dt><dd>{duration(round.retryDelayMs)}</dd></div>}
             </dl>

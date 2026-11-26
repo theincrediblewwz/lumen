@@ -24,12 +24,29 @@ export interface AiSettings {
   shareBoard: boolean;
   /** 上下文 token 预算（发送给模型的历史+提示词上限，超出则压缩最旧历史）。 */
   contextBudget: number;
+  toolRounds?: number;
+  boardWriteBatches?: number;
   memoryMode?:'auto'|'off';
   maxTokens?: number;
   profileId?: string;
   reasoningEffort?: string;
   /** In-memory reference only. Opening a window never decrypts the saved key. */
   savedKey?: { account: string; browserKey: string; baseUrl: string; kind: ProviderKind; storage: 'local' | 'system'; profileId?: string };
+}
+
+export const DEFAULT_TOOL_ROUNDS = 64;
+export const MAX_TOOL_ROUNDS = 256;
+export const DEFAULT_BOARD_WRITE_BATCHES = 96;
+export const MAX_BOARD_WRITE_BATCHES = 512;
+const DEFAULT_CONTEXT_BUDGET = 128_000;
+
+export function aiToolLimits(settings: Pick<AiSettings, 'toolRounds' | 'boardWriteBatches'>) {
+  const within = (value: number | undefined, fallback: number, max: number) =>
+    Number.isFinite(value) ? Math.min(max, Math.max(1, Math.floor(value!))) : fallback;
+  return {
+    toolRounds: within(settings.toolRounds, DEFAULT_TOOL_ROUNDS, MAX_TOOL_ROUNDS),
+    boardWriteBatches: within(settings.boardWriteBatches, DEFAULT_BOARD_WRITE_BATCHES, MAX_BOARD_WRITE_BATCHES),
+  };
 }
 
 export const DEFAULT_AI_SETTINGS: AiSettings = {
@@ -41,7 +58,9 @@ export const DEFAULT_AI_SETTINGS: AiSettings = {
   model: 'gpt-4o-mini',
   temperature: 0.7,
   shareBoard: true,
-  contextBudget: 8000,
+  contextBudget: DEFAULT_CONTEXT_BUDGET,
+  toolRounds: DEFAULT_TOOL_ROUNDS,
+  boardWriteBatches: DEFAULT_BOARD_WRITE_BATCHES,
   memoryMode:'auto',
 };
 
@@ -237,7 +256,8 @@ export function normalizeAiSettings(s: AiSettings): AiSettings {
   const reasoning = modelPreset(s.model, s.baseUrl)?.reasoning;
   const normalized = {
     ...s,
-    contextBudget: Math.min(limits.maxInput, Math.max(1000, Math.floor(Number.isFinite(s.contextBudget) ? s.contextBudget : 8000))),
+    ...aiToolLimits(s),
+    contextBudget: Math.min(limits.maxInput, Math.max(1000, Math.floor(Number.isFinite(s.contextBudget) ? s.contextBudget : DEFAULT_CONTEXT_BUDGET))),
     temperature: modelTemperature(s.model, s.temperature,modelPreset(s.model,s.baseUrl)??null),
     reasoningEffort: reasoning ? (reasoning.levels.includes(s.reasoningEffort ?? '') ? s.reasoningEffort : reasoning.default) : undefined,
   };

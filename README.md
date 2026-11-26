@@ -5,7 +5,9 @@
 
 ## 当前版本
 
-[0.4.12 源码预览](https://github.com/theincrediblewwz/lumen/releases/tag/mac-v0.4.12) · [下载 Mac 0.4.0 安装包](https://github.com/theincrediblewwz/lumen/releases/tag/mac-v0.4.0) · [白板编辑与保存](./docs/CANVAS_AUTHORING.md)
+[0.4.13 源码预览](https://github.com/theincrediblewwz/lumen/releases/tag/mac-v0.4.13) · [下载 Mac 0.4.0 安装包](https://github.com/theincrediblewwz/lumen/releases/tag/mac-v0.4.0) · [白板编辑与保存](./docs/CANVAS_AUTHORING.md)
+
+**0.4.13 白板长任务与交互修复。** 工具轮次和写入批次可调。暂停时保留已保存的白板操作和对话进度。导出提示约三秒淡出，顶栏说明可完整显示，并修复保存或拖动中断后卡住的问题。
 
 **0.4.12 AI 排版与对话诊断。** AI 工作区可按阅读顺序排布节点，选择方向和间距，并在应用前预览配色与高亮。普通对话可查看本次响应各阶段的耗时，节点引用会随白板更新。
 

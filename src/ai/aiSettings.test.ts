@@ -94,7 +94,7 @@ describe('named configurations', () => {
   });
   it('enforces numeric limits and preserves sharing permission', () => {
     const s = normalizeAiSettings({ ...DEFAULT_AI_SETTINGS, baseUrl:'https://api.xiaomimimo.com/v1', model: 'mimo-v2.6-pro', maxTokens: Infinity, contextBudget: Infinity, temperature: 10, shareBoard: false });
-    expect(s.contextBudget).toBe(8000);
+    expect(s.contextBudget).toBe(128000);
     expect(s.maxTokens).toBe(131072);
     expect(s.temperature).toBe(1);
     expect(s.shareBoard).toBe(false);

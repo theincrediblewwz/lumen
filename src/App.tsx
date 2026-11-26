@@ -22,7 +22,7 @@ import { ShortcutsHelp } from './components/ShortcutsHelp';
 import { matchShortcut, isEditableTarget, shortcut } from './canvas/shortcuts';
 import { exportMarkdown, exportHtml, exportSvg } from './canvas/boardExport';
 import { loadSettings, saveSettings, applySettings, type Settings } from './settings';
-import { registerEditorFlush,registerLibraryRefresh } from './sync/events';
+import { registerEditorFlush, registerLibraryRefresh, type EditorFlushRequest } from './sync/events';
 import { getSyncStatus, startForegroundSync } from './sync/service';
 import { KnowledgeLibrary } from './components/KnowledgeLibrary';
 import type { KnowledgeDraft } from './knowledge/store';
@@ -156,6 +156,15 @@ export default function App() {
   const busyRef = useRef(false);
   const [error, setError] = useState<string | null>(null);
   const [archiveStatus, setArchiveStatus] = useState<string | null>(null);
+  const [exportNotice, setExportNotice] = useState<{ text: string; fading: boolean } | null>(null);
+  useEffect(() => {
+    if (!exportNotice) return;
+    const timer = window.setTimeout(() => {
+      setExportNotice(current => current !== exportNotice ? current : exportNotice.fading ? null : { ...exportNotice, fading: true });
+    }, exportNotice.fading ? 240 : 3000);
+    return () => window.clearTimeout(timer);
+  }, [exportNotice]);
+  const reportExport = (text: string) => setExportNotice({ text, fading: false });
   const onKnowledgeEditingChange = useCallback((editing: boolean) => {
     knowledgeEditing.current = editing;
     if (!editing) setError(previous => previous === '当前写作尚未保存，请保存或取消写作后再关闭窗口。' ? null : previous);
@@ -247,9 +256,21 @@ export default function App() {
     try{await flushBoards();}catch(error){window.dispatchEvent(new CustomEvent('lumen:sync-edit-lock',{detail:false}));throw error;}
   }),[flushBoards]);
   useEffect(()=>{
-    const start=()=>{pointerActiveRef.current=true;};const end=()=>{pointerActiveRef.current=false;};
-    window.addEventListener('pointerdown',start);window.addEventListener('pointerup',end);window.addEventListener('pointercancel',end);window.addEventListener('blur',end);
-    return()=>{window.removeEventListener('pointerdown',start);window.removeEventListener('pointerup',end);window.removeEventListener('pointercancel',end);window.removeEventListener('blur',end);};
+    const start = (event: PointerEvent) => { if (event.isPrimary) pointerActiveRef.current = true; };
+    const end = () => { pointerActiveRef.current = false; };
+    const releaseIfIdle = (event: PointerEvent) => { if (pointerActiveRef.current && event.isPrimary && !event.buttons) end(); };
+    window.addEventListener('pointerdown', start, true);
+    window.addEventListener('pointerup', end, true);
+    window.addEventListener('pointercancel', end, true);
+    window.addEventListener('pointermove', releaseIfIdle, true);
+    window.addEventListener('blur', end);
+    return () => {
+      window.removeEventListener('pointerdown', start, true);
+      window.removeEventListener('pointerup', end, true);
+      window.removeEventListener('pointercancel', end, true);
+      window.removeEventListener('pointermove', releaseIfIdle, true);
+      window.removeEventListener('blur', end);
+    };
   },[]);
   useEffect(()=>{
     if(!('__TAURI_INTERNALS__' in window))return;
@@ -270,7 +291,15 @@ export default function App() {
   useEffect(()=>{if(phase==='ready')return startForegroundSync();},[phase,root]);
   useEffect(()=>{
     const lock=(value:boolean)=>{syncLockRef.current=value;setSyncLocked(value);};
-    const onLock=(event:Event)=>lock(!!(event as CustomEvent<boolean>).detail);
+    let remoteLockId: string | undefined;
+    const onLock = (event: Event) => {
+      const locked = !!(event as CustomEvent<boolean>).detail;
+      if (!locked) remoteLockId = undefined;
+      lock(locked);
+    };
+    const unlockRemote = (requestId: string) => {
+      if (remoteLockId === requestId) window.dispatchEvent(new CustomEvent('lumen:sync-edit-lock', { detail: false }));
+    };
     let generation=0;
     const refresh=async()=>{
       const request=++generation;
@@ -297,13 +326,27 @@ export default function App() {
     let disposed=false;const stops:(()=>void)[]=[];
     if('__TAURI_INTERNALS__' in window)void import('@tauri-apps/api/event').then(async({listen,emit})=>{
       const add=async(p:Promise<()=>void>)=>{const stop=await p;if(disposed)stop();else stops.push(stop);};
-      await add(listen<{requestId:string}>('lumen://flush-editor',async event=>{
-        let error:string|undefined;
-        if(syncLockRef.current||pointerActiveRef.current||(isEditableTarget(document.activeElement)&&!document.activeElement?.closest('.ai-root,.conversation-import')))error='主窗口正在操作或同步，请稍后保存';
-        else {lock(true);try{await flushBoards();}catch(e){error=String(e);lock(false);}}
-        await emit('lumen://flush-complete',{requestId:event.payload.requestId,error});
+      await add(listen<{ requestId: string }>('lumen://release-editor', ({ payload }) => unlockRemote(payload.requestId)));
+      await add(listen<EditorFlushRequest>('lumen://flush-editor', async ({ payload: { requestId, deadline } }) => {
+        let expiry: ReturnType<typeof setTimeout> | undefined;
+        try {
+          if (!Number.isFinite(deadline) || Date.now() >= deadline) throw new Error('保存请求已过期，请重试');
+          if (syncLockRef.current || pointerActiveRef.current || (isEditableTarget(document.activeElement) && !document.activeElement?.closest('.ai-root,.conversation-import')))
+            throw new Error('主窗口正在操作或同步，请稍后保存');
+          remoteLockId = requestId;
+          window.dispatchEvent(new CustomEvent('lumen:sync-edit-lock', { detail: true }));
+          expiry = setTimeout(() => unlockRemote(requestId), deadline - Date.now());
+          await flushBoards();
+          if (remoteLockId !== requestId || Date.now() >= deadline) throw new Error('保存请求已过期，请重试');
+          clearTimeout(expiry);
+          await emit('lumen://flush-complete', { requestId });
+        } catch (error) {
+          unlockRemote(requestId);
+          await emit('lumen://flush-complete', { requestId, error: String(error) }).catch(() => {});
+        } finally {
+          clearTimeout(expiry);
+        }
       }));
-      await add(listen('lumen://release-editor',()=>lock(false)));
       await add(listen<{fromMain?:boolean;requestId?:string}>('lumen://library-changed',async event=>{
         if(event.payload?.fromMain)return;
         let error:string|undefined;try{await refresh();}catch(e){error=String(e);}
@@ -743,8 +786,7 @@ export default function App() {
             saved = await api.exportBinary(activeProject.id, b.id, `${base}.png`, b64);
           }
         }
-        setError(`已导出到：${saved}`);
-        window.setTimeout(() => setError(null), 4000);
+        if (saved) reportExport(`已导出到：${saved}`);
       } catch (err) {
         setError(`导出失败：${String(err)}`);
       }
@@ -753,7 +795,8 @@ export default function App() {
   const exportLibrary = (project?: ProjectMeta) => void withBusy(async () => {
     if (knowledgeEditing.current) throw Error('请先保存或取消知识草稿，再导出已保存内容。');
     const result = await exportLibraryPackage(project, setArchiveStatus);
-    if (result) setArchiveStatus(`已导出 ${result.projects} 个项目、${result.boards} 块白板、${result.files} 个文件到：${result.path}。含知识、原件和历史，不含连接密钥。`);
+    setArchiveStatus(null);
+    if (result) reportExport(`已导出 ${result.projects} 个项目、${result.boards} 块白板、${result.files} 个文件到：${result.path}`);
   });
   const restoreLibrary = () => void withBusy(async () => {
     if (knowledgeEditing.current) throw Error('请先保存或取消知识草稿，再恢复资料。');
@@ -807,7 +850,7 @@ export default function App() {
               {type:'item',label:'备份全部内容…',onClick:()=>exportLibrary()},
               {type:'item',label:'导出当前项目…',disabled:!activeProject,onClick:()=>activeProject&&exportLibrary(activeProject)},
               ...(activeBoard ? [
-              {type:'item',label:'完整白板资料包（含原件）',onClick:()=>void withBusy(async()=>{const saved=await exportBoardPackage(activeBoard.projectId,activeBoard.id,activeBoard.name);if(saved)setError(`已导出到：${saved}`);})},
+              {type:'item',label:'完整白板资料包（含原件）',onClick:()=>void withBusy(async()=>{const saved=await exportBoardPackage(activeBoard.projectId,activeBoard.id,activeBoard.name);if(saved)reportExport(`已导出到：${saved}`);})},
               { type: 'item', label: 'Markdown · 保留层级', onClick: () => doExport('md') },
               { type: 'item', label: 'HTML · 离线阅读', onClick: () => doExport('html') },
               { type: 'item', label: 'SVG · 矢量图', onClick: () => doExport('svg') },
@@ -987,7 +1030,7 @@ export default function App() {
         onSettings={() => setSettingsOpen(true)}
         onFullscreen={enterFullscreen}
         fullscreen={fullscreen}
-        fadeToCanvas={!knowledgeOpen && !error && !archiveStatus}
+        fadeToCanvas={!knowledgeOpen}
         boardAction={activeBoard && !knowledgeOpen && <span className="titlebar-board-action" ref={setBoardActionSlot}/>}
         filter={!knowledgeOpen && !branchFocusActive && <TagFilter key={filterKey} tags={tags} active={tagFilter}
           onChange={ids => setTagFilters(old => ({ ...old, [filterKey]: ids }))} />}
@@ -996,14 +1039,13 @@ export default function App() {
         path={<ProjectPath path={knowledgeOpen ? [] : projectTrail} board={knowledgeOpen ? '知识库' : activeBoard?.name} onNavigate={navigateProject} />}
       />
 
-      {(error || archiveStatus) && <div className={`error-bar${error ? '' : ' is-information'}`} role="status">{error || archiveStatus}</div>}
-
       <div className="workspace">
         {knowledgeOpen ? <KnowledgeLibrary boardId={activeBoard?.id} boardName={activeBoard?.name} boardPolicy={activeBoard?._sync_content_policy} indexCollapsed={knowledgeIndexCollapsed} {...knowledgeTarget} onEditingChange={onKnowledgeEditingChange} onNavigationReady={registerKnowledgeNavigation} onClose={() => { setKnowledgeOpen(false); setError(null); }} /> : activeBoard ? (
           <BoardCanvas
             key={`${activeBoard.id}:${boardGeneration}`}
             board={activeBoardRef.current ?? activeBoard}
             scope={canvasScope || root || ''}
+            syncMutationLock={syncLockRef}
             fullscreen={fullscreen}
             actionSlot={boardActionSlot} onBranchFocusChange={setBranchFocusActive}
             onChange={onCanvasChange} onViewportChange={onViewportChange} onFlush={flushBoards} saveState={saveState}
@@ -1056,6 +1098,8 @@ export default function App() {
           />
         )}
       </div>
+      {(error || archiveStatus) && <div className={`error-bar${error ? '' : ' is-information'}`} role="status">{error || archiveStatus}</div>}
+      {!error && !archiveStatus && exportNotice && <div className={`error-bar is-information export-notice${exportNotice.fading ? ' is-fading' : ''}`} role="status">{exportNotice.text}</div>}
       {fullscreenExit}
       {activeBoard&&!knowledgeOpen&&!branchFocusActive&&<button className={`board-save-state is-${saveState}`} title="内容自动保存 · Cmd/Ctrl+S立即保存" onClick={()=>void flushBoards().catch(e=>setError(String(e)))}>{saveState==='saved'?'已保存':saveState==='saving'?'保存中…':saveState==='error'?'保存失败 · 点击重试':'等待保存…'}</button>}
       {syncLocked&&<div className="sync-edit-lock" role="status">正在保存并同步资料…</div>}

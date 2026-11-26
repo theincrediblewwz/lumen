@@ -7,12 +7,13 @@ import {
   resolveAiCredentials,
   isAiConfigured,
   savedAiSettingsAvailable,
+  aiToolLimits,
   type AiSettings,
 } from '../ai/aiSettings';
 import { ArrowUp, History, MoreHorizontal, SlidersHorizontal, Square, SquarePen, X } from 'lucide-react';
 import { AiSettingsForm } from './AiSettingsForm';
 import { loadCatalogue } from '../ai/catalogStore';
-import { streamChatAgentic, streamChat, type StreamHandle } from '../ai/aiClient';
+import { streamChatAgentic, streamChat, type AiRunLimit, type StreamHandle } from '../ai/aiClient';
 import { TOOL_DEFS, WRITE_TOOL, type ToolContext } from '../ai/tools';
 import { buildBoardContext, buildSystemPrompt, focusedNodeContext } from '../ai/boardContext';
 import { fitWithinBudget } from '../ai/budget';
@@ -67,17 +68,15 @@ export interface Props {
 }
 interface PaneProps extends Props { freshId?:string;initialHistory?:boolean;onConversationDeleted:(item:DeletedConversation)=>void; paneKey:string; onNavigate:(id?:string,messages?:string[])=>void; onSessionStatus:(key:string,status:SessionStatus)=>void; sessionSignals:Record<string,SessionStatus> }
 
-interface UiMessage {
+interface UiMessage extends StoredMessage {
   id: string;
-  at: string;
-  role: 'user' | 'assistant';
-  content: string;
   /** 正在流式生成中 */
   streaming?: boolean;
-  error?: boolean;
   /** 正在调用的工具名（agentic 查阅白板时显示） */
   tool?: string;
 }
+
+const storedMessage = ({ id, at, role, content, error, pause }: UiMessage): StoredMessage => ({ id, at, role, content, error, pause });
 
 const TOOL_LABELS: Record<string, string> = {
   read_board_outline: '查看白板结构',
@@ -339,15 +338,7 @@ export function ChatPane({ projectId, boardId, boardName, nodeId: requestedNode,
   const persist = useCallback(
     async (uiMsgs: UiMessage[]):Promise<boolean> => {
       if (!loadedRef.current) return true;
-      const stored: StoredMessage[] = uiMsgs
-        .filter((m) => m.content)
-        .map((m) => ({
-          id: m.id,
-          role: m.role,
-          content: m.content,
-          error: m.error,
-          at: m.at,
-        }));
+      const stored = uiMsgs.filter(m => m.content || m.pause).map(storedMessage);
       if (stored.length === 0) return true;
       const now = new Date().toISOString();
       const conv: Conversation = {
@@ -528,10 +519,13 @@ export function ChatPane({ projectId, boardId, boardName, nodeId: requestedNode,
     const nodeContext=requestBoard&&settings.shareBoard?focusedNodeContext(requestBoard,sourceNodeId):'';
     if(!currentRequest())return;
     const canWrite=!!permission?.policy.enabled && settings.shareBoard;
-    const systemMessage:ChatMessage = { role: 'system', content: buildSystemPrompt(requestBoard&&settings.shareBoard ? buildBoardContext(requestBoard,settings.contextBudget) : '', settings.shareBoard) + nodeContext + (canWrite?'\n\n用户已在本机授权白板整理。需要新建节点/追加文档/连线时调用 apply_board_operations，操作参数只放工具通道。在生成新节点的内容前先理清主线、父子关系和阅读顺序，可在 Markdown 中用 =={#RRGGBB}关键词== 突出少量重点。需要调整已有节点的位置、颜色或整板布局时，引导用户用 AI 工作区。不要在正文贴操作 JSON。操作成功后用节点引用简述结果。每次发送最多4批，失败须如实报告。':'\n\n当前未开启AI修改白板，只能读取与建议。可说明设置中的“AI整理白板”入口。') };
+    const { toolRounds, boardWriteBatches } = aiToolLimits(settings);
+    const systemMessage:ChatMessage = { role: 'system', content: buildSystemPrompt(requestBoard&&settings.shareBoard ? buildBoardContext(requestBoard,settings.contextBudget) : '', settings.shareBoard) + nodeContext + (canWrite?`\n\n用户已在本机授权白板整理。需要新建节点/追加文档/连线时调用 apply_board_operations，操作参数只放工具通道。在生成新节点前先理清主线、父子关系和阅读顺序，可在 Markdown 中用 =={#RRGGBB}关键词== 突出少量重点。需要调整已有节点的位置、颜色或整板布局时，引导用户用 AI 工作区。单次发送允许 ${toolRounds} 轮工具请求和 ${boardWriteBatches} 批白板写入。大任务按工具规定逐批提交，之后用回执中的节点 ID 处理后续批次。续做先核对最新白板，避免重复已保存的操作。只报告有成功回执的操作，最后说明还需核对或完成的部分。`:'\n\n当前未开启AI修改白板，只能读取与建议。可说明设置中的“AI整理白板”入口。') };
+    const question: ChatMessage = { role: 'user', content: text };
     const definitions=[...(settings.shareBoard&&requestBoard?TOOL_DEFS:[]),...CONVERSATION_TOOLS,...(canWrite?[WRITE_TOOL]:[])];
     const toolTokens=requestInputTokens([],definitions);
-    if(requestInputTokens([systemMessage,{role:'user',content:text}],definitions)+knowledgeTokens+32>settings.contextBudget){setCaptureStatus('问题、白板和个人参考超过当前预算，请减少内容或增大上下文预算');return;}
+    const pinnedTokens = requestInputTokens([systemMessage, question], definitions) + knowledgeTokens;
+    if(pinnedTokens+32>settings.contextBudget){setCaptureStatus('问题、白板和个人参考超过当前预算，请减少内容或增大上下文预算');return;}
     if (!currentRequest()) return;
     markPhase('context');
     setProgress('正在确认对话写入状态');
@@ -579,7 +573,7 @@ export function ChatPane({ projectId, boardId, boardName, nodeId: requestedNode,
     markPhase('question');
     if(!questionSaved){setMessages(prev=>prev.filter(m=>m.id!==replyId));streamStarted=false;setBusy(false);return;}
     if(!currentRequest())return;
-    const originalMessages=messagesRef.current.filter(m=>m.content&&!m.streaming).map(({id,at,role,content,error})=>({id,at,role,content,error}));
+    const originalMessages=messagesRef.current.filter(m=>(m.content||m.pause)&&!m.streaming).map(storedMessage);
     const priorMessages=originalMessages.slice(0,-1);
     const memoryBudget=settings.contextBudget-toolTokens-knowledgeTokens-messageTokens(systemMessage)-messageTokens({role:'user',content:text})-160;
     const prepared=connection.memoryMode==='off'?{memory:undefined,remaining:priorMessages,notice:''}:await prepareMemory({id:convId,messages:priorMessages,budget:memoryBudget,model:connection.model,current:currentRequest,progress:setProgress,generate:prompt=>new Promise<string>((resolve,reject)=>{
@@ -591,8 +585,10 @@ export function ChatPane({ projectId, boardId, boardName, nodeId: requestedNode,
     setMemory(prepared.memory);if(prepared.notice)setCaptureStatus(prepared.notice);
     const remembered:ChatMessage|undefined=prepared.memory?{role:'user',content:memoryData(prepared.memory)}:undefined;
     const useMemory=remembered&&messageTokens(remembered)<Math.max(0,memoryBudget*.65);
-    const rawHistory:ChatMessage[]=[systemMessage,...(useMemory?prepared.remaining:priorMessages).filter(m=>!m.error).map(m=>({role:m.role,content:m.content})),{role:'user',content:text}];
-    const history=fitWithinBudget(rawHistory,settings.contextBudget-knowledgeTokens-toolTokens-(useMemory?messageTokens(remembered!):0)-64,0).messages;
+    const rawHistory:ChatMessage[]=[systemMessage,...(useMemory?prepared.remaining:priorMessages).filter(m=>!m.error).map(m=>({role:m.role,content:m.pause?`${m.content}\n\n[此回答未完成] ${m.pause}`:m.content})),question];
+    const memoryTokens = useMemory ? messageTokens(remembered!) : 0;
+    const toolReserve = Math.min(12_000, Math.floor(settings.contextBudget * .2), Math.max(0, settings.contextBudget - pinnedTokens - memoryTokens - 64));
+    const history=fitWithinBudget(rawHistory,settings.contextBudget-knowledgeTokens-toolTokens-memoryTokens-toolReserve-64,0).messages;
     if(useMemory)history.splice(1,0,remembered!);
     if(refs.length)history.splice(history.length-1,0,knowledgeMessage);
     markPhase('memory');
@@ -600,15 +596,16 @@ export function ChatPane({ projectId, boardId, boardName, nodeId: requestedNode,
 
     // 白板共享开启且已加载白板时，注入工具上下文让 AI 主动查阅（M5-3）
     const toolCtx: ToolContext = {board:requestBoard,shareBoard:settings.shareBoard,allowBoard:()=>loadAiSettingsDeferred().shareBoard,conversationMessages:originalMessages,readDoc:p=>api.docRead(projectId,boardId,p,conversationScope.current)};
+    let savedBatches = 0;
     if(canWrite){
-      let writes=0;const receipts=new Map<string,string>();
+      const receipts=new Map<string,string>();
       toolCtx.applyOperations=async(args,callId)=>{
         const requestId=receipts.get(callId)??`op_${crypto.randomUUID().replace(/-/g,'')}`;receipts.set(callId,requestId);
-        if(++writes>4)return '本次发送已达4批操作上限，请核对白板后另发请求。';
         writeLock.current=true;setWritingBoard(true);
         let writeDone!:()=>void;pendingWrite.current=new Promise<void>(resolve=>{writeDone=resolve;});
         try{
           const result=await commitBoardOperations(projectId,boardId,args as unknown as OperationBatch,requestId,permission,toolCtx.board,()=>!!toolCtx.cancelled?.()||!mounted.current);
+          if (!result.reused) savedBatches++;
           toolCtx.board=result.board;
           boardReadEpoch.current++;
           adoptBoard(toolCtx.board);
@@ -620,10 +617,13 @@ export function ChatPane({ projectId, boardId, boardName, nodeId: requestedNode,
       };
     }
 
-    const finishReply=async(error?:string)=>{
+    const finishReply=async(error?:string, limit?: AiRunLimit)=>{
       if(generation.current!==requestGeneration)return;
-      patchLast(m=>({...m,content:error?(m.content||`⚠️ ${error}`):m.content+knowledgeReferenceLinks(refs),streaming:false,tool:undefined,error:!!error}));
-      if(error)setCaptureStatus(error);
+      const reason = limit?.message ?? (savedBatches > 0 ? error : undefined);
+      const pause = reason ? `${savedBatches ? `已保存 ${savedBatches} 批白板操作。` : ''}${reason}`.slice(0, 1200) : undefined;
+      const failed = !!error && !pause;
+      patchLast(m=>({...m,content:failed?(m.content||`⚠️ ${error}`):m.content+knowledgeReferenceLinks(refs),streaming:false,tool:undefined,error:failed,pause}));
+      if (pause || error) setCaptureStatus(pause ? '' : error!);
       setProgress('正在保存对话');
       phaseStarted = performance.now();
       handleRef.current=null;
@@ -631,7 +631,7 @@ export function ChatPane({ projectId, boardId, boardName, nodeId: requestedNode,
       const saved = await persist(messagesRef.current);
       if(saved)await releaseLease(claimed);
       markPhase('save');
-      finishTiming(error || !saved || leaseRef.current === claimed ? 'failed' : 'completed');
+      finishTiming(failed || !saved || leaseRef.current === claimed ? 'failed' : pause ? 'paused' : 'completed');
       requestActive.current=false;
       if(mounted.current){setBusy(false);setProgress('');}
     };
@@ -685,6 +685,7 @@ export function ChatPane({ projectId, boardId, boardName, nodeId: requestedNode,
           setProgress(`正在${TOOL_LABELS[name] ?? '执行工具'}`);patchLast((m) => ({ ...m, tool: TOOL_LABELS[name] ?? name }));
         },
         onDone: () => {void finishReply();},
+        onLimit: notice => {void finishReply(undefined, notice);},
         onError: (msg) => {void finishReply(msg);},
       },
       toolCtx,
@@ -737,12 +738,12 @@ export function ChatPane({ projectId, boardId, boardName, nodeId: requestedNode,
 
   const exportTranscript=async()=>{
     try{
-      const original=messagesRef.current.filter(m=>m.content);
+      const original=messagesRef.current.filter(m=>m.content||m.pause);
       if(!original.length)return;
       const {save}=await import('@tauri-apps/plugin-dialog');
       const destination=await save({title:'导出当前对话 Markdown',defaultPath:'Lumen-对话.md',filters:[{name:'Markdown',extensions:['md']}]});
       if(!destination)return;
-      const markdown=`# ${deriveTitle(original)}\n\n${original.map(m=>`## ${m.role==='user'?'提问':'回答'}${m.streaming?' · 尚未完成':m.error?' · 未完成或失败':''}\n\n${m.content}`).join('\n\n---\n\n')}\n`;
+      const markdown=`# ${deriveTitle(original)}\n\n${original.map(m=>`## ${m.role==='user'?'提问':'回答'}${m.streaming?' · 尚未完成':m.error?' · 未完成或失败':m.pause?' · 已暂停':''}\n\n${m.content}${m.pause?`\n\n> ${m.pause.replace(/\n/g, ' ')}`:''}`).join('\n\n---\n\n')}\n`;
       await invoke('chat_transcript_export',{markdown,destination});setCaptureStatus('当前对话已导出，原始记录未改动。');
     }catch(error){setCaptureStatus(`导出未完成：${String(error)}`);}
   };
@@ -761,7 +762,7 @@ export function ChatPane({ projectId, boardId, boardName, nodeId: requestedNode,
       const key = await captureKey(convId, selected);
       const markdown = conversationMarkdown(title, convId, selected, captureParent || undefined,{projectId,boardId});
       const now=new Date().toISOString();
-      const conversation={id:convId,title:deriveTitle(messages),sourceNodeId,createdAt:chats.conversations.find(c=>c.id===convId)?.createdAt??messages[0]?.at??now,updatedAt:now,messages:messages.filter(m=>!m.streaming&&m.content).map(({id,at,role,content,error})=>({id,at,role,content,error}))};
+      const conversation={id:convId,title:deriveTitle(messages),sourceNodeId,createdAt:chats.conversations.find(c=>c.id===convId)?.createdAt??messages[0]?.at??now,updatedAt:now,messages:messages.filter(m=>!m.streaming&&(m.content||m.pause)).map(storedMessage)};
       let attached:OperationResult|undefined;
       if(targetNode){const current=await api.boardLoad(projectId,boardId);attached=await invoke<OperationResult>('chat_document_attach',{projectId,boardId,expectedRevision:current._disk_revision,expectedScope:conversationScope.current,requestId:`doc_${key}_${targetNode.slice(-40)}`,nodeId:targetNode,title,markdown,conversation});}
       const next = attached?.board ?? await invoke<BoardFile>('chat_capture', { projectId, boardId, key, title, markdown, conversationId:convId, conversation, messageIds:selected.map(m=>m.id), parentId:captureParent || null,expectedScope:conversationScope.current });
@@ -960,9 +961,21 @@ export function ChatPane({ projectId, boardId, boardName, nodeId: requestedNode,
                     projectId={projectId}
                     boardId={boardId}
                   />
-                ) : m.tool ? null : (
+                ) : m.streaming && !m.tool ? (
                   <div className="ai-typing"><span></span><span></span><span></span></div>
-                )}
+                ) : null}
+                {m.pause && <div className="ai-reply-pause">
+                  <span role="status">{m.pause}</span>
+                  {m.id === messages.at(-1)?.id && <button type="button" className="ai-btn-secondary"
+                    disabled={interactionLocked || !configured || !!input.trim()}
+                    onClick={() => {
+                      const previous = messages.at(-2);
+                      const original = previous?.role === 'user' ? `请按消息 ID ${previous.id} 核对上一次的原始提问。` : '';
+                      const boardCheck = settings.shareBoard ? '先检查当前白板和已保存回执，只补齐遗漏的操作。' : '先核对已经回答的内容。';
+                      setInput(`继续上次暂停的任务。${original}${boardCheck}请说明这次完成的内容和仍待处理的事项。`);
+                      inputRef.current?.focus();
+                    }}>继续未完成部分</button>}
+                </div>}
                 {capturableIds.has(m.id) && <details className={`ai-message-tools${selectedMessages.has(m.id) ? ' is-selected' : ''}`}>
                   <summary aria-label="消息操作">{selectedMessages.has(m.id) ? '已选择' : null}<MoreHorizontal size={16} aria-hidden="true"/></summary>
                   <div className="ai-capture-actions">

@@ -1,8 +1,9 @@
 import { afterEach, expect, it, vi } from 'vitest';
-import { streamChatAgentic, type AiRoundTiming } from './aiClient';
+import { streamChatAgentic, type AiRoundTiming, type AiRunLimit } from './aiClient';
 import { DEFAULT_AI_SETTINGS } from './aiSettings';
 import type { ToolContext } from './tools';
 import { setCatalogProviders } from './modelCatalog';
+import { requestInputTokens, type ChatMessage } from './provider';
 
 afterEach(() => {vi.unstubAllGlobals();setCatalogProviders([]);});
 const settings = { ...DEFAULT_AI_SETTINGS, baseUrl: 'https://synthetic.invalid/v1', apiKey: 'mock-key' };
@@ -132,7 +133,72 @@ it('reserves a final answer after the tool limit, keeps schemas stable, and neve
  for(const respectsLimit of [true,false]){
   const fetcher=vi.fn(async(_url,init)=>{const request=JSON.parse(init.body);const final=request.tool_choice==='none';const delta=final&&respectsLimit?{content:'已完成查阅；仍有未确定部分。'}:{tool_calls:[{index:0,id:'call-'+fetcher.mock.calls.length,type:'function',function:{name:'read_board_outline',arguments:'{}'}}]};return new Response('data: '+JSON.stringify({choices:[{delta,finish_reason:'tool_calls'in delta?'tool_calls':'stop'}]})+'\n\ndata: [DONE]\n\n');});vi.stubGlobal('fetch',fetcher);
   const tools:ToolContext={board:{version:1,id:'b',projectId:'p',name:'合成',nodes:[],edges:[],viewport:{x:0,y:0,zoom:1},created_at:'',updated_at:''},readDoc:async()=>''};const starts=vi.fn();let visible='';
-  const result=await new Promise<string>(resolve=>streamChatAgentic({...settings,contextBudget:100000},[{role:'user',content:'查阅后说明'}],{onDelta:d=>{visible+=d;},onToolStart:starts,onDone:()=>resolve('done'),onError:resolve},tools));expect(fetcher).toHaveBeenCalledTimes(5);expect(starts).toHaveBeenCalledTimes(4);const bodies=fetcher.mock.calls.map(call=>JSON.parse(call[1].body));expect(bodies.at(-1).tool_choice).toBe('none');expect(bodies.at(-1).tools).toEqual(bodies[0].tools);
+  const result=await new Promise<string>(resolve=>streamChatAgentic({...settings,contextBudget:100000,toolRounds:4},[{role:'user',content:'查阅后说明'}],{onDelta:d=>{visible+=d;},onToolStart:starts,onDone:()=>resolve('done'),onError:resolve},tools));expect(fetcher).toHaveBeenCalledTimes(5);expect(starts).toHaveBeenCalledTimes(4);const bodies=fetcher.mock.calls.map(call=>JSON.parse(call[1].body));expect(bodies.at(-1).tool_choice).toBe('none');expect(bodies.at(-1).tools).toEqual(bodies[0].tools);
   if(respectsLimit){expect(result).toBe('done');expect(visible).toContain('未确定');}else expect(result).toContain('上限');
  }
+});
+
+const syntheticBoard: ToolContext['board'] = {
+  version: 1, id: 'board', projectId: 'project', name: '合成', nodes: [], edges: [],
+  viewport: { x: 0, y: 0, zoom: 1 }, created_at: '', updated_at: '',
+};
+
+function providerReply(delta: Record<string, unknown>, finish_reason: string) {
+  return new Response(`data: ${JSON.stringify({ choices: [{ delta, finish_reason }] })}\n\ndata: [DONE]\n\n`);
+}
+
+function syntheticWrite(round: number, markdown: string) {
+  return { index: 0, id: `write-${round}`, type: 'function', function: {
+    name: 'apply_board_operations', arguments: JSON.stringify({ schema: 'lumen.board-operations/v1', operations: [
+      { type: 'create_node', reference: 'new', title: `节点 ${round}`, markdown },
+    ] }),
+  } };
+}
+
+it('continues more than the former four batches under a small budget and keeps whole recent tool turns', async () => {
+  const requests: { messages: ChatMessage[]; tools: unknown[]; tool_choice: string }[] = [];
+  const fetcher = vi.fn(async (_url, init) => {
+    requests.push(JSON.parse(init.body));
+    const round = requests.length;
+    if (round > 9) return providerReply({ content: '九个节点已保存。' }, 'stop');
+    const size = round === 2 ? 1800 : round === 8 ? 950 : 380;
+    return providerReply({ tool_calls: [syntheticWrite(round, '合成材料'.repeat(size))], reasoning_content: `思考 ${round}` }, 'tool_calls');
+  });
+  vi.stubGlobal('fetch', fetcher);
+  const apply = vi.fn(async (_args, id) => JSON.stringify({ summary: `${id} 已保存`, nodes: { new: `n_${id}` } }));
+  const pinned = '最新问题原样保留。';
+  const budget = 5000;
+  await new Promise<void>((resolve, reject) => streamChatAgentic({ ...settings, contextBudget: budget }, [{ role: 'user', content: pinned }], {
+    onDelta: () => {}, onDone: resolve, onError: reject, onLimit: notice => reject(Error(notice.message)),
+  }, { board: syntheticBoard, readDoc: async () => '', applyOperations: apply }));
+  expect(apply).toHaveBeenCalledTimes(9);
+  expect(requests).toHaveLength(10);
+  for (const request of requests) {
+    expect(requestInputTokens(request.messages, request.tools)).toBeLessThanOrEqual(budget);
+    expect(request.messages).toContainEqual({ role: 'user', content: pinned });
+    expect(request.tool_choice).toBe('auto');
+    expect(request.messages.flatMap(m => m.tool_calls?.map(call => call.id) ?? [])).toEqual(request.messages.filter(m => m.role === 'tool').map(m => m.tool_call_id));
+  }
+  const final = requests.at(-1)!.messages;
+  expect(final.find(m => m.content.includes('较早的'))?.content).toContain('n_write-2');
+  expect(requests[8].messages.find(m => m.tool_calls?.[0].id === 'write-8')?.reasoning_content).toBe('思考 8');
+  expect(final.find(m => m.tool_calls?.[0].id === 'write-9')?.reasoning_content).toBe('思考 9');
+});
+
+it.each(['toolRounds', 'writeBatches', 'output'] as const)('reports the specific %s limit and never applies the refused call', async reason => {
+  let round = 0;
+  vi.stubGlobal('fetch', vi.fn(async () => {
+    round++;
+    const delta = { tool_calls: [syntheticWrite(round, '合成')] };
+    return reason === 'output' && round === 2 ? providerReply({ ...delta, content: '部分回答' }, 'length') : providerReply(delta, 'tool_calls');
+  }));
+  const apply = vi.fn(async () => '{"summary":"已保存"}');
+  const notice = await new Promise<AiRunLimit>((resolve, reject) => streamChatAgentic({ ...settings,
+    toolRounds: reason === 'toolRounds' ? 1 : 8, boardWriteBatches: reason === 'writeBatches' ? 1 : 8,
+  }, [{ role: 'user', content: '合成任务' }], {
+    onDelta: () => {}, onDone: () => reject(Error('limit reported as complete')), onError: reject, onLimit: resolve,
+  }, { board: syntheticBoard, readDoc: async () => '', applyOperations: apply }));
+  expect(notice.reason).toBe(reason);
+  expect(apply).toHaveBeenCalledTimes(1);
+  expect(round).toBe(reason === 'writeBatches' ? 3 : 2);
 });

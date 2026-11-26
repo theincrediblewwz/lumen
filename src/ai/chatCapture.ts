@@ -11,7 +11,7 @@ export function completedCaptureTurns(messages: CaptureCandidate[]): CaptureMess
   const finish = () => { if (current.some(m => m.role === 'assistant')) turns.push(current); current = []; };
   for (const message of messages) {
     if (message.role === 'user') finish();
-    if (!message.streaming && !message.error && message.content.trim()) current.push(message);
+    if (!message.streaming && !message.error && !message.pause && message.content.trim()) current.push(message);
   }
   finish(); return turns;
 }
@@ -32,7 +32,7 @@ export function parseConversationLink(href: string, fallback?: { projectId: stri
   } catch { return null; }
 }
 export function conversationMarkdown(title: string, conversationId: string, messages: CaptureMessage[], parentId?: string, context?:{projectId:string;boardId:string}): string {
-  if (!messages.length || messages.some(m => !m.content.trim() || m.error)) throw new Error('请选择已完成的对话内容');
+  if (!messages.length || messages.some(m => !m.content.trim() || m.error || m.pause)) throw new Error('请选择已完成的对话内容');
   const source = `lumen://conversation/${encodeURIComponent(conversationId)}?messages=${messages.map(m => encodeURIComponent(m.id)).join(',')}${context?`&project=${encodeURIComponent(context.projectId)}&board=${encodeURIComponent(context.boardId)}`:''}`;
   return `# ${title.replace(/[\r\n]/g, ' ')}\n\n[返回原对话](${source})${parentId ? ` · [[node:${parentId}]]` : ''}\n\n${messages.map(m => `## ${m.role === 'user' ? '提问' : '回答'}\n\n${m.content}`).join('\n\n---\n\n')}\n`;
 }

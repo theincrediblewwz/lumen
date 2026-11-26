@@ -1,7 +1,7 @@
 import { BoardWriteSettings } from './BoardWriteSettings';
 import { useCallback, useEffect, useRef, useState, type SelectHTMLAttributes } from 'react';
 import { ChevronDown, CopyPlus, ExternalLink, RotateCcw, Cable, Trash2 } from 'lucide-react';
-import { listAiProfiles, loadAiProfileDeferred, loadAiSettingsDeferred, loadLegacyAiSettingsDeferred, deleteAiProfile, deleteLegacyAiSettings, hasSavedAiKey, isAiConfigured, normalizeAiSettings, saveAiProfile, type AiProfile, type AiSettings } from '../ai/aiSettings';
+import { listAiProfiles, loadAiProfileDeferred, loadAiSettingsDeferred, loadLegacyAiSettingsDeferred, deleteAiProfile, deleteLegacyAiSettings, hasSavedAiKey, isAiConfigured, normalizeAiSettings, saveAiProfile, DEFAULT_TOOL_ROUNDS, MAX_TOOL_ROUNDS, DEFAULT_BOARD_WRITE_BATCHES, MAX_BOARD_WRITE_BATCHES, type AiProfile, type AiSettings } from '../ai/aiSettings';
 import { modelLimits, modelPreset, getProviderPresets, providerFor, recommendedModel, REASONING_LABELS } from '../ai/modelCatalog';
 import { CatalogManager } from './CatalogManager';
 import { testConnection } from '../ai/catalogAssistant';
@@ -160,6 +160,9 @@ export function AiSettingsForm({ initial, onSave, onDelete, onCancel, onBusyChan
           <label className="ai-field"><span>上下文预算 <small>tokens</small></span><input type="number" required min={1000} max={limits.maxInput} step={1} value={Number.isFinite(s.contextBudget) ? s.contextBudget : ''} onChange={e => patch({ contextBudget: e.target.valueAsNumber })} onBlur={normalize}/></label>
           <p className="ai-hint">模型窗口 {limits.window.toLocaleString()}，输入上限 {limits.maxInput.toLocaleString()}。实际输入较长时，输出会按剩余空间调整。</p>
           <label className="ai-field"><span>最大输出 <small>tokens</small></span><input type="number" required min={1} max={limits.maxOutput} step={1} value={Number.isFinite(s.maxTokens) ? s.maxTokens : limits.output} onChange={e => patch({ maxTokens: e.target.valueAsNumber })} onBlur={normalize}/></label>
+          <label className="ai-field"><span>单次发送的工具轮次</span><input type="number" required min={1} max={MAX_TOOL_ROUNDS} step={1} value={s.toolRounds === undefined ? DEFAULT_TOOL_ROUNDS : Number.isFinite(s.toolRounds) ? s.toolRounds : ''} onChange={e => patch({ toolRounds: e.target.valueAsNumber })} onBlur={normalize}/></label>
+          {boardTools && <label className="ai-field"><span>单次发送的白板写入批次</span><input type="number" required min={1} max={MAX_BOARD_WRITE_BATCHES} step={1} value={s.boardWriteBatches === undefined ? DEFAULT_BOARD_WRITE_BATCHES : Number.isFinite(s.boardWriteBatches) ? s.boardWriteBatches : ''} onChange={e => patch({ boardWriteBatches: e.target.valueAsNumber })} onBlur={normalize}/></label>}
+          <p className="ai-hint">一轮可调用多个工具。每批白板写入单独保存，可在白板历史中恢复。复杂任务可以调高额度。</p>
           {preset?.reasoning?<label className="ai-field"><span>思考强度</span><ConfigSelect aria-label="思考强度" value={s.reasoningEffort??preset.reasoning.default} onChange={e=>patch({reasoningEffort:e.target.value})}>{preset.reasoning.levels.map(level=><option key={level} value={level}>{REASONING_LABELS[level]??level}</option>)}</ConfigSelect></label>:<p className="ai-hint">思考强度由服务默认控制。温度采用模型推荐值。</p>}
           {(preset?.note||!limits.known)&&<p className="ai-hint">{preset?.note??'自定义型号使用应用安全上限；请按供应商文档调低。'}</p>}
           <details className="ai-model-documentation"><summary>模型说明与上限</summary><p className="ai-hint">输入与输出上限分别设置，共用总窗口。额度为本地估算，服务商分词、账号与网关限制仍适用。自定义型号默认使用应用百万级上限，可通过模型目录补充其官方能力。</p>{provider && <a href={provider.docs} target="_blank" rel="noreferrer">官方文档<ExternalLink size={12} aria-hidden="true"/></a>}</details>

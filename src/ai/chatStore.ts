@@ -14,6 +14,8 @@ export interface StoredMessage {
   content: string;
   /** 出错的助手消息（不参与后续上下文） */
   error?: boolean;
+  /** A saved, resumable reply with output or whiteboard progress still available. */
+  pause?: string;
   /** ISO 时间戳 */
   at: string;
 }
@@ -55,6 +57,7 @@ export function parseChats(raw: string): ChatsFile {
               role: m.role === 'assistant' ? 'assistant' : 'user',
               content: String(m.content ?? ''),
               error: !!m.error,
+              ...(m.role === 'assistant' && typeof m.pause === 'string' && m.pause.trim() ? { pause: m.pause.slice(0, 1200) } : {}),
               at: String(m.at ?? new Date().toISOString()),
             })),
           })),

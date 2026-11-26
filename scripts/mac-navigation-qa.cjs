@@ -177,6 +177,56 @@ async function drag(dx, dy) {
   await page.waitForFunction(() => window.__fixtureExports.length === 1);
   await page.locator('.sync-edit-lock').waitFor({ state: 'hidden' });
   assert.equal(await page.evaluate(() => window.__fixtureExports[0].boardId), 'board');
+  const exportNotice = page.locator('.export-notice');
+  await exportNotice.waitFor();
+  assert.match(await exportNotice.innerText(), /已导出到/);
+  assert.equal(await exportNotice.evaluate(el => getComputedStyle(el).pointerEvents), 'none');
+  assert.equal(await exportNotice.evaluate(el => getComputedStyle(el).color), await page.evaluate(() => getComputedStyle(document.querySelector('.board-save-state')).color));
+  await page.locator('.branch-focus-toggle').hover();
+  const focusHint = page.getByText('专注于选中节点的分支', { exact: true });
+  await focusHint.waitFor();
+  assert.equal(await focusHint.evaluate(el => {
+    const bounds = el.getBoundingClientRect();
+    el.style.pointerEvents = 'auto';
+    const visible = [bounds.top + 3, bounds.bottom - 3].every(y => document.elementFromPoint(bounds.left + bounds.width / 2, y) === el);
+    el.style.removeProperty('pointer-events');
+    return visible;
+  }), true);
+  await page.screenshot({ path: path.join(output, 'mac-navigation-export-hint.png'), animations: 'disabled' });
+  await exportNotice.waitFor({ state: 'hidden' });
+  checks.push('complete-board export shows a non-blocking information notice that fades; the focus hint paints fully above the board');
+
+  await page.mouse.move(930, 750); await page.mouse.down(); await page.mouse.move(970, 775, { steps: 3 });
+  await page.evaluate(() => window.dispatchEvent(new Event('blur')));
+  await page.mouse.up();
+  const beforeInterruptedPan = await world.evaluate(el => el.style.transform);
+  await page.mouse.move(930, 750); await page.mouse.down(); await page.mouse.move(985, 775, { steps: 3 }); await page.mouse.up();
+  await page.waitForFunction(before => document.querySelector('.board-canvas-live > .canvas-world').style.transform !== before, beforeInterruptedPan);
+  await page.evaluate(() => {
+    window.__fixtureBoardSaveDelay = 1200;
+    window.__fixtureEmit('lumen://flush-editor', { requestId: 'timed-out', deadline: Date.now() + 400 });
+  });
+  await page.locator('.sync-edit-lock').waitFor();
+  await page.locator('.sync-edit-lock').waitFor({ state: 'hidden' });
+  await page.waitForFunction(() => window.__fixtureEvents.some(row => row.event === 'lumen://flush-complete' && row.payload.requestId === 'timed-out' && row.payload.error));
+  await page.evaluate(() => {
+    window.__fixtureBoardSaveDelay = 0;
+    window.__fixtureEmit('lumen://flush-editor', { requestId: 'active', deadline: Date.now() + 2000 });
+  });
+  await page.locator('.sync-edit-lock').waitFor();
+  await page.waitForFunction(() => window.__fixtureEvents.some(row => row.event === 'lumen://flush-complete' && row.payload.requestId === 'active' && !row.payload.error));
+  await page.evaluate(() => window.__fixtureEmit('lumen://release-editor', { requestId: 'timed-out' }));
+  assert.equal(await page.locator('.sync-edit-lock').isVisible(), true);
+  await page.evaluate(() => {
+    window.__fixtureEmit('lumen://library-changed', { requestId: 'reload' });
+    window.__fixtureEmit('lumen://release-editor', { requestId: 'active' });
+  });
+  await page.waitForFunction(() => window.__fixtureEvents.some(row => row.event === 'lumen://refresh-complete' && row.payload.requestId === 'reload' && !row.payload.error));
+  await page.locator('.sync-edit-lock').waitFor({ state: 'hidden' });
+  const beforeReleasedPan = await world.evaluate(el => el.style.transform);
+  await page.mouse.move(930, 750); await page.mouse.down(); await page.mouse.move(885, 725, { steps: 3 }); await page.mouse.up();
+  await page.waitForFunction(before => document.querySelector('.board-canvas-live > .canvas-world').style.transform !== before, beforeReleasedPan);
+  checks.push('a blur-interrupted pan restarts; a timed-out save releases its own lock without disturbing later writes, and panning works after the board reloads');
   await menu();
   await page.getByRole('menuitem', { name: '导入', exact: true }).click();
   assert.equal(await page.getByRole('menuitem', { name: 'PNG · 图片', exact: true }).count(), 0);

@@ -32,5 +32,5 @@ export function conversationTool(name:string,args:Record<string,unknown>,message
  let start=offset;if(start>0&&/[\uDC00-\uDFFF]/.test(m.content[start]))start--;
  let end=Math.min(m.content.length,start+length, start+Math.max(1,Math.floor((cap-220)/6)));
  if(end>start&&end<m.content.length&&/[\uD800-\uDBFF]/.test(m.content[end-1])){if(end-start===1)end++;else end--;}
- return bounded({messageId:m.id,role:m.role,error:!!m.error,incomplete:/\[回答已中止/.test(m.content),offset:start,totalChars:m.content.length,content:m.content.slice(start,end),nextOffset:end<m.content.length?end:null});
+ return bounded({messageId:m.id,role:m.role,error:!!m.error,incomplete:!!m.pause||/\[回答已中止/.test(m.content),offset:start,totalChars:m.content.length,content:m.content.slice(start,end),nextOffset:end<m.content.length?end:null});
 }

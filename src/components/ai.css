@@ -702,6 +702,18 @@
 .ai-response-measurements section { margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--border-color); }
 .ai-response-measurements h4, .ai-response-measurements p { margin: 0 0 4px; }
 .ai-response-measurements p:last-child { margin-top: 8px; }
+.ai-reply-pause {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  padding: 8px 12px;
+  border-radius: 10px;
+  background: var(--bg-hover);
+  color: var(--text-secondary);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
 .ai-session-notices { flex:none; min-width:0; background:var(--bg-node); border-bottom:1px solid var(--border-color); }
 .ai-session-notices[data-native-controls='true'] { padding-inline-start:78px; }
 .ai-background-tasks { display:flex; gap:8px; padding:8px 18px; overflow-x:auto; }

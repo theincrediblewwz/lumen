@@ -25,7 +25,7 @@ export async function validMemory(memory:ChatMemory|undefined,id:string,messages
 }
 function validRoles(content:MemoryContent,messages:StoredMessage[]):boolean{
  const roles=new Map(messages.map((m,i)=>[identity(m,i),m.role]));
- const complete=new Set(messages.flatMap((m,i)=>m.role==='assistant'&&!m.error&&!/\[回答已中止/.test(m.content)?[identity(m,i)]:[]));
+ const complete=new Set(messages.flatMap((m,i)=>m.role==='assistant'&&!m.error&&!m.pause&&!/\[回答已中止/.test(m.content)?[identity(m,i)]:[]));
  return content.requirements.every(item=>item.sources.some(id=>roles.get(id)==='user'))&&content.conclusions.every(item=>item.sources.some(id=>roles.get(id)==='assistant'&&complete.has(id)));
 }
 export function loadMemory(id:string):ChatMemory|undefined{
@@ -60,7 +60,7 @@ export function nextMemoryBatch(messages:StoredMessage[],cursor:Cursor,target:nu
     const room=cap-estimateTokens(JSON.stringify(chunks))-90;if(room<100)break;
     const rest=m.content.slice(offset);
     // Measure serialized chunks too: code quotes, backslashes and newlines cost space.
-    const make=(text:string)=>({id:identity(m,index),role:m.role,offset,totalChars:m.content.length,text,incomplete:!!m.error||/\[回答已中止/.test(m.content)});
+    const make=(text:string)=>({id:identity(m,index),role:m.role,offset,totalChars:m.content.length,text,incomplete:!!m.pause||/\[回答已中止/.test(m.content)});
     let lo=0,hi=rest.length;while(lo<hi){const mid=Math.ceil((lo+hi)/2);if(estimateTokens(JSON.stringify([...chunks,make(rest.slice(0,mid))]))<=cap)lo=mid;else hi=mid-1;}
     if(lo&&lo<rest.length&&/[\uD800-\uDBFF]/.test(rest[lo-1]))lo--;
     const text=rest.slice(0,lo);
