@@ -32,6 +32,7 @@ type Props = {
   folderId: string | null;
   folderName?: string;
   tiles: CatalogTile[];
+  foldersWithFavorites: ReadonlySet<string>;
   relations?: ProjectRelation[];
   tags: CatalogTag[];
   filtering: boolean;
@@ -107,17 +108,19 @@ function RelationName({ relation, point, width, height, onClose, onSave }: {
   </form>;
 }
 
-const TileContent = memo(function TileContent({ tile, tags, drop }: { tile: CatalogTile; tags: CatalogTag[]; drop?: string }) {
+const TileContent = memo(function TileContent({ tile, tags, drop, containsFavorites }: {
+  tile: CatalogTile; tags: CatalogTag[]; drop?: string; containsFavorites: boolean;
+}) {
   return <>
     <span className="project-tile-visual" aria-hidden="true" data-drop-project={drop}>
-      <ProjectTileArtwork kind={tile.kind} cover={coverPreset(tile.coverId)} />
+      <ProjectTileArtwork kind={tile.kind} cover={coverPreset(tile.coverId)} containsFavorites={containsFavorites} />
     </span>
     <span className="project-tile-title">{tile.row.name}</span>
     <TagDots tags={tags.filter(tag => tile.tagIds.includes(tag.id))} />
   </>;
 });
 
-export function ProjectCanvas({ scope, folderId, folderName, tiles, relations, tags, filtering, disabled, readBoards, previewTiles, onOpen, onPlace, onConnect, onBend, onLabel, onRelationMenu, onFavorite, onMenu, addMenuOpen, onAdd, onWorkspaceAi }: Props) {
+export function ProjectCanvas({ scope, folderId, folderName, tiles, foldersWithFavorites, relations, tags, filtering, disabled, readBoards, previewTiles, onOpen, onPlace, onConnect, onBend, onLabel, onRelationMenu, onFavorite, onMenu, addMenuOpen, onAdd, onWorkspaceAi }: Props) {
   const element = useRef<HTMLElement>(null);
   const { viewport, view, setView, takeCamera, persistView, expanded, scene, toggle, close } = useExpansion({
     host: element, scope, folderId, tiles, readBoards, previewTiles,
@@ -455,6 +458,7 @@ export function ProjectCanvas({ scope, folderId, folderName, tiles, relations, t
           const moving = dragged?.id === tile.row.id && dragged.kind === tile.kind;
           const point = tilePosition(tile);
           const folder = tile.kind === 'project';
+          const containsFavorites = folder && foldersWithFavorites.has(tile.row.id);
           const isExpanded = folder && expanded.has(tile.row.id);
           const message = isExpanded ? expanded.get(tile.row.id) : undefined;
           const endpoint = relationEndpoint(tile);
@@ -470,13 +474,14 @@ export function ProjectCanvas({ scope, folderId, folderName, tiles, relations, t
                 type="button" disabled={disabled} className="project-tile-open"
                 data-kind={tile.kind} data-id={tile.row.id}
                 aria-label={tile.row.name} aria-expanded={folder ? isExpanded : undefined}
+                aria-description={containsFavorites ? '包含已收藏的项目或白板' : undefined}
                 aria-busy={message === '正在读取…' ? true : undefined}
                 title={folder ? `${tile.row.name} · 单击预览 · 双击进入` : tile.row.name}
                 onClick={event => clickTile(event, tile)}
                 onDoubleClick={() => { if (folder && !suppressClick.current) onOpen(tile); }}
                 onKeyDown={event => tileKeyDown(event, tile)}
               >
-                <TileContent tile={tile} tags={tags} drop={folder ? tile.row.id : undefined} />
+                <TileContent tile={tile} tags={tags} drop={folder ? tile.row.id : undefined} containsFavorites={containsFavorites} />
               </button>
               <button
                 type="button" disabled={disabled} className="project-connect-port" data-connect-card={endpoint}
@@ -495,6 +500,7 @@ export function ProjectCanvas({ scope, folderId, folderName, tiles, relations, t
         {branches.map(({ owner, tile, point, opacity, retiring }) => {
           const shown = expanded.has(owner) && !retiring && opacity >= 0.72;
           const folder = tile.kind === 'project';
+          const containsFavorites = folder && foldersWithFavorites.has(tile.row.id);
           const isExpanded = shown && folder && expanded.has(tile.row.id);
           const message = isExpanded ? expanded.get(tile.row.id) : undefined;
           return <div key={`${owner}:${tileKey(tile)}`} className={`project-tile is-${tile.kind} is-preview-tile${isExpanded ? ' is-expanded' : ''}`}
@@ -502,14 +508,18 @@ export function ProjectCanvas({ scope, folderId, folderName, tiles, relations, t
             data-preview-owner={owner} data-preview-endpoint={relationEndpoint(tile)} aria-hidden={!shown}>
             <button type="button" className="project-tile-open project-preview-open" data-id={tile.row.id} disabled={disabled || !shown}
               aria-label={tile.row.name} aria-expanded={folder ? isExpanded : undefined} aria-busy={message === '正在读取…' ? true : undefined}
+              aria-description={containsFavorites ? '包含已收藏的项目或白板' : undefined}
               title={folder ? `${tile.row.name} · 单击预览 · 双击进入` : tile.row.name}
               onPointerDown={event => { if (event.button === 0) suppressClick.current = false; }}
               onClick={event => clickTile(event, tile, owner)}
               onDoubleClick={() => { if (folder) onOpen(tile); }}
               onKeyDown={event => tileKeyDown(event, tile, owner)}
               onContextMenu={event => { event.preventDefault(); event.stopPropagation(); }}>
-              <TileContent tile={tile} tags={tags} />
+              <TileContent tile={tile} tags={tags} containsFavorites={containsFavorites} />
             </button>
+            {tile.favorite && <span className="project-tile-star is-preview-star" role="img" aria-label="已收藏">
+              <Star size={15} fill="currentColor" aria-hidden="true" />
+            </span>}
             {previewStatus(message)}
           </div>;
         })}

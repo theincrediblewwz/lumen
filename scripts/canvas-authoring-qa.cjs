@@ -229,7 +229,30 @@ try{
  const expandedRect = await questionPanel.boundingBox();
  const savedRect = () => page.evaluate(() => localStorage.getItem('lumen.nodePanel.rect.v1'));
  const rememberedRect = await savedRect();
- await questionPanel.getByRole('button', { name: '缩小问题面板' }).click();
+ const animatePanel = async (button, collapsed) => {
+   await questionPanel.evaluate(panel => {
+     panel.querySelector('.np-toggle').addEventListener('click', () => {
+       const start = performance.now();
+       window.__panelHeights = [];
+       function record(now) {
+         const { x, y, width, height } = panel.getBoundingClientRect();
+         window.__panelHeights.push({ x, y, width, height });
+         if (now - start < 330) requestAnimationFrame(record);
+       }
+       record(start);
+     }, { once: true });
+   });
+   await questionPanel.getByRole('button', { name: button }).click();
+   await page.waitForFunction(compact => {
+     const panel = document.querySelector('.node-panel');
+     return panel?.classList.contains('is-collapsed') === compact && !panel.getAnimations().length;
+   }, collapsed);
+   const frames = await page.evaluate(() => window.__panelHeights);
+   assert.ok(new Set(frames.filter(frame => frame.height > 60 && frame.height < expandedRect.height - 5).map(frame => frame.height)).size >= 3);
+   assert.ok(frames.every(frame => frame.x === expandedRect.x && frame.y === expandedRect.y && frame.width === expandedRect.width));
+   assert.ok(frames.every((frame, i) => !i || (collapsed ? frame.height <= frames[i - 1].height : frame.height >= frames[i - 1].height)));
+ };
+ await animatePanel('缩小问题面板', true);
  assert.ok((await questionPanel.boundingBox()).height < 55);
  assert.equal(await questionPanel.locator('.np-body').count(), 0);
  assert.equal(await savedRect(), rememberedRect);
@@ -244,11 +267,12 @@ try{
  await equation.click();
  await questionPanel.getByRole('button', { name: '展开问题面板' }).waitFor();
  await page.screenshot({ path: out + '/question-panel-collapsed.png' });
- await questionPanel.getByRole('button', { name: '展开问题面板' }).click();
+ await animatePanel('展开问题面板', false);
  assert.deepEqual(await questionPanel.boundingBox(), expandedRect);
+ assert.equal(await savedRect(), rememberedRect);
  await otherNode.click();
  assert.equal(await questionPanel.locator('.np-title').inputValue(), '明确双击');
- checks.push('one-row question panel survives node switches, close and reload; expanding restores its original size and position');
+ checks.push('question panel interpolates height in both directions, keeps its anchor and saved dimensions, and remembers collapse after reload');
 
  assert.deepEqual(errors,[]);fs.writeFileSync(out+'/editing-ui-report.json',JSON.stringify({browser:'WebKit',fallback:'Browser plugin not available',checks,errors,largeBoard:{nodes:10000,edges:9999,heatCellsAtFit:first}},null,2));console.log(JSON.stringify({checks:checks.length,errors,heatCellsAtFit:first}));
 }catch(e){await page.screenshot({path:out+'/editing-failure.png'});fs.writeFileSync(out+'/editing-failure.txt',e.stack+'\n'+JSON.stringify(errors));throw e;}finally{await browser.close();}})();

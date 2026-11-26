@@ -27,7 +27,7 @@ import { api, type DocRef } from '../api';
 import { invoke } from '@tauri-apps/api/core';
 import { open } from '@tauri-apps/plugin-dialog';
 import { loadWritePolicy } from '../ai/boardOperations';
-import { MIN_BOARD_ZOOM, boardAppearance, FONT_FAMILIES, heatLevel, aggregateHeat, heatNodeBox, isolatedHeatLabelZoom, readHeatLabel, intersects, snapConnection, resizedBox, resizedImageBox, questionPath, type BoardAppearance, type HeatCell, type HeatLabel } from '../canvas/presentation';
+import { DETAIL_ZOOM, MIN_BOARD_ZOOM, boardAppearance, FONT_FAMILIES, heatLevel, aggregateHeat, heatNodeBox, isolatedHeatLabelZoom, readHeatLabel, intersects, snapConnection, resizedBox, resizedImageBox, questionPath, type BoardAppearance, type HeatCell, type HeatLabel } from '../canvas/presentation';
 import { boardImageSizing, imageDisplayAt, type ImagePixels } from '../canvas/imageSizing';
 import { DocumentEditor } from './DocumentEditor';
 import { QuestionEditor } from './QuestionEditor';
@@ -59,6 +59,9 @@ function newEdgeId(): string {
 const DEFAULT_NODE_W = 240;
 /** 未测得真实高度前的兜底高度（首帧连线用） */
 const FALLBACK_NODE_H = 64;
+const WARM_DETAIL_LIMIT = 64;
+const PREVIEWS_PER_FRAME = 3;
+const EMPTY_PREVIEW_IDS: ReadonlySet<string> = new Set();
 const IMAGE_FILE = /\.(png|jpe?g|gif|webp)$/i;
 type DocumentNotice = { text: string; autoDismiss: boolean; fading?: boolean };
 
@@ -251,6 +254,11 @@ export function BoardCanvas({
   const sizesRef = useRef<Record<string, { w: number; h: number }>>({});
   const minimumRef=useRef<Record<string,{w:number;h:number}>>({});
   const [sizesVer, setSizesVer] = useState(0);
+  const sizeFrame = useRef<number | null>(null);
+  useEffect(() => () => {
+    if (sizeFrame.current !== null) cancelAnimationFrame(sizeFrame.current);
+    sizeFrame.current = null;
+  }, [board.id]);
   /** 自动布局归位期间给世界层加过渡类（§4.3：慢 360ms 归位） */
   const [arranging, setArranging] = useState(false);
   const arrangeTimer = useRef<number | null>(null);
@@ -259,7 +267,10 @@ export function BoardCanvas({
     const prev = sizesRef.current[id];
     if (!prev || Math.abs(prev.w - w) > 0.5 || Math.abs(prev.h - h) > 0.5) {
       sizesRef.current[id] = { w, h };
-      setSizesVer((v) => v + 1);
+      if (sizeFrame.current === null) sizeFrame.current = requestAnimationFrame(() => {
+        sizeFrame.current = null;
+        setSizesVer(v => v + 1);
+      });
     }
   }, []);
 
@@ -551,7 +562,7 @@ export function BoardCanvas({
   useEffect(() => {
     const hit = (id: string, e: KeyboardEvent) => matchShortcut(e, shortcut(id)!);
     const onKey = (e: KeyboardEvent) => {
-      if (mutationsBlocked()) return;
+      if (mutationsBlocked() || wrapRef.current?.closest('.workspace[data-canvas-navigation="leaving"]')) return;
       if (branchRootRef.current) {
         if (isEditableTarget(e.target) || e.defaultPrevented) return;
         if (e.key === 'Escape' && !document.querySelector('.ctx-menu')) {
@@ -1387,14 +1398,18 @@ export function BoardCanvas({
 
   /* ── 缩放越小、节点热力光越明显 ── */
   const zoom = engine.viewport.zoom;
-  const intensity = Math.max(0, Math.min(1, (0.85 - zoom) / 0.6));
+  const level = heatLevel(zoom), heatMode = level > 0;
+  const detailZoom = useRef(Math.max(zoom, DETAIL_ZOOM));
+  useLayoutEffect(() => { if (!heatMode) detailZoom.current = zoom; }, [heatMode, zoom]);
+  const glowZoom = heatMode ? detailZoom.current : zoom;
+  const intensity = Math.max(0, Math.min(1, (0.85 - glowZoom) / 0.6));
   const glowVars = {
-    ['--image-pager-scale' as string]: 1 / Math.min(zoom, 1),
-    ['--glow-blur' as string]: `${(20 * intensity) / zoom}px`,
-    ['--glow-spread' as string]: `${(3.5 * intensity) / zoom}px`,
+    ['--image-pager-scale' as string]: 1 / Math.min(glowZoom, 1),
+    ['--glow-blur' as string]: `${(20 * intensity) / glowZoom}px`,
+    ['--glow-spread' as string]: `${(3.5 * intensity) / glowZoom}px`,
     ['--glow-alpha' as string]: `${0.12 + 0.6 * intensity}`,
-    ['--flow-border-width' as string]: `${2 / zoom}px`,
-    ['--flow-glow-blur' as string]: `${14 / zoom}px`,
+    ['--flow-border-width' as string]: `${2 / glowZoom}px`,
+    ['--flow-glow-blur' as string]: `${14 / glowZoom}px`,
   } as React.CSSProperties;
 
   /* ── 连线几何 ──
@@ -1424,14 +1439,79 @@ export function BoardCanvas({
   const vp = engine.viewport;
   const vpSig = `${vp.x},${vp.y},${vp.zoom}`;
 
-  const level=heatLevel(zoom),heatMode=level>0;
-  const heatCells=useMemo(()=>level?aggregateHeat(mainNodes,level,sizesRef.current):[],[mainNodes,level,sizesVer]);
+  const heatCache = useMemo(() => new Map<number, HeatCell[]>(), [mainNodes, sizesVer]);
+  const heatAt = useCallback((tier: number) => {
+    const cached = heatCache.get(tier);
+    if (cached) return cached;
+    const cells = aggregateHeat(mainNodes, tier, sizesRef.current);
+    // Keep the boundary tier and the most recently visited deeper tier.
+    for (const previous of heatCache.keys()) {
+      if (previous !== 1) heatCache.delete(previous);
+    }
+    heatCache.set(tier, cells);
+    return cells;
+  }, [heatCache, mainNodes]);
+  const nearOverview = !heatMode && zoom < DETAIL_ZOOM * 1.25;
+  useEffect(() => {
+    if (!nearOverview || heatCache.has(1)) return;
+    if (typeof window.requestIdleCallback === 'function') {
+      const job = window.requestIdleCallback(() => heatAt(1));
+      return () => window.cancelIdleCallback(job);
+    }
+    const job = window.setTimeout(() => heatAt(1), 120);
+    return () => window.clearTimeout(job);
+  }, [nearOverview, heatCache, heatAt]);
   const visibleWorld=engine.visibleWorldRect(canvasSize);
   const visibleBox={x:visibleWorld.x,y:visibleWorld.y,w:visibleWorld.width,h:visibleWorld.height};
   const gesture = drag.current;
   const pressedNode = gesture?.kind === 'pan' ? gesture.nodeId : gesture?.kind === 'node' ? gesture.id : undefined;
-  const visibleNodes=heatMode?[]:mainNodes.filter(n=>n.id===editingId||n.id===selected||n.id===pressedNode||intersects(boxOf(n),visibleBox,100/zoom));
-  const renderedHeat=heatMode?heatCells.filter(c=>intersects(c,visibleBox,80/zoom)):[];
+  const [previewIds, setPreviewIds] = useState(EMPTY_PREVIEW_IDS);
+  const warmDetailIds = useRef<string[]>([]);
+  const warmPreviewIds = useRef<ReadonlySet<string>>(EMPTY_PREVIEW_IDS);
+  const previewFrame = useRef<number | null>(null);
+  const previewQueue = useRef<{ visible: string[]; pending: string[] }>({ visible: [], pending: [] });
+  const interactive = (id: string) => id === selected || id === editingId || id === pressedNode;
+  const visibleNodes = heatMode
+    ? warmDetailIds.current.flatMap(id => level === 1 && mainIds.has(id) ? [nodeById[id]] : [])
+    : mainNodes.filter(node => interactive(node.id) || intersects(boxOf(node), visibleBox, 100 / zoom));
+  useLayoutEffect(() => {
+    if (heatMode) {
+      if (previewFrame.current !== null) cancelAnimationFrame(previewFrame.current);
+      previewFrame.current = null;
+      if (level > 1) {
+        warmDetailIds.current = [];
+        warmPreviewIds.current = EMPTY_PREVIEW_IDS;
+      } else if (previewIds.size) {
+        warmPreviewIds.current = new Set(warmDetailIds.current.filter(id => previewIds.has(id) || warmPreviewIds.current.has(id)));
+      }
+      if (previewIds.size) setPreviewIds(EMPTY_PREVIEW_IDS);
+      return;
+    }
+    // Keep nearby previews mounted, then reveal them in batches when returning.
+    warmDetailIds.current = visibleNodes.slice(0, WARM_DETAIL_LIMIT).map(node => node.id);
+    if (warmPreviewIds.current.size) {
+      warmPreviewIds.current = new Set(visibleNodes.filter(node => warmPreviewIds.current.has(node.id)).map(node => node.id));
+    }
+    const visible: string[] = [], pending: string[] = [];
+    for (const node of visibleNodes) {
+      if (!node.summary && !node.docs.length) continue;
+      if (previewIds.has(node.id) || interactive(node.id)) visible.push(node.id);
+      else pending.push(node.id);
+    }
+    previewQueue.current = { visible, pending };
+    if (previewFrame.current === null && (pending.length || visible.length !== previewIds.size || visible.some(id => !previewIds.has(id)))) {
+      previewFrame.current = requestAnimationFrame(() => {
+        previewFrame.current = null;
+        const { visible, pending } = previewQueue.current;
+        setPreviewIds(new Set([...visible, ...pending.slice(0, PREVIEWS_PER_FRAME)]));
+      });
+    }
+  });
+  useEffect(() => () => {
+    if (previewFrame.current !== null) cancelAnimationFrame(previewFrame.current);
+    previewFrame.current = null;
+  }, [board.id]);
+  const renderedHeat = heatMode ? heatAt(level).filter(c => intersects(c, visibleBox, 80 / zoom)) : [];
   const heatEditorNodes = heatEditorIds.map(id => nodeById[id]).filter(Boolean);
   const heatLocatedNode = !heatMode && locatedHeatId && mainIds.has(locatedHeatId) ? nodeById[locatedHeatId] : undefined;
   const heatLocatedName = readHeatLabel(heatLocatedNode?.heatLabel);
@@ -1494,22 +1574,32 @@ export function BoardCanvas({
     });
   }, [engine, flowOwnerId, rect, travel]);
 
-  // At overview scale, nearby relationship captions merge into bounded luminous hints.
-  const overviewLabels=useMemo(()=>{
-    if(!heatMode)return [];
-    const bins=new Map<string,{id:string;label:string;x:number;y:number;count:number}>();
-    for(const e of mainEdges){if(!e.label)continue;const a=nodeById[e.from],b=nodeById[e.to];if(!a||!b)continue;
-      const p=engine.toScreen(e.route?.control??{x:(a.x+a.w/2+b.x+b.w/2)/2,y:(a.y+(a.h??96)/2+b.y+(b.h??96)/2)/2});
-      if(p.x<0||p.y<0||p.x>canvasSize.width||p.y>canvasSize.height)continue;
-      const key=`${Math.floor(p.x/48)}:${Math.floor(p.y/48)}`,old=bins.get(key);
-      if(old)old.count++;else bins.set(key,{id:e.id,label:e.label,x:p.x,y:p.y,count:1});
+  // Use board coordinates so panning cannot change which captions share a hint.
+  const overviewLabels = useMemo(() => {
+    if (!level) return [];
+    const size = 48 * 2 ** (level - 1) / DETAIL_ZOOM;
+    const bins = new Map<string, { id: string; label: string; x: number; y: number; count: number }>();
+    for (const edge of mainEdges) {
+      if (!edge.label) continue;
+      const a = nodeById[edge.from], b = nodeById[edge.to];
+      if (!a || !b) continue;
+      const point = edge.route?.control ?? {
+        x: (a.x + a.w / 2 + b.x + b.w / 2) / 2,
+        y: (a.y + (a.h ?? 96) / 2 + b.y + (b.h ?? 96) / 2) / 2,
+      };
+      const key = `${Math.floor(point.x / size)}:${Math.floor(point.y / size)}`;
+      const group = bins.get(key);
+      if (group) group.count++;
+      else bins.set(key, { ...point, id: edge.id, label: edge.label, count: 1 });
     }
     return [...bins.values()];
-  },[mainEdges,nodeById,heatMode,vpSig,canvasSize]);
+  }, [mainEdges, nodeById, level]);
+  const hintMargin = 48 / zoom;
+  const visibleHints = overviewLabels.filter(({ x, y }) => x >= visibleBox.x - hintMargin && y >= visibleBox.y - hintMargin
+    && x <= visibleBox.x + visibleBox.w + hintMargin && y <= visibleBox.y + visibleBox.h + hintMargin);
   const revealEdgeLabel = (hint: { id: string; x: number; y: number }) => {
     setSelectedEdge(hint.id);
-    const point = engine.toWorld(hint);
-    travelToBox({ ...point, w: 0, h: 0 }, Math.min(1, (cameraMotion.current?.target.zoom ?? zoom) * 2));
+    travelToBox({ x: hint.x, y: hint.y, w: 0, h: 0 }, Math.min(1, (cameraMotion.current?.target.zoom ?? zoom) * 2));
   };
 
   // 连线拖拽预览路径（屏幕坐标）
@@ -1666,14 +1756,20 @@ export function BoardCanvas({
         )}
       </svg>
 
-      <div className="edge-label-layer">{overviewLabels.map(h=><EdgeLabel key={h.id} label={h.count>1?`${h.count}条连线含说明；${h.label}`:h.label} x={h.x} y={h.y} zoom={zoom} onSelect={()=>revealEdgeLabel(h)} onEdit={()=>revealEdgeLabel(h)}/>)}{laidEdges.map(({edge,geo})=>edge.label&&editingEdge!==edge.id?<EdgeLabel key={edge.id} label={edge.label} x={geo.labelPoint.x} y={geo.labelPoint.y-(selectedEdge===edge.id&&geo.labelPoint===geo.mid?24:0)} zoom={zoom} onSelect={()=>{setSelectedEdge(edge.id);setSelected(null);}} onEdit={()=>startEdgeLabel(edge.id)}/>:null)}</div>
+      {heatMode ? <div className="edge-label-layer" style={{ transform: `translate3d(${vp.x}px, ${vp.y}px, 0)` }}>
+        {visibleHints.map(hint => <EdgeLabel key={hint.id} label={hint.count > 1 ? `${hint.count}条连线含说明；${hint.label}` : hint.label}
+          x={hint.x * zoom} y={hint.y * zoom} zoom={zoom} onSelect={() => revealEdgeLabel(hint)} onEdit={() => revealEdgeLabel(hint)} />)}
+      </div> : <div className="edge-label-layer">{laidEdges.map(({edge,geo})=>edge.label&&editingEdge!==edge.id?<EdgeLabel key={edge.id} label={edge.label} x={geo.labelPoint.x} y={geo.labelPoint.y-(selectedEdge===edge.id&&geo.labelPoint===geo.mid?24:0)} zoom={zoom} onSelect={()=>{setSelectedEdge(edge.id);setSelected(null);}} onEdit={()=>startEdgeLabel(edge.id)}/>:null)}</div>}
       {/* 世界层：只改 transform（DESIGN §5.4） */}
-      <div className={`canvas-world${arranging ? ' is-arranging' : ''}`} style={{ transform: engine.transform, transformOrigin: '0 0', ...glowVars }}>
+      <div className={`canvas-world${arranging ? ' is-arranging' : ''}`} aria-hidden={heatMode || undefined}
+        style={{ transform: engine.transform, transformOrigin: '0 0', ...glowVars }}>
         {visibleNodes.map((n) => (
           <NodeCard
             key={n.id}
             node={n} projectId={board.projectId} boardId={board.id} onResizeStart={onResizeStart} onImageSize={imageSizing.observe} docVersions={docVersions}
             previewCollapsed={Boolean(matches && !matches.matched.has(n.id))}
+            pendingPreviewHeight={(n.summary || n.docs.length) && !previewIds.has(n.id) && !interactive(n.id) ? boxOf(n).h : undefined}
+            keepPreviewMounted={warmPreviewIds.current.has(n.id)}
             selected={selected === n.id||!!moveRoot&&moveIds.has(n.id)}
             flash={flashId === n.id}
             editing={editingId === n.id}

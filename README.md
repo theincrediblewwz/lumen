@@ -5,7 +5,9 @@
 
 ## 当前版本
 
-[0.4.14 源码预览](https://github.com/theincrediblewwz/lumen/releases/tag/mac-v0.4.14) · [下载 Mac 0.4.0 安装包](https://github.com/theincrediblewwz/lumen/releases/tag/mac-v0.4.0) · [白板编辑与保存](./docs/CANVAS_AUTHORING.md)
+[0.4.16 源码预览](https://github.com/theincrediblewwz/lumen/releases/tag/mac-v0.4.16) · [下载 Mac 0.4.0 安装包](https://github.com/theincrediblewwz/lumen/releases/tag/mac-v0.4.0) · [白板编辑与保存](./docs/CANVAS_AUTHORING.md)
+
+**0.4.16 文件夹收藏特效与热力图切换。** 项目展开预览会显示收藏星标。文件夹内有收藏时，可在设置中选择荧光或流光。放大白板查看文档时，预览分批恢复并保留页码。
 
 **0.4.14 AI 排版与热力名称。** 开启「白板整理」后，普通 AI 对话可移动、配色和重排已有分支。缩小白板后可右键设置节点的荧光名称。多个重要节点合并时，悬停可查看列表，点选即可平滑定位。
 

@@ -10,6 +10,7 @@
 export type ThemeName = 'light' | 'paper' | 'dark';
 
 export type GlassMode = 'native' | 'css' | 'off';
+export type FolderFavoriteEffect = 'glow' | 'aurora';
 
 export interface Settings {
   theme: ThemeName;
@@ -22,6 +23,7 @@ export interface Settings {
   glassBlur: number;
   /** 动画特效开关 */
   motion: boolean;
+  folderFavoriteEffect: FolderFavoriteEffect;
   /** 阅读器：对无分界符但明显是数学的内容进行猜测渲染（M4） */
   guessMath: boolean;
 }
@@ -33,6 +35,7 @@ export const DEFAULT_SETTINGS: Settings = {
   glassClarity: 55,
   glassBlur: 60,
   motion: true,
+  folderFavoriteEffect: 'glow',
   guessMath: true,
 };
 
@@ -46,6 +49,7 @@ export function cleanSettings(value: Partial<Settings>): Settings {
     glassClarity: Number.isFinite(value.glassClarity) ? Math.max(0, Math.min(100, value.glassClarity!)) : DEFAULT_SETTINGS.glassClarity,
     glassBlur: Number.isFinite(value.glassBlur) ? Math.max(0, Math.min(100, value.glassBlur!)) : DEFAULT_SETTINGS.glassBlur,
     motion: typeof value.motion === 'boolean' ? value.motion : DEFAULT_SETTINGS.motion,
+    folderFavoriteEffect: value.folderFavoriteEffect === 'aurora' ? 'aurora' : DEFAULT_SETTINGS.folderFavoriteEffect,
     guessMath: typeof value.guessMath === 'boolean' ? value.guessMath : DEFAULT_SETTINGS.guessMath,
   };
 }
@@ -87,6 +91,7 @@ export function subscribeSettings(cb: (s: Settings) => void): () => void {
 export function applySettings(s: Settings, platform = ''): void {
   const root = document.documentElement;
   root.dataset.theme = s.theme;
+  root.dataset.folderFavoriteEffect = s.folderFavoriteEffect;
   const isMac = platform === 'macos';
   // 平台类：供 CSS 做平台特定外观（如 macOS 无边框窗口需前端自绘圆角，
   // Windows 11 系统会自动给无边框窗口加圆角，见 styles.css）。

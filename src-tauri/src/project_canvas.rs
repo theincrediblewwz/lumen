@@ -566,15 +566,27 @@ pub(crate) fn preserve_folders(
 }
 
 #[tauri::command]
-pub fn project_canvas_read() -> Result<serde_json::Value, String> {
+pub async fn project_canvas_read(include_board_ids: Option<bool>) -> Result<serde_json::Value, String> {
     let _guard = sync::IO_LOCK.lock().map_err(|e| e.to_string())?;
     let root = commands::root()?;
-    let layout = read(&root, &storage::read_index(&root)?)?;
+    let index = storage::read_index(&root)?;
+    let layout = read(&root, &index)?;
     let scope = safety::scope(&root)?;
-    Ok(match covers::read(&root) {
-        Ok(covers) => serde_json::json!({ "layout": layout, "scope": scope, "covers": covers }),
-        Err(error) => serde_json::json!({ "layout": layout, "scope": scope, "coverError": error }),
-    })
+    let mut result = serde_json::json!({ "layout": layout, "scope": scope });
+    if include_board_ids.unwrap_or(false) {
+        // Old pins can reference a board with no saved canvas position.
+        let board_ids: BTreeMap<_, Vec<_>> = index.projects.iter().filter_map(|row| {
+            safety::checked_path(&root, &format!("{}/project.json", row.id)).ok()?;
+            let project = storage::read_project(&root, &row.id).ok()?;
+            Some((&row.id, project.boards.into_iter().map(|board| board.id).collect()))
+        }).collect();
+        result["boardIdsByProject"] = serde_json::json!(board_ids);
+    }
+    match covers::read(&root) {
+        Ok(covers) => result["covers"] = serde_json::json!(covers),
+        Err(error) => result["coverError"] = serde_json::json!(error),
+    }
+    Ok(result)
 }
 
 #[tauri::command]

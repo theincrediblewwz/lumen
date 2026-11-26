@@ -1,4 +1,4 @@
-import { memo, useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { BoardNode } from '../api';
 import { MarkdownView } from './MarkdownView';
 import { NodePreview, type PreviewMemory, type PreviewPresentation } from './NodePreview';
@@ -116,10 +116,12 @@ export const NodeCard = memo(function NodeCard({
   onMeasure,
   onHoverChange,
   onImageSize,
-  onResizeStart, projectId, boardId, docVersions={}, measuring=false, hideHandles=false, previewCollapsed=false, previewMemory, flowStep, imageWidthLimit, stagedDocuments, expectedScope,
+  onResizeStart, projectId, boardId, docVersions={}, measuring=false, hideHandles=false, previewCollapsed=false, pendingPreviewHeight, keepPreviewMounted=false, previewMemory, flowStep, imageWidthLimit, stagedDocuments, expectedScope,
 }: {
   projectId:string; boardId:string; docVersions?:Record<string,number>; measuring?:boolean; hideHandles?:boolean; previewCollapsed?:boolean;
   previewMemory?: PreviewMemory;
+  pendingPreviewHeight?: number;
+  keepPreviewMounted?: boolean;
   stagedDocuments?: Record<string, StagedDocumentPreview>;
   expectedScope?: string;
   flowStep?: boolean;
@@ -156,7 +158,8 @@ export const NodeCard = memo(function NodeCard({
       && old.dimensions?.width === value.dimensions?.width && old.dimensions?.height === value.dimensions?.height
       ? old : { ...value, baseWidth: nodeDimensions.current.w, baseHeight: nodeDimensions.current.h });
   }, [onImageSize]);
-  const heading=nodeHeading(node), docs=contentDocs(node), primary=docs[0];
+  const heading = nodeHeading(node), docs = useMemo(() => contentDocs(node), [node.docs]), primary = docs[0];
+  const previewPending = !previewCollapsed && pendingPreviewHeight !== undefined;
   const hasQuestion = !!node.summary?.trim();
   const activeDoc = previewCollapsed ? undefined : docs.find(doc => doc.path === presentation?.resourceKey) ?? primary;
   const activeImage = imageDoc(activeDoc) ? activeDoc : undefined;
@@ -177,8 +180,10 @@ export const NodeCard = memo(function NodeCard({
   // 测量真实布局尺寸（世界单位，不受 transform 缩放影响：offsetWidth/Height）
   useLayoutEffect(() => {
     const el = cardRef.current;
-    if (!el) return;
+    if (!el || previewPending) return;
     const report = () => {
+      const width = el.offsetWidth;
+      if (!width) return;
       const content=contentRef.current,style=getComputedStyle(el),padX=parseFloat(style.paddingLeft)+parseFloat(style.paddingRight)+parseFloat(style.borderLeftWidth)+parseFloat(style.borderRightWidth),padY=parseFloat(style.paddingTop)+parseFloat(style.paddingBottom)+parseFloat(style.borderTopWidth)+parseFloat(style.borderBottomWidth);
       const mathWidth = formulaMinimumWidth(content);
       // A full-width image deliberately occupies the card's bottom padding.
@@ -187,18 +192,19 @@ export const NodeCard = memo(function NodeCard({
       const contentHeight=Math.max(content?.offsetHeight??0,(content?.scrollHeight??0)+Math.min(0,trailingMargin));
       const min={w:pureImage?0:Math.max(120,mathWidth+padX),h:pureImage?0:Math.max(64,contentHeight+padY)};
       setMinimum(old=>Math.abs(old.w-min.w)<1&&Math.abs(old.h-min.h)<1?old:min);
-      onMeasure(node.id,el.offsetWidth,el.offsetHeight,min.w,min.h);
+      onMeasure(node.id,width,el.offsetHeight,min.w,min.h);
     };
     report();
     const ro = new ResizeObserver(report);
     ro.observe(el);if(contentRef.current)ro.observe(contentRef.current);
     return () => ro.disconnect();
-  }, [node.id, node.title, node.summary, node.docs, editing, onMeasure, pureImage, previewCollapsed]);
+  }, [node.id, node.title, node.summary, node.docs, editing, onMeasure, pureImage, previewCollapsed, previewPending]);
 
   return (
     <div
       ref={cardRef}
       data-node-id={node.id}
+      data-preview-pending={previewPending || undefined}
       className={`node-card${pureImage?' is-sticker':contentOnly?' is-content-only':' glass-surface'}${node.flow?' has-flow':''}${measuring?' is-measuring':''}${selected ? ' is-selected' : ''}${flash ? ' is-flash' : ''}${editing ? ' is-editing' : ''}${connectTarget ? ' is-connect-target' : ''}${dropTarget ? ' is-drop-target' : ''}`}
       style={{
         left: node.x,
@@ -206,7 +212,7 @@ export const NodeCard = memo(function NodeCard({
         width,
         height: pureImage ? width/aspect : undefined,
         minWidth: previewCollapsed?0:minimum.w,
-        minHeight: pureImage||previewCollapsed?0:Math.max(measuring||automaticView||adaptiveImage||stored&&activeImage?.path!==primary?.path?0:node.h??0,minimum.h),
+        minHeight: pureImage||previewCollapsed?0:Math.max(measuring||automaticView||adaptiveImage||stored&&activeImage?.path!==primary?.path?0:node.h??0,minimum.h, pendingPreviewHeight ?? 0),
         // 节点自定义颜色：既作左侧色条，又作为该卡片的强调色（选中框/锚点/光晕）。
         // 未设色时回退到主题强调色 var(--accent)。
         ['--node-accent' as string]: node.color || 'var(--accent)',
@@ -262,8 +268,8 @@ export const NodeCard = memo(function NodeCard({
         </div>
       ) : (
         <>
-          {(heading.trim()||previewCollapsed)&&<MarkdownView className="node-title" inline value={heading.trim()?heading:primary?.title||'流程步骤'}/>}
-          {!previewCollapsed&&<NodePreview summary={node.summary} docs={docs} projectId={projectId} boardId={boardId} docVersions={docVersions} onPresentation={onPresentation} memory={previewMemory} stagedDocuments={stagedDocuments} expectedScope={expectedScope} viewKey={`${projectId}/${boardId}/${node.id}/${(flowStep ?? (hideHandles&&!measuring))?'flow':'board'}`}/>}
+          {(heading.trim() || previewCollapsed || (previewPending && !pureImage)) && <MarkdownView className="node-title" inline value={heading.trim() ? heading : primary?.title || '流程步骤'} />}
+          {!previewCollapsed&&(!previewPending||keepPreviewMounted)&&<NodePreview hidden={previewPending} summary={node.summary} docs={docs} projectId={projectId} boardId={boardId} docVersions={docVersions} onPresentation={onPresentation} memory={previewMemory} stagedDocuments={stagedDocuments} expectedScope={expectedScope} viewKey={`${projectId}/${boardId}/${node.id}/${(flowStep ?? (hideHandles&&!measuring))?'flow':'board'}`}/>}
           {contentOnly&&!previewCollapsed&&<span className="sticker-info">{presentation?.title||primary?.title||node.title}</span>}
         </>
       )}

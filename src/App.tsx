@@ -6,6 +6,7 @@ import { TitleBar } from './components/TitleBar';
 import { ProjectCanvas } from './components/ProjectCanvas';
 import { ProjectCoverPicker } from './components/ProjectCoverPicker';
 import { ProjectPath } from './components/ProjectPath';
+import { useCanvasNavigation } from './components/useCanvasNavigation';
 import { TagEditor, TagFilter } from './components/CatalogTags';
 import { ConfirmAction } from './components/ConfirmAction';
 import { BoardCanvas } from './components/BoardCanvas';
@@ -31,7 +32,7 @@ import {exportLibraryPackage,restoreLibraryPackage,applyLibraryPreferences} from
 
 import { applyPins, loadFavorites, saveFavorites } from './favorites';
 import type { BoardAppearance } from './canvas/presentation';
-import { boardCardId, catalogTiles, EMPTY_PROJECT_LAYOUT, parentProject, projectPath, relationEndpoint, type CatalogTile, type ProjectLayoutSnapshot, type ProjectRelation, type RelationBend } from './projectCanvas/layout';
+import { boardCardId, catalogTiles, EMPTY_PROJECT_LAYOUT, parentProject, projectPath, projectsContainingFavorites, relationEndpoint, type BoardIdsByProject, type CatalogTile, type ProjectLayoutSnapshot, type ProjectRelation, type RelationBend } from './projectCanvas/layout';
 import { EMPTY_COVERS, readCover, type CoverTarget } from './projectCanvas/covers';
 import { allTags, assignedTags, colorTag, NO_TAGS, tagKey, type TagDefinition, type TagTarget } from './projectCanvas/tags';
 
@@ -90,13 +91,17 @@ export default function App() {
   const [tagFilters, setTagFilters] = useState<Record<string, string[]>>({});
   const [tagEdit, setTagEdit] = useState<{ target: TagTarget; name: string; colorMark?: string }>();
   const [boards, setBoards] = useState<BoardMeta[]>([]);
+  const [boardIdsByProject, setBoardIdsByProject] = useState<BoardIdsByProject>({});
   const [activeProject, setActiveProject] = useState<ProjectMeta | null>(null);
   const [activeBoard, setActiveBoardState] = useState<BoardFile | null>(null);
+  const workspace = useRef<HTMLDivElement>(null);
+  const switchCanvas = useCanvasNavigation(workspace);
   const [boardActionSlot, setBoardActionSlot] = useState<HTMLSpanElement | null>(null);
   const [branchFocusActive, setBranchFocusActive] = useState(false);
   const activeProjectRef = useRef(activeProject);
   activeProjectRef.current = activeProject;
   const routeGeneration = useRef(0);
+  const navigation = useRef<{ next?: () => Promise<void> }>();
   const [knowledgeOpen, setKnowledgeOpen] = useState(false);
   const [knowledgeIndexCollapsed, setKnowledgeIndexCollapsed] = useState(false);
   const knowledgeEditing = useRef(false);
@@ -123,6 +128,11 @@ export default function App() {
   }, []);
   const [favoriteVersion,setFavoriteVersion]=useState(0);
   const favorites = useMemo(() => applyPins(loadFavorites(root ?? ''), layout.pins), [root, favoriteVersion, layout.pins]);
+  const foldersWithFavorites = useMemo(() => projectsContainingFavorites(projects, layout, boardIdsByProject, favorites),
+    [projects, layout, boardIdsByProject, favorites]);
+  const rememberBoardIds = useCallback((projectId: string, rows: BoardMeta[]) => {
+    setBoardIdsByProject(previous => ({ ...previous, [projectId]: rows.map(row => row.id) }));
+  }, []);
   const toggleFavorite = (kind: 'projects' | 'boards', id: string) => {
     if (!root) return;
     const owner = kind === 'boards' ? activeProject?.id ?? null : null;
@@ -203,25 +213,27 @@ export default function App() {
     return tagFilter.size ? children.filter(tile => tile.tagIds.some(id => tagFilter.has(id))) : children;
   }, [projects, layout, favorites, covers, tagFilter]);
 
-  const readCatalog = useCallback(async () => {
+  const readCatalog = useCallback(async (includeBoardIds = true) => {
     const [rows, placement] = await Promise.all([
       api.projectsList(),
-      api.projectCanvasRead().catch((error): ProjectLayoutSnapshot => {
+      api.projectCanvasRead(includeBoardIds).catch((error): ProjectLayoutSnapshot => {
         setError(`项目画布未能读取：${String(error)}`);
-        return { layout: EMPTY_PROJECT_LAYOUT, scope: '' };
+        return { layout: EMPTY_PROJECT_LAYOUT, scope: '', boardIdsByProject: includeBoardIds ? {} : undefined };
       }),
     ]);
     if (placement.coverError) setError(`封面记录未能读取：${placement.coverError}`);
     return { rows, ...placement, covers: placement.covers ?? EMPTY_COVERS };
   }, []);
 
-  const refreshProjects = useCallback(async () => {
-    const current = await readCatalog();
+  const acceptCatalog = useCallback((current: Awaited<ReturnType<typeof readCatalog>>) => {
     setProjects(current.rows);
     setLayout(current.layout);
     setCovers(current.covers);
     setCanvasScope(current.scope);
-  }, [readCatalog]);
+    if (current.boardIdsByProject) setBoardIdsByProject(current.boardIdsByProject);
+  }, []);
+
+  const refreshProjects = useCallback(async () => acceptCatalog(await readCatalog()), [acceptCatalog, readCatalog]);
 
   /* 应用外观设置（主题 / 玻璃 / 动画）到 <html>；platform 变化后重跑
      （原生材质仅 macOS 启用，需知道平台才能正确决定 native/实色）。 */
@@ -314,7 +326,7 @@ export default function App() {
         const board = current && nextBoards.some(b => b.id === current.id)
           ? await api.boardLoad(current.projectId, current.id) : null;
         if (request !== generation || route !== routeGeneration.current) return;
-        setProjects(catalog.rows); setLayout(catalog.layout); setCovers(catalog.covers); setCanvasScope(catalog.scope);
+        acceptCatalog(catalog);
         activeProjectRef.current = folder; setActiveProject(folder); setBoards(nextBoards);
         setActiveBoard(board); setBoardGeneration(n => n + 1);
       }catch(error){setError(String(error));throw error;}
@@ -354,7 +366,7 @@ export default function App() {
       }));
     });
     return()=>{disposed=true;unregisterRefresh();stops.forEach(stop=>stop());window.removeEventListener('lumen:sync-edit-lock',onLock);window.removeEventListener('lumen:library-changed',onChanged);};
-  },[flushBoards, readCatalog]);
+  },[flushBoards, readCatalog, acceptCatalog]);
 
   /* 启动：读平台信息 + 配置 */
   useEffect(() => {
@@ -452,29 +464,37 @@ export default function App() {
   }, [editing]);
 
   const refreshBoards = useCallback(async (projectId: string) => {
+    const generation = routeGeneration.current;
     const rows = await api.boardsList(projectId);
+    if (generation !== routeGeneration.current) return;
+    rememberBoardIds(projectId, rows);
     if (activeProjectRef.current?.id === projectId) setBoards(rows);
-  }, []);
+  }, [rememberBoardIds]);
 
   // ── AI 引用跳转（M5-6）：切到目标白板并高亮节点 ──
   const jumpTo = useCallback(
     (projectId: string, boardId: string, nodeId: string | null) =>
-      leaveKnowledge(() => void withBusy(async () => {
+      leaveKnowledge(() => navigateCanvas(async () => {
         routeGeneration.current++;
         await flushBoards();
         const [catalog, nextBoards, nextBoard] = await Promise.all([
-          readCatalog(), api.boardsList(projectId), api.boardLoad(projectId, boardId),
+          readCatalog(false), api.boardsList(projectId), api.boardLoad(projectId, boardId),
         ]);
         const folder = catalog.rows.find(row => row.id === projectId);
         if (!folder || !nextBoards.some(row => row.id === boardId)) throw new Error('这块白板已不在资料库中。');
-        setProjects(catalog.rows); setLayout(catalog.layout); setCovers(catalog.covers); setCanvasScope(catalog.scope);
-        activeProjectRef.current = folder; setActiveProject(folder); setBoards(nextBoards);
-        setActiveBoard(nextBoard);
-        if (nodeId) setTagFilters(old => ({ ...old, [JSON.stringify([catalog.scope, 'board', boardId])]: [] }));
-        setFocusNode(nodeId ? { id: nodeId, nonce: Date.now() } : null);
+        const commit = () => {
+          acceptCatalog(catalog);
+          rememberBoardIds(projectId, nextBoards);
+          activeProjectRef.current = folder; setActiveProject(folder); setBoards(nextBoards);
+          setActiveBoard(nextBoard);
+          if (nodeId) setTagFilters(old => ({ ...old, [JSON.stringify([catalog.scope, 'board', boardId])]: [] }));
+          setFocusNode(nodeId ? { id: nodeId, nonce: Date.now() } : null);
+        };
+        if (nodeId || knowledgeOpen || activeBoardRef.current?.id === boardId) commit();
+        else await switchCanvas(commit);
         void api.snapshotCreate(projectId, boardId, false).catch(() => {});
       })),
-    [leaveKnowledge, flushBoards, readCatalog],
+    [leaveKnowledge, flushBoards, readCatalog, acceptCatalog, rememberBoardIds, knowledgeOpen, switchCanvas],
   );
 
   useEffect(() => {
@@ -556,6 +576,19 @@ export default function App() {
     }
   };
 
+  const navigateCanvas = (change: () => Promise<void>) => {
+    if (navigation.current) {
+      navigation.current.next = change;
+      return;
+    }
+    const request: { next?: () => Promise<void> } = {};
+    navigation.current = request;
+    void withBusy(change).finally(() => {
+      navigation.current = undefined;
+      if (request.next) navigateCanvas(request.next);
+    });
+  };
+
   const withBoardEditLock = async (fn: () => Promise<void>) => {
     if (syncLockRef.current) throw new Error('正在保存或同步，请稍后重试');
     window.dispatchEvent(new CustomEvent('lumen:sync-edit-lock', { detail: true }));
@@ -619,6 +652,7 @@ export default function App() {
           const created = await api.boardCreate(cur.projectId, name);
           finish();
           setBoards(rows => [...rows, created]);
+          setBoardIdsByProject(previous => ({ ...previous, [cur.projectId]: [...(previous[cur.projectId] ?? []), created.id] }));
         });
       } else if (cur.kind === 'rename-project') {
         const renamed = await api.projectRename(cur.id, name);
@@ -640,17 +674,24 @@ export default function App() {
   };
 
   const navigateProject = (id: string | null) =>
-    leaveKnowledge(() => void withBusy(async () => {
+    leaveKnowledge(() => navigateCanvas(async () => {
       routeGeneration.current++;
       await flushBoards();
       const folder = id ? projects.find(project => project.id === id) : null;
       if (id && !folder) throw new Error('此项目已不在资料库中。');
       const nextBoards = folder ? await api.boardsList(folder.id) : [];
-      activeProjectRef.current = folder ?? null;
-      setActiveProject(folder ?? null);
-      setBoards(nextBoards);
-      setActiveBoard(null);
-      setFocusNode(null);
+      const commit = () => {
+        if (folder) rememberBoardIds(folder.id, nextBoards);
+        activeProjectRef.current = folder ?? null;
+        setActiveProject(folder ?? null);
+        setBoards(nextBoards);
+        setActiveBoard(null);
+        setFocusNode(null);
+      };
+      const fromBoard = !!activeBoardRef.current;
+      const sameFolder = (activeProjectRef.current?.id ?? null) === id;
+      if (knowledgeOpen || (sameFolder && !fromBoard)) commit();
+      else await switchCanvas(commit);
     }));
 
   const moveProject = (id: string, parentId: string | null) => withBusy(async () => {
@@ -1039,7 +1080,7 @@ export default function App() {
         path={<ProjectPath path={knowledgeOpen ? [] : projectTrail} board={knowledgeOpen ? '知识库' : activeBoard?.name} onNavigate={navigateProject} />}
       />
 
-      <div className="workspace">
+      <div className="workspace" ref={workspace}>
         {knowledgeOpen ? <KnowledgeLibrary boardId={activeBoard?.id} boardName={activeBoard?.name} boardPolicy={activeBoard?._sync_content_policy} indexCollapsed={knowledgeIndexCollapsed} {...knowledgeTarget} onEditingChange={onKnowledgeEditingChange} onNavigationReady={registerKnowledgeNavigation} onClose={() => { setKnowledgeOpen(false); setError(null); }} /> : activeBoard ? (
           <BoardCanvas
             key={`${activeBoard.id}:${boardGeneration}`}
@@ -1066,6 +1107,7 @@ export default function App() {
             folderId={activeProject?.id ?? null}
             folderName={activeProject?.name}
             tiles={visibleTiles}
+            foldersWithFavorites={foldersWithFavorites}
             relations={layout.relations}
             tags={tags}
             filtering={tagFilter.size > 0}

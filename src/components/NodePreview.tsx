@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight } from 'lucide-react';
 import type { DocRef } from '../api';
 import { imageDoc } from '../canvas/composition';
@@ -9,6 +9,7 @@ export type PreviewPresentation = { resourceKey: string; image: boolean; navigat
 type PreviewResource = { key: string; title: string } & ({ summary: string } | { doc: DocRef });
 export type PreviewMemory = Map<string, { signature: string; position: PreviewPosition; counts: Partial<Record<string, number>>; navigated: boolean }>;
 type PreviewProps = {
+  hidden?: boolean;
   summary?: string | null; docs: DocRef[]; projectId: string; boardId: string; docVersions: Record<string, number>;
   onPresentation: (value: PreviewPresentation) => void; viewKey: string; memory?: PreviewMemory;
   stagedDocuments?: Record<string, StagedDocumentPreview>; expectedScope?: string;
@@ -20,16 +21,16 @@ export function copyPreviewMemory(projectId: string, boardId: string): PreviewMe
   return new Map([...positions].filter(([key]) => key.startsWith(prefix)));
 }
 
-export function NodePreview({ summary, docs, onPresentation, viewKey, ...context }: PreviewProps) {
+export const NodePreview = memo(function NodePreview({ summary, docs, onPresentation, viewKey, ...context }: PreviewProps) {
   const attachments = useMemo(() => docs.map(doc => ({ key: doc.path, title: doc.title, doc })), [docs]);
   return <>
     {!!summary?.trim() && <PreviewPager {...context} resources={[{ key: 'question', title: '完整问题', summary }]} viewKey={`${viewKey}/question`}
       onPresentation={attachments.length ? undefined : onPresentation} />}
     {attachments.length > 0 && <PreviewPager {...context} resources={attachments} viewKey={`${viewKey}/attachments`} onPresentation={onPresentation} />}
   </>;
-}
+});
 
-function PreviewPager({ resources, projectId, boardId, docVersions, onPresentation, viewKey, memory = positions, stagedDocuments, expectedScope }: Omit<PreviewProps, 'summary' | 'docs' | 'onPresentation'> & {
+function PreviewPager({ resources, projectId, boardId, docVersions, onPresentation, viewKey, memory = positions, stagedDocuments, expectedScope, hidden }: Omit<PreviewProps, 'summary' | 'docs' | 'onPresentation'> & {
   resources: PreviewResource[];
   onPresentation?: PreviewProps['onPresentation'];
 }) {
@@ -104,7 +105,7 @@ function PreviewPager({ resources, projectId, boardId, docVersions, onPresentati
       }}><Chevron size={14} aria-hidden="true" /></button>;
   };
   return <div className={`node-preview${image ? ' is-image' : ''}${question ? ' is-question' : ''}${hasPager ? ' has-page-controls' : ''}`}
-    role="group" aria-label={question ? '完整问题预览' : '附件预览'}
+    role="group" aria-label={question ? '完整问题预览' : '附件预览'} hidden={hidden}
     onPointerEnter={event => {
       if (event.pointerType !== 'touch') event.currentTarget.setAttribute('data-preview-hover', '');
     }}

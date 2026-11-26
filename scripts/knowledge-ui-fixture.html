@@ -203,7 +203,8 @@ window.__TAURI_INTERNALS__={metadata:{currentWindow:{label:'main'},currentWebvie
   if(command==='knowledge_export'&&fixtureParams.has('knowledgeDesignQA')){window.__fixtureExports.push(structuredClone(args));return;}
   if(command==='knowledge_import_read'&&fixtureParams.has('knowledgeDesignQA'))return structuredClone(library);
   if(command==='board_package_export'&&fixtureParams.has('navigationQA')){window.__fixtureExports.push(structuredClone(args));return;}
-  if (command === 'project_canvas_read') return { scope: fixtureCanvasScope(), layout: structuredClone(fixtureLayout), covers: structuredClone(fixtureCovers) };
+  if (command === 'project_canvas_read') return { scope: fixtureCanvasScope(), layout: structuredClone(fixtureLayout), covers: structuredClone(fixtureCovers),
+    boardIdsByProject: args.includeBoardIds ? Object.fromEntries(fixtureProjects.map(project => [project.id, fixtureBoards.filter(board => board.projectId === project.id).map(board => board.id)])) : undefined };
   if (command === 'project_canvas_cover') {
     if (args.expectedScope !== fixtureCanvasScope()) throw Error('资料库已变化');
     if (window.__fixtureNavigationFailure) throw Error('合成磁盘写入失败');

@@ -4,6 +4,7 @@ import { DocPreview } from './DocPreview';
 import { ChevronDown, MessageCircle, Minus } from 'lucide-react';
 import { openAiWindow } from '../ai/aiWindow';
 import { MarkdownView } from './MarkdownView';
+import { motionDisabled } from '../canvas/cameraMotion';
 import { isQuestionDoc } from '../canvas/presentation';
 import { TagDots } from './CatalogTags';
 import { SYSTEM_TAGS, type CatalogTag } from '../projectCanvas/tags';
@@ -113,6 +114,8 @@ export function NodePanel({
 
   /* ── 面板位置与尺寸（可拖动 + 可四边/四角拉伸），持久化到 localStorage ── */
   const asideRef = useRef<HTMLElement>(null);
+  const heightBeforeToggle = useRef<number>();
+  const heightAnimation = useRef<Animation>();
   const MIN_W = 280;
   const MIN_H = 240;
   const RECT_KEY = 'lumen.nodePanel.rect.v1';
@@ -151,6 +154,22 @@ export function NodePanel({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [rect, collapsed]);
 
+  useLayoutEffect(() => {
+    const from = heightBeforeToggle.current;
+    heightBeforeToggle.current = undefined;
+    const panel = asideRef.current;
+    if (!panel || from === undefined || motionDisabled()) return;
+    const to = panel.getBoundingClientRect().height;
+    if (Math.abs(to - from) < 1) return;
+
+    // Animate the visible height. The expanded rectangle remains the saved size.
+    const animation = panel.animate([{ height: `${from}px` }, { height: `${to}px` }], {
+      duration: 240, easing: 'cubic-bezier(0.2, 0, 0, 1)', fill: 'backwards',
+    });
+    heightAnimation.current = animation;
+    return () => { animation.cancel(); heightAnimation.current = undefined; };
+  }, [collapsed]);
+
   // 保存位置，下次打开面板时恢复。
   useEffect(() => {
     if (!rect) return;
@@ -163,13 +182,17 @@ export function NodePanel({
 
   // 窗口尺寸变化（含侧栏展开挤压可视区、外接显示器切换）时重新夹紧，避免面板被挤出屏幕。
   useEffect(() => {
-    const onResize = () => setRect((prev) => (prev ? clamp(prev) : prev));
+    const onResize = () => {
+      heightAnimation.current?.cancel();
+      setRect((prev) => (prev ? clamp(prev) : prev));
+    };
     window.addEventListener('resize', onResize);
     return () => window.removeEventListener('resize', onResize);
   }, []);
 
   /** 双击标题栏：复位到默认停靠位（位置记错 / 被挤出屏幕时的逃生口） */
   const resetDock = () => {
+    heightAnimation.current?.cancel();
     try {
       localStorage.removeItem(RECT_KEY);
     } catch {
@@ -178,6 +201,7 @@ export function NodePanel({
     setRect(null);
   };
   const toggleCollapsed = () => {
+    heightBeforeToggle.current = asideRef.current?.getBoundingClientRect().height;
     const next = !collapsed;
     setCollapsed(next);
     try { localStorage.setItem(COLLAPSED_KEY, String(next)); } catch { /* Storage may be unavailable. */ }
@@ -213,6 +237,7 @@ export function NodePanel({
   const startResize = (dir: string) => (e: React.PointerEvent) => {
     e.preventDefault();
     e.stopPropagation();
+    heightAnimation.current?.cancel();
     const base = asideRef.current!.getBoundingClientRect();
     const start = {
       x: e.clientX,

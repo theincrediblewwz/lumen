@@ -1,6 +1,10 @@
 import { useCallback, useLayoutEffect, useRef } from 'react';
 import { screenToWorld, type Size, type Viewport } from './CanvasEngine';
 
+export function motionDisabled(reduced = window.matchMedia('(prefers-reduced-motion: reduce)')): boolean {
+  return reduced.matches || document.documentElement.classList.contains('motion-off');
+}
+
 export function interpolateViewport(from: Viewport, to: Viewport, progress: number): Viewport {
   if (progress <= 0) return from;
   if (progress >= 1) return to;
@@ -32,8 +36,7 @@ export function useCameraMotion(owner?: object | string) {
   const animate = useCallback((from: Viewport, to: Viewport, size: Size, paint: (viewport: Viewport) => void, done?: () => void) => {
     cancel();
     const reduced = window.matchMedia('(prefers-reduced-motion: reduce)');
-    const motionDisabled = () => reduced.matches || document.documentElement.classList.contains('motion-off');
-    if (motionDisabled() || (from.x === to.x && from.y === to.y && from.zoom === to.zoom)) {
+    if (motionDisabled(reduced) || (from.x === to.x && from.y === to.y && from.zoom === to.zoom)) {
       paint(to);
       done?.();
       return;
@@ -42,7 +45,7 @@ export function useCameraMotion(owner?: object | string) {
     const job = { frame: 0, target: to };
     function next(now: number) {
       if (active.current !== job) return;
-      const t = motionDisabled() ? 1 : Math.min(1, Math.max(0, (now - start) / ms));
+      const t = motionDisabled(reduced) ? 1 : Math.min(1, Math.max(0, (now - start) / ms));
       const eased = t * t * t * (10 + t * (-15 + 6 * t));
       paint(interpolateViewport(from, to, eased));
       if (t < 1) job.frame = requestAnimationFrame(next);

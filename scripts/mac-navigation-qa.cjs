@@ -249,6 +249,7 @@ async function drag(dx, dy) {
   await page.getByRole('alertdialog').getByRole('button', { name: '确认', exact: true }).click();
   checks.push('both topbar import paths honor unsaved knowledge drafts; cancel leaves text intact and starts no import');
   await crumb('学习项目').click();
+  await page.locator('.project-canvas').waitFor();
   for (const theme of ['light', 'paper', 'dark']) for (const glassMode of ['native', 'css', 'off']) {
     await page.evaluate(async ({ theme, glassMode }) => { const { DEFAULT_SETTINGS, applySettings } = await import('/src/settings.ts'); applySettings({ ...DEFAULT_SETTINGS, theme, glass: glassMode !== 'off', glassMode }, 'macos'); }, { theme, glassMode });
     const seam = await page.evaluate(() => {

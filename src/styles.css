@@ -1556,6 +1556,10 @@ html.glass-on .node-card.is-selected {
 .board-canvas-live {
   animation: fade-in var(--dur-normal) var(--ease-standard);
 }
+
+.workspace[data-canvas-navigation] {
+  background: var(--bg-canvas);
+}
 .placeholder-hint {
   animation: rise-in var(--dur-normal) var(--ease-decelerate);
 }
@@ -2855,6 +2859,7 @@ html.motion-off .edge-line { animation: none; }
 .heat-label-remove { margin-right: auto; }
 .heat-label-editor .error-text { margin: 0; }
 .heat-layer, [data-detail-view] > :is(.canvas-world, .edge-layer) { animation: fade-in 140ms var(--ease-standard); }
+.board-canvas-live > .canvas-world[aria-hidden="true"] { display: none; }
 .markdown-editor {border:1px solid var(--border-color);border-radius:8px;overflow:hidden;min-width:0;}
 .md-editor-toolbar {display:flex;gap:2px;flex-wrap:wrap;align-items:center;padding:5px;border-bottom:1px solid var(--border-color);}
 .md-editor-toolbar button {background:transparent;border:0;color:var(--text-secondary);border-radius:4px;padding:4px 6px;font-size:12px;cursor:pointer;min-width:23px;}

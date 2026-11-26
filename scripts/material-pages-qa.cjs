@@ -102,7 +102,13 @@ const base=process.env.LSQ_UI_URL||'http://127.0.0.1:5198',out=path.resolve(proc
   await page.locator('.flow-close').click();await page.locator('.np-close').click();await fit();await preview().waitFor();assert.equal(await preview().getAttribute('data-preview-resource'),'docs/short.md');assert.equal(await preview().getAttribute('data-preview-page'),String(shortPages-1));check('viewport virtualization restores the node reading position');await page.locator('.canvas-zoom-label').click();for(let i=0;i<6;i++)await page.keyboard.press('Meta+-');await page.locator('.heat-cell.has-flow').waitFor();const flowCount=await page.locator('.heat-cell').evaluateAll(c=>c.reduce((sum,e)=>sum+Number(e.dataset.flowCount),0));assert.equal(flowCount,1);assert.equal(await page.locator('.heat-cell.has-flow').evaluate(e=>getComputedStyle(e,'::after').animationName),'flow-breathe');check('overview aggregation retains the subflow marker and bright breathing perimeter');
   await page.screenshot({path:path.join(out,'material-overview.png')});
   await page.emulateMedia({reducedMotion:'reduce'});assert.equal(await page.locator('.heat-cell.has-flow').evaluate(e=>getComputedStyle(e,'::after').animationName),'none');check('reduced-motion mode keeps a bright static perimeter');
-  await page.setViewportSize({width:720,height:650});await page.locator('.canvas-zoom-label').click();await fit();if(await card('owner').count()){await card('owner').click();const b=await page.locator('.flow-panel').boundingBox();assert.ok(b.width<=688);await page.screenshot({path:path.join(out,'material-flow-720.png')});}check('subboard width remains bounded in a narrow viewport');
+  await page.setViewportSize({width:720,height:650});await page.locator('.canvas-zoom-label').click();await fit();
+  if (!await card('owner').isVisible()) await page.locator('.heat-cell.has-flow').click();
+  await card('owner').click();
+  const narrowFlow = await page.locator('.flow-panel').boundingBox();
+  assert.ok(narrowFlow && narrowFlow.width <= 688);
+  await page.screenshot({path:path.join(out,'material-flow-720.png')});
+  check('subboard width remains bounded in a narrow viewport');
   // Load a real offline PDF and exercise its original pages, not extracted snippets.
   await page.setViewportSize({width:1440,height:960});await page.emulateMedia({reducedMotion:'no-preference'});
   const pdfBytes=[...fs.readFileSync(path.join(__dirname,'fixtures/rich-print.pdf'))];

@@ -17,7 +17,8 @@ export type ProjectLayout = {
   pins?: Record<string, boolean>;
 };
 
-export type ProjectLayoutSnapshot = { layout: ProjectLayout; scope: string; covers?: CoverStore; coverError?: string };
+export type BoardIdsByProject = Record<string, string[]>;
+export type ProjectLayoutSnapshot = { layout: ProjectLayout; scope: string; covers?: CoverStore; coverError?: string; boardIdsByProject?: BoardIdsByProject };
 
 export const EMPTY_PROJECT_LAYOUT: ProjectLayout = { version: 1, projects: {}, boards: {} };
 export const TILE_WIDTH = 154;
@@ -37,6 +38,31 @@ function own<T>(rows: Record<string, T>, key: string): T | undefined {
 
 export function parentProject(layout: ProjectLayout, id: string) {
   return own(layout.projects, id)?.parentId ?? null;
+}
+
+/** Mark each ancestor once. A project's own pin belongs on its corner badge. */
+export function projectsContainingFavorites(
+  projects: readonly ProjectMeta[], layout: ProjectLayout, boardIds: BoardIdsByProject,
+  favorites: { projects: string[]; boards: string[] },
+): ReadonlySet<string> {
+  const available = new Set(projects.map(row => row.id));
+  const contained = new Set<string>();
+  function markAncestors(id: string | null) {
+    while (id && available.has(id) && !contained.has(id)) {
+      contained.add(id);
+      id = parentProject(layout, id);
+    }
+  }
+  for (const id of favorites.projects) {
+    if (available.has(id)) markAncestors(parentProject(layout, id));
+  }
+  if (favorites.boards.length) {
+    const boards = new Set(favorites.boards);
+    for (const id of available) {
+      if (own(boardIds, id)?.some(board => boards.has(board))) markAncestors(id);
+    }
+  }
+  return contained;
 }
 
 export function projectPath(projects: ProjectMeta[], layout: ProjectLayout, projectId: string | null) {

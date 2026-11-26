@@ -55,6 +55,23 @@ const evidence = path.resolve(process.env.LSQ_UI_EVIDENCE || 'mac-ui-evidence');
     }
     requestAnimationFrame(read);
   }), endpoint);
+  const watchNavigation = () => page.evaluate(() => new Promise(resolve => {
+    const frames = [];
+    const end = performance.now() + 720;
+    function read(now) {
+      const host = document.querySelector('.workspace'), phase = host?.dataset.canvasNavigation;
+      const canvas = host?.firstElementChild;
+      if (phase && canvas) frames.push({ phase, opacity: Number(getComputedStyle(canvas).opacity) });
+      if (now < end) requestAnimationFrame(read); else resolve(frames);
+    }
+    requestAnimationFrame(read);
+  }));
+  const assertTransition = frames => {
+    for (const phase of ['leaving', 'entering']) {
+      const samples = frames.filter(frame => frame.phase === phase && frame.opacity > 0 && frame.opacity < 1);
+      assert.ok(new Set(samples.map(sample => sample.opacity)).size >= 3, JSON.stringify(frames));
+    }
+  };
   const point = async (locator, offsetY = 32) => {
     const rect = await locator.boundingBox();
     assert.ok(rect);
@@ -269,18 +286,29 @@ const evidence = path.resolve(process.env.LSQ_UI_EVIDENCE || 'mac-ui-evidence');
 
     await page.mouse.move(850, 450); await page.mouse.wheel(0, 200);
     await page.waitForFunction(() => Number(document.querySelector('.project-canvas')?.dataset.zoom) < 1);
+    const blank = await canvas().evaluate(el => {
+      const box = el.getBoundingClientRect();
+      return { x: box.right - 120, y: box.bottom - 180 };
+    });
+    await drag(blank, { x: blank.x - 53, y: blank.y + 36 });
     const transform = await page.locator('.project-canvas-world').getAttribute('style');
+    const parentPositions = await positions();
+    const entering = watchNavigation();
     await folder('阅读资料').dblclick();
+    assertTransition(await entering);
     await newItem('project', '第三层');
     await folder('第三层').dblclick();
     await newItem('board', '最深白板');
     await board('最深白板').click(); await page.locator('.board-canvas-live').waitFor();
     assert.equal(await trail(), '最深白板');
     assert.equal(await crumb('阅读资料').count(), 1);
+    const returning = watchNavigation();
     await crumb('桌面夹').click(); await board('补充白板').waitFor();
+    assertTransition(await returning);
     assert.equal(await page.locator('.project-canvas-world').getAttribute('style'), transform);
+    assert.deepEqual(await positions(), parentPositions);
     assert.deepEqual((await saved()).layout.boards.project.board, boardPosition);
-    check('three project levels and the board appear in the path; jumping back restores the camera and positions');
+    check('project entry and breadcrumb return fade out and in over multiple frames; returning restores the pan, zoom, and tile layout exactly');
 
     await crumb('项目首页').click();
     await folder('桌面夹').click();
@@ -401,6 +429,81 @@ const evidence = path.resolve(process.env.LSQ_UI_EVIDENCE || 'mac-ui-evidence');
     await folder('阅读资料').dblclick(); await folder('第三层').dblclick();
     await board('最深白板').waitFor();
     check('failed writes roll back the visual move; restart opens root and preserves all saved levels');
+
+    const favorite = (kind, name) => page.getByRole('button', { name: `收藏置顶${kind}：${name}`, exact: true });
+    const favoriteStyle = mark => mark.evaluate(el => {
+      const style = getComputedStyle(el);
+      return [style.color, style.backgroundColor, style.width, style.height, style.borderRadius, el.querySelector('svg').getAttribute('fill')];
+    });
+    await favorite('白板', '最深白板').click();
+    assert.equal(await favorite('白板', '最深白板').getAttribute('aria-pressed'), 'true');
+    await crumb('桌面夹').click();
+    await favorite('白板', '合成学习白板').click();
+    await favorite('项目', '阅读资料').click();
+    const boardStar = await favoriteStyle(favorite('白板', '合成学习白板'));
+    const folderStar = await favoriteStyle(favorite('项目', '阅读资料'));
+    await crumb('项目首页').click();
+    await folder('桌面夹').click();
+    await settled('project');
+    const previewStar = name => allBranches().filter({ has: page.getByRole('button', { name, exact: true }) }).getByRole('img', { name: '已收藏', exact: true });
+    assert.deepEqual(await favoriteStyle(previewStar('合成学习白板')), boardStar);
+    assert.deepEqual(await favoriteStyle(previewStar('阅读资料')), folderStar);
+    assert.equal(await previewStar('补充白板').count(), 0);
+    assert.deepEqual(await previewStar('合成学习白板').evaluate(el => {
+      const style = getComputedStyle(el);
+      return [style.opacity, style.pointerEvents];
+    }), ['1', 'none']);
+    const glow = card => card.locator('.project-folder-favorite-effect');
+    const settings = page.getByRole('dialog', { name: '设置', exact: true });
+    const effects = settings.getByRole('group', { name: '文件夹收藏特效' });
+    const closeSettings = () => page.keyboard.press('Escape');
+    const openSettings = () => page.getByRole('button', { name: '设置', exact: true }).click();
+    assert.equal(await glow(folder('桌面夹')).count(), 1);
+    assert.equal(await glow(reading).count(), 1);
+    assert.equal(await glow(folder('第三个项目')).count(), 0);
+    assert.equal(await glow(board('合成学习白板')).count(), 0);
+    assert.notEqual(await glow(folder('桌面夹')).evaluate(el => getComputedStyle(el, '::after').boxShadow), 'none');
+    await openSettings();
+    assert.equal(await effects.getByRole('button', { name: '荧光', exact: true }).getAttribute('aria-pressed'), 'true');
+    await effects.getByRole('button', { name: '流光', exact: true }).click();
+    await closeSettings();
+    const aurora = reading.locator('.project-folder-aurora');
+    await aurora.waitFor();
+    const wave = () => aurora.evaluate(el => {
+      const layer = getComputedStyle(el, '::before'), spectrum = getComputedStyle(el, '::after');
+      return [layer.transform, spectrum.transform];
+    });
+    const firstWave = await wave();
+    await page.waitForTimeout(360);
+    const secondWave = await wave();
+    assert.ok(firstWave.every((value, index) => value !== secondWave[index]));
+    assert.ok(await aurora.evaluate(el => {
+      const folder = el.closest('.project-folder-artwork').getBoundingClientRect();
+      const light = el.getBoundingClientRect();
+      const lip = folder.top + folder.height * 15 / 70;
+      return light.top < folder.top && Math.abs(light.bottom - lip) <= 3 && !!el.closest('.project-folder-favorite-effect');
+    }));
+    await page.mouse.move(1400, 170);
+    await page.screenshot({ path: path.join(evidence, 'project-preview-favorites.png') });
+    await page.emulateMedia({ reducedMotion: 'reduce' });
+    assert.equal(await aurora.evaluate(el => getComputedStyle(el, '::before').animationName), 'none');
+    await page.emulateMedia({ reducedMotion: 'no-preference' });
+    await reading.click(); await settled(readingId);
+    await deep.click(); await settled(deepest.id);
+    await previewStar('最深白板').waitFor();
+    await deepPreview.click();
+    await page.locator('.board-canvas-live').waitFor();
+    assert.equal(await trail(), '最深白板');
+    check('favorites display the same persistent star on expanded folder and whiteboard cards, including nested previews');
+    await page.reload({ waitUntil: 'domcontentloaded' });
+    await folder('桌面夹').waitFor();
+    assert.equal(await page.locator('html').getAttribute('data-folder-favorite-effect'), 'aurora');
+    await openSettings();
+    assert.equal(await effects.getByRole('button', { name: '流光', exact: true }).getAttribute('aria-pressed'), 'true');
+    await settings.getByRole('switch', { name: '动画', exact: true }).click();
+    await closeSettings();
+    assert.equal(await folder('桌面夹').locator('.project-folder-aurora').evaluate(el => getComputedStyle(el, '::before').animationName), 'none');
+    check('folder effects count nested favorites, default to a neon rim, animate the aurora and persist the selected effect');
 
     const design = await browser.newPage({ viewport: { width: 1487, height: 1058 } });
     await design.goto(address + '&catalogDesignQA', { waitUntil: 'domcontentloaded' });

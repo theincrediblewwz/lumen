@@ -136,7 +136,7 @@ export const api = {
   projectDelete: (id: string) => invoke<void>('project_delete', { id }),
   projectRename: (id: string, name: string) =>
     invoke<ProjectMeta>('project_rename', { id, name }),
-  projectCanvasRead: () => invoke<ProjectLayoutSnapshot>('project_canvas_read'),
+  projectCanvasRead: (includeBoardIds = false) => invoke<ProjectLayoutSnapshot>('project_canvas_read', { includeBoardIds }),
   projectCanvasPlace: (kind: 'project' | 'board', id: string, projectId: string | null, position: { x: number; y: number }, expectedScope: string) =>
     invoke<ProjectLayout>('project_canvas_place', { kind, id, projectId, position, expectedScope }),
   projectCanvasPin: (kind: 'project' | 'board', id: string, projectId: string | null, pinned: boolean, expectedScope: string) =>

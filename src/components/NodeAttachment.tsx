@@ -60,10 +60,12 @@ export function DocumentPages({ markdown, html, page, onPages, waiting = false, 
   }, [html]);
   useLayoutEffect(() => {
     const view = viewport.current, inner = content.current; if (!view || !inner) return;
-    let frame = 0, alive = true;
+    let frame = 0, alive = true, measuredWidth = 0, needsMeasure = true;
     const measure = () => {
       if (!alive || !view.clientWidth) return;
       const width = view.clientWidth, previous = inner.style.cssText;
+      measuredWidth = width;
+      needsMeasure = false;
       // Read the ordinary flow before fragmenting. Short notes stay compact, and
       // indivisible figures/formulas get enough height instead of being cropped.
       inner.style.cssText += `;column-count:auto;column-width:auto;height:auto;transform:none;width:${width}px`;
@@ -84,8 +86,11 @@ export function DocumentPages({ markdown, html, page, onPages, waiting = false, 
       setLayout(old => old.width === width && old.height === height && old.pages === pages ? old : { width, height, pages });
       if (!waiting) onPages(pages);
     };
-    const schedule = () => { cancelAnimationFrame(frame); frame = requestAnimationFrame(measure); };
-    const resize = new ResizeObserver(schedule); resize.observe(view);
+    const schedule = () => { needsMeasure = true; cancelAnimationFrame(frame); frame = requestAnimationFrame(measure); };
+    const resize = new ResizeObserver(() => {
+      if (view.clientWidth && (needsMeasure || view.clientWidth !== measuredWidth)) schedule();
+    });
+    resize.observe(view);
     const mutations = new MutationObserver(schedule); mutations.observe(inner, { childList: true, subtree: true, attributes: true, attributeFilter: ['data-done', 'src'] });
     const appearance = new MutationObserver(schedule), board = view.closest('.board-canvas-live');
     if (board) appearance.observe(board, { attributes:true, attributeFilter:['style'] });

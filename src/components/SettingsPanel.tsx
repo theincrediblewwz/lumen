@@ -1,6 +1,6 @@
 import { useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
-import type { Settings, ThemeName, GlassMode } from '../settings';
+import type { Settings, ThemeName, GlassMode, FolderFavoriteEffect } from '../settings';
 import { SyncSettings } from './SyncSettings';
 import { BoardWriteSettings } from './BoardWriteSettings';
 
@@ -14,6 +14,11 @@ const GLASS_MODES: { id: GlassMode; label: string }[] = [
   { id: 'native', label: '原生' },
   { id: 'css', label: '网页' },
   { id: 'off', label: '关闭' },
+];
+
+const FOLDER_FAVORITE_EFFECTS: { id: FolderFavoriteEffect; label: string }[] = [
+  { id: 'glow', label: '荧光' },
+  { id: 'aurora', label: '流光' },
 ];
 
 /**
@@ -98,6 +103,20 @@ export function SettingsPanel({
               </button>
             ))}
           </div>
+        </section>
+
+        <section className="settings-section">
+          <h3 className="settings-label">文件夹收藏特效</h3>
+          <div className="seg" role="group" aria-label="文件夹收藏特效">
+            {FOLDER_FAVORITE_EFFECTS.map(({ id, label }) => (
+              <button key={id} type="button" aria-pressed={settings.folderFavoriteEffect === id}
+                className={`seg-btn${settings.folderFavoriteEffect === id ? ' is-active' : ''}`}
+                onClick={() => onChange({ folderFavoriteEffect: id })}>
+                {label}
+              </button>
+            ))}
+          </div>
+          <p className="settings-hint">标记里面含有已收藏项目或白板的文件夹。</p>
         </section>
 
         <details className="settings-section settings-disclosure">

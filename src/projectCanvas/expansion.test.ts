@@ -1,10 +1,21 @@
 import { describe, expect, it } from 'vitest';
 import { nestedPositions, peerOffset, radialPositions, revealCards, translate } from './expansion';
-import { TILE_HEIGHT, TILE_WIDTH } from './layout';
+import { EMPTY_PROJECT_LAYOUT, projectsContainingFavorites, TILE_HEIGHT, TILE_WIDTH } from './layout';
 
 const origin = { x: 54, y: 66 };
 
 describe('project folder previews', () => {
+  it('marks all live ancestors of favorites independently of positions and the parent’s own star', () => {
+    const projects = ['root', 'middle', 'leaf', 'sibling'].map(id => ({ id, name: id, created_at: '' }));
+    const layout = { ...EMPTY_PROJECT_LAYOUT, projects: { middle: { parentId: 'root' }, leaf: { parentId: 'middle' } } };
+    const boardIds = { leaf: ['board'], missingProject: ['missingBoard'] };
+    expect(projectsContainingFavorites(projects, layout, boardIds, { projects: ['root', 'sibling'], boards: [] })).toEqual(new Set());
+    expect(projectsContainingFavorites(projects, layout, boardIds, { projects: ['leaf'], boards: [] })).toEqual(new Set(['middle', 'root']));
+    expect(projectsContainingFavorites(projects, layout, boardIds, { projects: ['missingProject'], boards: ['board', 'missingBoard'] }))
+      .toEqual(new Set(['leaf', 'middle', 'root']));
+    expect(projectsContainingFavorites(projects, layout, {}, { projects: [], boards: ['board'] })).toEqual(new Set());
+  });
+
   it('leaves room between the parent and every child, including in outer rings', () => {
     for (const count of [1, 2, 3, 5, 6, 7, 13, 43, 200]) {
       const cards = [origin, ...radialPositions(origin, count)];
