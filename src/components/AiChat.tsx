@@ -37,7 +37,8 @@ import { requestEditorFlush, notifyLibraryChanged, releaseEditorLock } from '../
 import { loadKnowledge, openKnowledge } from '../knowledge/store';
 import { resolveKnowledgeReferences, knowledgeReferenceText, knowledgeReferenceLinks, type KnowledgeReference } from '../knowledge/core';
 import { messageTokens } from '../ai/budget';
-import { loadWritePolicy,loadFlushedBoard,commitBoardOperations,type OperationBatch,type OperationResult } from '../ai/boardOperations';
+import { loadWritePolicy,loadFlushedBoard,commitBoardOperations,type OperationResult } from '../ai/boardOperations';
+import { prepareBoardBatch } from '../ai/boardArrangement';
 import { prepareMemory, memoryData, loadMemory, validMemory, type ChatMemory } from '../ai/chatMemory';
 import { CONVERSATION_TOOLS } from '../ai/conversationTools';
 import type { SessionStatus } from './AiChatHost';
@@ -520,7 +521,14 @@ export function ChatPane({ projectId, boardId, boardName, nodeId: requestedNode,
     if(!currentRequest())return;
     const canWrite=!!permission?.policy.enabled && settings.shareBoard;
     const { toolRounds, boardWriteBatches } = aiToolLimits(settings);
-    const systemMessage:ChatMessage = { role: 'system', content: buildSystemPrompt(requestBoard&&settings.shareBoard ? buildBoardContext(requestBoard,settings.contextBudget) : '', settings.shareBoard) + nodeContext + (canWrite?`\n\n用户已在本机授权白板整理。需要新建节点/追加文档/连线时调用 apply_board_operations，操作参数只放工具通道。在生成新节点前先理清主线、父子关系和阅读顺序，可在 Markdown 中用 =={#RRGGBB}关键词== 突出少量重点。需要调整已有节点的位置、颜色或整板布局时，引导用户用 AI 工作区。单次发送允许 ${toolRounds} 轮工具请求和 ${boardWriteBatches} 批白板写入。大任务按工具规定逐批提交，之后用回执中的节点 ID 处理后续批次。续做先核对最新白板，避免重复已保存的操作。只报告有成功回执的操作，最后说明还需核对或完成的部分。`:'\n\n当前未开启AI修改白板，只能读取与建议。可说明设置中的“AI整理白板”入口。') };
+    const writeInstructions = canWrite ? [
+      '用户已在本机授权白板整理。当前白板的新增、移动、配色和自动排版都通过 apply_board_operations 写入。若用户要求直接整理，先查目标再实际调用工具。',
+      '先理清入口、层级和阅读顺序。用有向箭头表达父子关系，可用同一分支的统一色标，在 Markdown 中用 =={#RRGGBB}关键词== 突出少量重点。',
+      '位置和色标用 update_node_presentation，includeDescendants=true 会让整棵分支一起平移或配色。不要猜坐标，先通过 list_nodes 查当前位置。',
+      '创建完节点和连线后，若需排版，单独提交 arrange_nodes。默认用 auto，应用会测量卡片并组合横展与纵排。要把多个分支从上到下各放一行，选择 branches，按顺序传 rootIds 和 stack=true。需要保留分支内部相对位置时，用 update_node_presentation 整棵平移。仅整理用户指定范围，新增分支可用回执 ID 单独排版。子流程步骤顺序保留。',
+      `单次发送允许 ${toolRounds} 轮工具请求和 ${boardWriteBatches} 批白板写入。按工具规定分批，续做先核对最新白板。只报告有成功回执的操作。`,
+    ].join('\n') : '当前未开启 AI 修改白板，只能读取与建议。可说明设置中的「AI 整理白板」入口。';
+    const systemMessage: ChatMessage = { role: 'system', content: buildSystemPrompt(settings.shareBoard ? buildBoardContext(requestBoard, settings.contextBudget) : '', settings.shareBoard) + nodeContext + '\n\n' + writeInstructions };
     const question: ChatMessage = { role: 'user', content: text };
     const definitions=[...(settings.shareBoard&&requestBoard?TOOL_DEFS:[]),...CONVERSATION_TOOLS,...(canWrite?[WRITE_TOOL]:[])];
     const toolTokens=requestInputTokens([],definitions);
@@ -604,7 +612,12 @@ export function ChatPane({ projectId, boardId, boardName, nodeId: requestedNode,
         writeLock.current=true;setWritingBoard(true);
         let writeDone!:()=>void;pendingWrite.current=new Promise<void>(resolve=>{writeDone=resolve;});
         try{
-          const result=await commitBoardOperations(projectId,boardId,args as unknown as OperationBatch,requestId,permission,toolCtx.board,()=>!!toolCtx.cancelled?.()||!mounted.current);
+          const baseline = toolCtx.board;
+          const signal = toolCtx.signal!;
+          const batch = await prepareBoardBatch(args, baseline, document.body, scope, signal, (done, count) => {
+            if (currentRequest()) setProgress(`正在测量白板节点 · ${done}/${count}`);
+          });
+          const result=await commitBoardOperations(projectId,boardId,batch,requestId,permission,baseline,()=>signal.aborted||!currentRequest()||!loadAiSettingsDeferred().shareBoard);
           if (!result.reused) savedBatches++;
           toolCtx.board=result.board;
           boardReadEpoch.current++;

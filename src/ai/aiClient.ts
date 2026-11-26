@@ -377,7 +377,11 @@ export function streamChatAgentic(
   const limits = aiToolLimits(settings);
   const sessionId = handlers.sessionId ?? newRequestId();
   const token: CancelToken = { cancelled: false };
-  if(toolCtx)toolCtx.cancelled=()=>token.cancelled;
+  const toolCancellation = toolCtx ? new AbortController() : undefined;
+  if (toolCtx) {
+    toolCtx.cancelled = () => token.cancelled;
+    toolCtx.signal = toolCancellation?.signal;
+  }
   const definitions = handlers.tools?.definitions ?? (toolCtx ? [...(toolCtx.shareBoard===false?[]:TOOL_DEFS),...(toolCtx.conversationMessages?CONVERSATION_TOOLS:[]),...(toolCtx.shareBoard!==false&&toolCtx.applyOperations?[WRITE_TOOL]:[])] : undefined);
   const hasTools = !!definitions?.length;
 
@@ -534,6 +538,7 @@ export function streamChatAgentic(
   return {
     cancel: () => {
       token.cancelled = true;
+      toolCancellation?.abort();
       token.cancelCurrent?.();
     },
   };

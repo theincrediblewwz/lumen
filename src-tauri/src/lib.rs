@@ -18,6 +18,7 @@ mod sync;
 mod knowledge;
 mod model_catalog;
 mod board_operations;
+mod board_layout;
 mod conversation_import;
 mod share_reader;
 #[cfg(test)]

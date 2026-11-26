@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Focus, Move, X } from 'lucide-react';
-import { CanvasEngine, type Viewport } from '../canvas/CanvasEngine';
+import { CanvasEngine, fitToBounds, zoomAtPoint, zoomByFactor, type Viewport } from '../canvas/CanvasEngine';
+import { useCameraMotion } from '../canvas/cameraMotion';
 import {
   createHistory,
   pushState,
@@ -13,10 +14,10 @@ import {
   canRedo,
   type History,
 } from '../canvas/history';
-import { nearStraightLine, straightPath, boxContains, type Box } from '../canvas/geometry';
-import { computeTreeLayout } from '../canvas/autoLayout';
+import { nearStraightLine, straightPath, boxContains, boxCenter, type Box } from '../canvas/geometry';
+import { computeAdaptiveTreeLayout } from '../canvas/autoLayout';
 import {routeBoardEdges,edgeLabelLines} from '../canvas/edgeRouting';
-import { descendantIds,translateFromBaseline } from '../canvas/subtree';
+import { descendantIds, translateBends, translateFromBaseline } from '../canvas/subtree';
 import { matchShortcut, isEditableTarget, shortcut } from '../canvas/shortcuts';
 import { dropPointToClient, detectMacOS } from '../canvas/dropPoint';
 import { pickMarkdownFiles, type BoardFile, type BoardNode, type BoardEdge } from '../api';
@@ -26,7 +27,7 @@ import { api, type DocRef } from '../api';
 import { invoke } from '@tauri-apps/api/core';
 import { open } from '@tauri-apps/plugin-dialog';
 import { loadWritePolicy } from '../ai/boardOperations';
-import { MIN_BOARD_ZOOM, boardAppearance, FONT_FAMILIES, heatLevel, aggregateHeat, intersects, snapConnection, resizedBox, resizedImageBox, questionPath, type BoardAppearance } from '../canvas/presentation';
+import { MIN_BOARD_ZOOM, boardAppearance, FONT_FAMILIES, heatLevel, aggregateHeat, heatNodeBox, isolatedHeatLabelZoom, readHeatLabel, intersects, snapConnection, resizedBox, resizedImageBox, questionPath, type BoardAppearance, type HeatCell, type HeatLabel } from '../canvas/presentation';
 import { boardImageSizing, imageDisplayAt, type ImagePixels } from '../canvas/imageSizing';
 import { DocumentEditor } from './DocumentEditor';
 import { QuestionEditor } from './QuestionEditor';
@@ -37,10 +38,11 @@ import { NodeTooltip } from './NodeTooltip';
 import { EdgeLabel } from './EdgeLabel';
 import { FlowPanel } from './FlowPanel';
 import { BranchFocusView } from './BranchFocusView';
+import { HeatLabelText, HeatOverview } from './HeatOverview';
+import { HeatLabelEditor } from './HeatLabelEditor';
 import { TitleBarButton } from './TitleBarButton';
 import { contentDocs, imageDoc, imageOnly, clipboardText, nonemptyNode, flowNodes, orderFlow, topLevelNodes } from '../canvas/composition';
 import { measureNodes } from '../canvas/measureNodes';
-import { flowHighlight } from '../canvas/preview';
 import { ContextMenu, type ContextMenuState } from './ContextMenu';
 import { assignedTags, colorTag, type CatalogTag, type TagStore } from '../projectCanvas/tags';
 
@@ -94,6 +96,7 @@ export function BoardCanvas({
   onEditTags: (node: BoardNode) => void;
 }) {
   const wrapRef = useRef<HTMLDivElement>(null);
+  const rect = useCallback(() => wrapRef.current?.getBoundingClientRect() ?? { left: 0, top: 0, width: 1, height: 1 }, []);
   const focusToggle = useRef<HTMLButtonElement>(null);
   const [quickMove, setQuickMove] = useState(false);
   const [branchRoot, setBranchRoot] = useState<string | null>(null);
@@ -108,11 +111,27 @@ export function BoardCanvas({
     if (wrapRef.current) wrapRef.current.inert = branchRoot !== null;
   }, [branchRoot]);
   const mutationsBlocked = useCallback(() => syncMutationLock.current || !!document.querySelector('[aria-modal="true"]'), [syncMutationLock]);
-  const engineRef = useRef<CanvasEngine>(
-    new CanvasEngine(board.viewport, { minZoom: MIN_BOARD_ZOOM, maxZoom: 3 }),
-  );
+  const engine = useMemo(() => new CanvasEngine(board.viewport, { minZoom: MIN_BOARD_ZOOM, maxZoom: 3 }), [board.id]); // eslint-disable-line react-hooks/exhaustive-deps
+  const engineRef = useRef(engine);
+  engineRef.current = engine;
   const [, force] = useState(0);
   const rerender = useCallback(() => force((n) => n + 1), []);
+  const [locatedHeatId, setLocatedHeatId] = useState<string | null>(null);
+  const { active: cameraMotion, animate: animateCamera, cancel: cancelCamera } = useCameraMotion(engine);
+  const travel = useCallback((target: Viewport, arrived?: () => void) => {
+    const bounds = rect();
+    setLocatedHeatId(null);
+    // Keep the intended view in the debounced snapshot if the board is closed during flight.
+    onViewportChange(target);
+    animateCamera(engine.viewport, target, bounds, viewport => { engine.setViewport(viewport); rerender(); }, () => {
+      onViewportChange(engine.viewport);
+      arrived?.();
+    });
+  }, [animateCamera, engine, onViewportChange, rect, rerender]);
+  const stopCamera = useCallback(() => {
+    if (cancelCamera()) onViewportChange(engine.viewport);
+    setLocatedHeatId(null);
+  }, [cancelCamera, engine, onViewportChange]);
   const paintFrame = useRef<number | null>(null);
   const scheduleViewportPaint = useCallback(() => {
     if (paintFrame.current !== null) return;
@@ -173,6 +192,8 @@ export function BoardCanvas({
   useEffect(()=>{const show=(e:Event)=>{if((e as CustomEvent).detail===board.id)setAppearanceOpen(v=>!v);};window.addEventListener('lumen:board-settings',show);return()=>window.removeEventListener('lumen:board-settings',show);},[board.id]);
   const appearance=boardAppearance(board.appearance);
   const [menu, setMenu] = useState<ContextMenuState | null>(null);
+  const [heatEditorIds, setHeatEditorIds] = useState<string[]>([]);
+  const closeHeatEditor = useCallback(() => setHeatEditorIds([]), []);
   const [flowOwnerId,setFlowOwnerId]=useState<string|null>(null);
   const pasteTarget=useRef<string|null>(null),pasteFlow=useRef<string|null>(null);
   const arrangeJob=useRef<AbortController|null>(null);
@@ -242,9 +263,8 @@ export function BoardCanvas({
     }
   }, []);
 
-  // 切换白板时重置引擎、历史栈、测量缓存
+  // 切换白板时重置历史栈、测量缓存
   useEffect(() => {
-    engineRef.current = new CanvasEngine(board.viewport, { minZoom: MIN_BOARD_ZOOM, maxZoom: 3 });
     setHistory(createHistory({ nodes: board.nodes, edges: board.edges ?? [] }));
     sizesRef.current = {};minimumRef.current={};setFlowOwnerId(null);
     setSelected(null);
@@ -252,11 +272,10 @@ export function BoardCanvas({
     setEditingId(null);
     setEditingEdge(null);
     setPanelId(null);
+    setHeatEditorIds([]);setLocatedHeatId(null);
     setMoveRoot(null);drag.current=null;setDraggingNodes(false);
     rerender();
   }, [board.id]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  const engine = engineRef.current;
 
   /** 始终指向最新的图状态：供 window 级拖拽监听读取（避免闭包捕获旧值） */
   const graphRef = useRef(history.present);
@@ -368,17 +387,18 @@ export function BoardCanvas({
     const zoom = Math.max(0.8, engine.viewport.zoom);
     const cx = node.x + size.w / 2;
     const cy = node.y + size.h / 2;
-    engine.setViewport({
+    let timer: number | undefined;
+    setSelected(node.id);
+    setFlashId(null);
+    travel({
       x: rectEl.width / 2 - cx * zoom,
       y: rectEl.height / 2 - cy * zoom,
       zoom,
+    }, () => {
+      setFlashId(node.id);
+      timer = window.setTimeout(() => setFlashId(current => current === node.id ? null : current), 1600);
     });
-    setSelected(node.id);
-    setFlashId(node.id);
-    rerender();
-    onViewportChange(engine.viewport);
-    const t = setTimeout(() => setFlashId(null), 1600);
-    return () => clearTimeout(t);
+    return () => window.clearTimeout(timer);
   }, [focusNode?.nonce]); // eslint-disable-line react-hooks/exhaustive-deps
 
   /** 一次原子变更：记历史 + 落盘 */
@@ -406,20 +426,22 @@ export function BoardCanvas({
 
   /** 树状自动布局（M6-4）：只重排位置、不改结构，进历史可撤销；带 360ms 归位过渡。 */
   const autoArrange = useCallback(async () => {
-    if(drag.current||arrangeJob.current||!wrapRef.current)return;
+    const host = wrapRef.current;
+    if(drag.current||arrangeJob.current||!host||mutationsBlocked())return;
     const snapshot=historyRef.current.present,visible=topLevelNodes(snapshot.nodes);if(!visible.length)return;
     const controller=new AbortController();arrangeJob.current=controller;setArrangeBusy(true);
     try {
-      const sizes=await measureNodes(wrapRef.current,visible,board.projectId,board.id,controller.signal,done=>setDocumentStatus(`正在适配内容 ${done}/${visible.length}`));
+      const sizes=await measureNodes(host,visible,board.projectId,board.id,controller.signal,done=>setDocumentStatus(`正在适配内容 ${done}/${visible.length}`));
       if(controller.signal.aborted||historyRef.current.present!==snapshot)throw Error('整理期间内容发生变化，原布局保留，请重试');
       const layout=visible.map(n=>({id:n.id,...sizes.get(n.id)!})),ids=new Set(visible.map(n=>n.id));
       const origin=visible.reduce((at,n)=>({originX:Math.min(at.originX,n.x),originY:Math.min(at.originY,n.y)}),{originX:Infinity,originY:Infinity});
-      const positions=computeTreeLayout(layout,snapshot.edges.filter(e=>ids.has(e.from)&&ids.has(e.to)),origin);
+      const bounds = host.getBoundingClientRect();
+      const positions=computeAdaptiveTreeLayout(layout,snapshot.edges.filter(e=>ids.has(e.from)&&ids.has(e.to)),{...origin,aspectRatio:bounds.width/Math.max(1,bounds.height)});
       setArranging(true);if(arrangeTimer.current)window.clearTimeout(arrangeTimer.current);arrangeTimer.current=window.setTimeout(()=>setArranging(false),420);
-      apply({nodes:snapshot.nodes.map(n=>positions.has(n.id)?{...n,...positions.get(n.id),...sizes.get(n.id)}:n),edges:snapshot.edges});setDocumentStatus('已适配全部节点内容并整理布局');
+      apply({nodes:snapshot.nodes.map(n=>positions.has(n.id)?{...n,...positions.get(n.id),...sizes.get(n.id)}:n),edges:translateBends(snapshot.edges,snapshot.nodes,positions)});setDocumentStatus('已适配全部节点内容并整理布局');
     } catch(error){if(mounted.current)setDocumentStatus(String(error));}
     finally{arrangeJob.current=null;if(mounted.current)setArrangeBusy(false);}
-  }, [apply,board.projectId,board.id]);
+  }, [apply,board.projectId,board.id,mutationsBlocked]);
 
   /* ── 键盘视图操作（M6-9）：缩放 / 重置 / 适配 / 中心新建 / 微移 ── */
 
@@ -428,21 +450,18 @@ export function BoardCanvas({
     (factor: number) => {
       if(drag.current?.kind==='node'||drag.current?.kind==='resize')return;
       const r = rect();
-      engine.zoomByFactor({ x: r.width / 2, y: r.height / 2 }, factor);
-      rerender();
-      onViewportChange(engine.viewport);
+      const pending = cameraMotion.current?.target ?? engine.viewport;
+      travel(zoomByFactor(pending, { x: r.width / 2, y: r.height / 2 }, factor, engine.minZoom, engine.maxZoom));
     },
-    [engine, onViewportChange, rerender],
+    [cameraMotion, engine, rect, travel],
   );
 
   /** 缩放重置为 100%，保持视口中心对应的世界点不动。 */
   const zoomReset = useCallback(() => {
     if(drag.current?.kind==='node'||drag.current?.kind==='resize')return;
     const r = rect();
-    engine.zoomAtPoint({ x: r.width / 2, y: r.height / 2 }, 1);
-    rerender();
-    onViewportChange(engine.viewport);
-  }, [engine, onViewportChange, rerender]);
+    travel(zoomAtPoint(engine.viewport, { x: r.width / 2, y: r.height / 2 }, 1, engine.minZoom, engine.maxZoom));
+  }, [engine, rect, travel]);
 
   /** 适配全部内容到屏幕（zoom-to-fit）。 */
   const fitAll = useCallback(() => {
@@ -450,8 +469,9 @@ export function BoardCanvas({
     const whole=graphRef.current,ids=mainIdsRef.current,shown=whole.nodes.filter(node=>ids.has(node.id));
     const g={nodes:shown,edges:whole.edges.filter(e=>ids.has(e.from)&&ids.has(e.to))};
     const r = rect();
+    const size = { width: r.width, height: r.height };
     if (g.nodes.length === 0) {
-      engine.fit(null, { width: r.width, height: r.height });
+      travel(fitToBounds(null, size, engine));
     } else {
       let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
       for (const n of g.nodes) {
@@ -469,14 +489,9 @@ export function BoardCanvas({
         for(const edge of g.edges){const route=routes.get(edge.id);if(!route)continue;const lines=edgeLabelLines(edge.label??''),width=Math.max(24,...lines.map(s=>Array.from(s).length*12))+16,height=Math.max(24,lines.length*16+12);minX=Math.min(minX,route.mid.x,route.labelPoint.x-width/2);maxX=Math.max(maxX,route.mid.x,route.labelPoint.x+width/2);minY=Math.min(minY,route.mid.y,route.labelPoint.y-height/2);maxY=Math.max(maxY,route.mid.y,route.labelPoint.y+height/2);}
       }
 
-      engine.fit(
-        { x: minX, y: minY, width: maxX - minX, height: maxY - minY },
-        { width: r.width, height: r.height },
-      );
+      travel(fitToBounds({ x: minX, y: minY, width: maxX - minX, height: maxY - minY }, size, engine));
     }
-    rerender();
-    onViewportChange(engine.viewport);
-  }, [engine, onViewportChange, rerender]);
+  }, [engine, rect, travel]);
 
   /** 在视口中心新建节点（键盘 N）。 */
   const addNodeAtCenter = useCallback(() => {
@@ -675,8 +690,6 @@ export function BoardCanvas({
     null,
   );
 
-  const rect = useCallback(() => wrapRef.current?.getBoundingClientRect() ?? { left: 0, top: 0, width: 1, height: 1 }, []);
-
   const suppressClick = useRef(false);
 
   /** 取节点世界矩形（用测得尺寸，未测得则兜底） */
@@ -696,6 +709,7 @@ export function BoardCanvas({
       if (event.target instanceof Element && event.target.closest('.flow-panel, .node-panel, .document-editor-modal, .board-appearance')) return;
       event.preventDefault();
       if (drag.current || branchRootRef.current || !event.deltaY) return;
+      stopCamera();
       const before = engine.viewport;
       const bounds = rect();
       const unit = event.deltaMode === WheelEvent.DOM_DELTA_LINE ? 16 : event.deltaMode === WheelEvent.DOM_DELTA_PAGE ? bounds.height : 1;
@@ -709,7 +723,7 @@ export function BoardCanvas({
     };
     canvas.addEventListener('wheel', onWheel, { passive: false });
     return () => canvas.removeEventListener('wheel', onWheel);
-  }, [appearance.zoomSensitivity, engine, onViewportChange, rect, scheduleViewportPaint]);
+  }, [appearance.zoomSensitivity, engine, onViewportChange, rect, scheduleViewportPaint, stopCamera]);
 
   const startPan = useCallback((event: React.PointerEvent, allowsNewNode: boolean, nodeId?: string) => {
     const { x, y } = engine.viewport;
@@ -727,6 +741,7 @@ export function BoardCanvas({
       blankClicks.current = [];
       return;
     }
+    stopCamera();
     const allowsNewNode = !(panelId || flowOwnerId || editingId || editingEdge || menu);
     setSelected(null);
     setSelectedEdge(null);
@@ -740,6 +755,7 @@ export function BoardCanvas({
   const onNodePointerDown = useCallback((e: React.PointerEvent, id: string) => {
     if (drag.current || arrangeJob.current || mutationsBlocked() || !e.isPrimary || e.button !== 0 || (e.ctrlKey && detectMacOS())) return;
     if ((e.target as Element).closest('button, input, textarea, select, a, [contenteditable]')) return;
+    stopCamera();
     const focused = document.activeElement;
     if (focused instanceof HTMLElement && focused.matches('input, textarea, [contenteditable]')) focused.blur();
     e.preventDefault();
@@ -764,16 +780,17 @@ export function BoardCanvas({
     };
     setDraggingNodes(true);
     (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
-  }, [engine, moveRoot, mutationsBlocked, quickMove, startPan]);
+  }, [engine, moveRoot, mutationsBlocked, quickMove, startPan, stopCamera]);
 
   const onResizeStart = useCallback((e: React.PointerEvent, id: string, corner: string, image?: PreviewImage) => {
     if(e.button!==0||mutationsBlocked()||drag.current)return;e.preventDefault();e.stopPropagation();
+    stopCamera();
     const node=graphRef.current.nodes.find(n=>n.id===id);if(!node)return;
     setSelected(id);suppressClick.current=true;
     const sticker = !!e.currentTarget.closest('.node-card')?.classList.contains('is-sticker');
     drag.current={kind:'resize',id,corner,pointerId:e.pointerId,startX:e.clientX,startY:e.clientY,zoom:engine.viewport.zoom,box:boxOf(node),baseline:historyRef.current.present,sticker,image,primary:image?.path===contentDocs(node)[0]?.path};
     wrapRef.current?.setPointerCapture(e.pointerId);setDraggingNodes(true);
-  }, [boxOf, engine, mutationsBlocked]);
+  }, [boxOf, engine, mutationsBlocked, stopCamera]);
   const previewResize=(d:Extract<NonNullable<typeof drag.current>,{kind:'resize'}>,e:{clientX:number;clientY:number})=>{
     if (Math.hypot(e.clientX - d.startX, e.clientY - d.startY) < 1) {
       if (historyRef.current.present !== d.baseline) {
@@ -808,6 +825,7 @@ export function BoardCanvas({
     if (e.button !== 0) return;
     e.stopPropagation();
     e.preventDefault();
+    stopCamera();
     const n = nodes.find((x) => x.id === id);
     if (!n) return;
     const b = boxOf(n);
@@ -855,7 +873,7 @@ export function BoardCanvas({
     const cancel=()=>{window.removeEventListener('pointermove',onMove);window.removeEventListener('pointerup',onUp);window.removeEventListener('pointercancel',cancel);window.removeEventListener('blur',cancel);drag.current=null;setConnect(null);connectCleanup.current=null;};
     connectCleanup.current=cancel;
     window.addEventListener('pointermove', onMove);window.addEventListener('pointerup', onUp);window.addEventListener('pointercancel',cancel);window.addEventListener('blur',cancel);
-  }, [apply, boxOf, engine, mutationsBlocked, nodes, rect]);
+  }, [apply, boxOf, engine, mutationsBlocked, nodes, rect, stopCamera]);
 
   const previewPan = (d: Extract<NonNullable<typeof drag.current>, { kind: 'pan' }>, e: React.PointerEvent) => {
     const dx = e.clientX - d.startX, dy = e.clientY - d.startY;
@@ -970,6 +988,7 @@ export function BoardCanvas({
     e.preventDefault();
     e.stopPropagation();
     if(drag.current?.kind==='node'||drag.current?.kind==='resize')return;
+    stopCamera();
     const r = rect();
     const world = engine.toWorld({ x: e.clientX - r.left, y: e.clientY - r.top });
     setMenu({
@@ -989,6 +1008,7 @@ export function BoardCanvas({
     e.preventDefault();
     e.stopPropagation();
     if(drag.current?.kind==='node'||drag.current?.kind==='resize')return;
+    stopCamera();
     setSelected(id);
     setSelectedEdge(null);
     setPanelId(null);setMoveRoot(null);clearTip();
@@ -1000,17 +1020,50 @@ export function BoardCanvas({
           const node = graphRef.current.nodes.find(node => node.id === id);
           if (node) onEditTags(node);
         } },
+        { type: 'item', label: '热力名称…', disabled: mutationsBlocked(), onClick: () => setHeatEditorIds([id]) },
         {type:'item',label:'移动本节点及全部下级',onClick:()=>{setMoveRoot(id);setMoveIds(descendantIds(graphRef.current.nodes,graphRef.current.edges,id));setPanelId(null);setEditingId(null);clearTip();}},
         {type:'separator'},
         { type: 'item', label: '删除节点', danger: true, onClick: () => removeNodeRef.current(id) },
       ],
     });
-  }, [clearTip, onEditTags]);
+  }, [clearTip, mutationsBlocked, onEditTags, stopCamera]);
+
+  const onHeatContextMenu = (cell: HeatCell, event: React.MouseEvent) => {
+    if (drag.current || mutationsBlocked()) return;
+    stopCamera();
+    const { left, top } = rect();
+    const point = engine.toWorld({ x: event.clientX - left, y: event.clientY - top });
+    const named = (event.target as Element).closest<HTMLElement>('[data-heat-node]')?.dataset.heatNode;
+    const sorted = cell.nodeIds.flatMap(id => {
+      const node = nodeById[id];
+      if (!node) return [];
+      const at = boxCenter(heatNodeBox(node, sizesRef.current));
+      return [{ id, distance: id === named ? -1 : Math.hypot(at.x - point.x, at.y - point.y) }];
+    }).sort((a, b) => a.distance - b.distance).map(node => node.id);
+    if (!sorted.length) return;
+    clearTip();
+    setMenu({ x: event.clientX, y: event.clientY, items: [
+      { type: 'item', label: '热力名称…', onClick: () => setHeatEditorIds(sorted) },
+    ] });
+  };
+
+  const saveHeatLabel = (id: string, label: HeatLabel | undefined) => {
+    if (syncMutationLock.current) return false;
+    const graph = graphRef.current;
+    const node = graph.nodes.find(node => node.id === id);
+    if (!node) return false;
+    const previous = readHeatLabel(node.heatLabel);
+    if (previous?.name === label?.name && previous?.color === label?.color && previous?.fontSize === label?.fontSize) return true;
+    const saved = { ...node, heatLabel: label, updated_at: new Date().toISOString() };
+    apply({ ...graph, nodes: graph.nodes.map(item => item.id === id ? saved : item) });
+    return true;
+  };
 
   const onEdgeContextMenu = (e: React.MouseEvent, id: string) => {
     e.preventDefault();
     e.stopPropagation();
     if(drag.current?.kind==='node'||drag.current?.kind==='resize')return;
+    stopCamera();
     const edge = edges.find((x) => x.id === id);
     if (!edge) return;
     setSelectedEdge(id);
@@ -1379,6 +1432,34 @@ export function BoardCanvas({
   const pressedNode = gesture?.kind === 'pan' ? gesture.nodeId : gesture?.kind === 'node' ? gesture.id : undefined;
   const visibleNodes=heatMode?[]:mainNodes.filter(n=>n.id===editingId||n.id===selected||n.id===pressedNode||intersects(boxOf(n),visibleBox,100/zoom));
   const renderedHeat=heatMode?heatCells.filter(c=>intersects(c,visibleBox,80/zoom)):[];
+  const heatEditorNodes = heatEditorIds.map(id => nodeById[id]).filter(Boolean);
+  const heatLocatedNode = !heatMode && locatedHeatId && mainIds.has(locatedHeatId) ? nodeById[locatedHeatId] : undefined;
+  const heatLocatedName = readHeatLabel(heatLocatedNode?.heatLabel);
+  const heatLocatedAt = heatLocatedNode ? engine.toScreen({
+    x: heatLocatedNode.x + heatNodeBox(heatLocatedNode, sizesRef.current).w / 2, y: heatLocatedNode.y,
+  }) : undefined;
+
+  const travelToBox = (box: Box, nextZoom: number, arrived?: () => void) => {
+    const { width, height } = rect();
+    const center = boxCenter(box);
+    travel({ x: width / 2 - center.x * nextZoom, y: height / 2 - center.y * nextZoom, zoom: nextZoom }, arrived);
+  };
+  const locateHeatName = (id: string, grouped: boolean) => {
+    const node = nodeById[id];
+    if (!node || drag.current) return;
+    const box = heatNodeBox(node, sizesRef.current);
+    const isolated = grouped ? isolatedHeatLabelZoom(mainNodes, id, zoom, sizesRef.current) : undefined;
+    const { width, height } = rect();
+    const readableZoom = Math.max(.52, Math.min(.9, (width - 92) / box.w, (height - 116) / box.h));
+    setFlowOwnerId(null);
+    setPanelId(null);
+    travelToBox(box, isolated ?? readableZoom, () => {
+      if (isolated || !mainIdsRef.current.has(id)) return;
+      setSelectedEdge(null);
+      setSelected(id);
+      setLocatedHeatId(id);
+    });
+  };
 
   const laidEdges = useMemo(() => {
     void sizesVer;
@@ -1405,14 +1486,13 @@ export function BoardCanvas({
     const right = width - 332;
     const size = sizesRef.current[owner.id];
     const at = engine.toScreen({ x: owner.x + (size?.w ?? owner.w) / 2, y: owner.y + (size?.h ?? owner.h ?? 96) / 2 });
-    engine.setViewport({
-      ...engine.viewport,
-      x: engine.viewport.x + (left + right) / 2 - at.x,
-      y: engine.viewport.y + Math.max(120, Math.min(height - 120, at.y)) - at.y,
+    const current = engine.viewport;
+    travel({
+      ...current,
+      x: current.x + (left + right) / 2 - at.x,
+      y: current.y + Math.max(120, Math.min(height - 120, at.y)) - at.y,
     });
-    rerender();
-    onViewportChange(engine.viewport);
-  }, [engine, flowOwnerId, onViewportChange, rect, rerender]);
+  }, [engine, flowOwnerId, rect, travel]);
 
   // At overview scale, nearby relationship captions merge into bounded luminous hints.
   const overviewLabels=useMemo(()=>{
@@ -1426,6 +1506,11 @@ export function BoardCanvas({
     }
     return [...bins.values()];
   },[mainEdges,nodeById,heatMode,vpSig,canvasSize]);
+  const revealEdgeLabel = (hint: { id: string; x: number; y: number }) => {
+    setSelectedEdge(hint.id);
+    const point = engine.toWorld(hint);
+    travelToBox({ ...point, w: 0, h: 0 }, Math.min(1, (cameraMotion.current?.target.zoom ?? zoom) * 2));
+  };
 
   // 连线拖拽预览路径（屏幕坐标）
   const connectPreview = useMemo(() => {
@@ -1440,6 +1525,7 @@ export function BoardCanvas({
   }, [connect, nodeById, screenBoxOf, engine, vpSig]);
   const beginEdgeRoute=(event:React.PointerEvent<SVGCircleElement>,id:string)=>{
     if(event.button!==0||mutationsBlocked()||imageJobs.current||documentImport.current||arrangeJob.current)return;
+    stopCamera();
     event.preventDefault();event.stopPropagation();const baseline=historyRef.current.present,edge=baseline.edges.find(e=>e.id===id);if(!edge)return;
     const start={x:event.clientX,y:event.clientY},pointer=event.pointerId;let moved=false;
     const preview=(e:PointerEvent)=>{if(e.pointerId!==pointer)return;if(!moved&&Math.hypot(e.clientX-start.x,e.clientY-start.y)<3)return;moved=true;
@@ -1473,6 +1559,7 @@ export function BoardCanvas({
     <div
       ref={wrapRef}
       className={`board-canvas board-canvas-live${connect ? ' is-connecting' : ''}${branchRoot ? ' is-behind-focus' : ''}${quickMove ? ' is-quick-move' : ''}`}
+      data-detail-view={!heatMode || undefined}
       aria-hidden={branchRoot ? true : undefined}
       onScroll={e=>{if(e.target===e.currentTarget){e.currentTarget.scrollLeft=0;e.currentTarget.scrollTop=0;}}}
       onPointerDownCapture={e => {
@@ -1505,7 +1592,7 @@ export function BoardCanvas({
           </svg>
         </button>
         <span className="tb-sep" aria-hidden="true" />
-        <button type="button" className="tb-btn" title="整理布局（树状自动排列，可撤销）" aria-label="整理布局" disabled={nodes.length === 0} onClick={autoArrange}>
+        <button type="button" className="tb-btn" title="整理布局（按分支自适应，可撤销）" aria-label="整理布局" disabled={nodes.length === 0} onClick={autoArrange}>
           <svg width="15" height="15" viewBox="0 0 16 16" aria-hidden="true">
             <rect x="6" y="1.5" width="4" height="3" rx="0.8" fill="none" stroke="currentColor" strokeWidth="1.3" />
             <rect x="1.5" y="11.5" width="4" height="3" rx="0.8" fill="none" stroke="currentColor" strokeWidth="1.3" />
@@ -1524,9 +1611,12 @@ export function BoardCanvas({
       {/* 连线层：覆盖整块画布的全尺寸 SVG，用屏幕坐标绘制（避免 0×0 世界层不渲染）。
           置于节点层之下（DOM 顺序在前 + CSS 定位），指针默认穿透、仅命中区可点。 */}
       <button className="canvas-zoom-label" title="点击恢复100% · 滚轮或快捷键缩放" aria-label={`当前缩放 ${zoom<0.01?(zoom*100).toFixed(1):Math.round(zoom*100)}%，点击重置为100%`} onPointerDown={e=>e.stopPropagation()} onClick={zoomReset}>{zoom<0.01?(zoom*100).toFixed(1):Math.round(zoom*100)}%</button>
-      {heatMode&&<div className="heat-layer" aria-label={`热力概览，共${mainNodes.length}个节点`} data-level={level}>{renderedHeat.map(c=>{
-        const at=engine.toScreen(c);return <button type="button" key={c.id} className={`heat-cell${c.flowCount?' has-flow':''}`} data-count={c.count} data-flow-count={c.flowCount} title={`${c.count}个节点${c.flowCount?` · ${c.flowCount}个含子流程`:''} · 点击逐级展开`} aria-label={`展开${c.count}个节点的热力区域${c.flowCount?'，包含子流程':''}`} style={{left:at.x,top:at.y,width:Math.max(8,c.w*zoom),height:Math.max(8,c.h*zoom),opacity:c.flowCount?1:Math.min(.95,.45+Math.log2(c.count+1)*.08),['--heat-color' as string]:c.color||'var(--accent)',['--flow-glow' as string]:flowHighlight(c.flowColor)}} onPointerDown={e=>e.stopPropagation()} onDoubleClick={e=>e.stopPropagation()} onClick={e=>{e.stopPropagation();const r=rect();engine.zoomAtPoint({x:r.width/2,y:r.height/2},Math.min(1,zoom*2));const z=engine.viewport.zoom;engine.setViewport({zoom:z,x:r.width/2-(c.x+c.w/2)*z,y:r.height/2-(c.y+c.h/2)*z});rerender();onViewportChange(engine.viewport);}}>{c.count>1?c.count:''}</button>;
-      })}</div>}
+      {heatMode && <HeatOverview key={level} cells={renderedHeat} level={level} viewport={vp}
+        description={`热力概览，共 ${mainNodes.length} 个节点`} onEdit={onHeatContextMenu} onLocate={locateHeatName}
+        onExpand={cell => travelToBox(cell, Math.min(1, (cameraMotion.current?.target.zoom ?? zoom) * 2))} />}
+      {heatLocatedAt && heatLocatedName && <div className="heat-label-destination" style={{ left: heatLocatedAt.x, top: heatLocatedAt.y }}>
+        <HeatLabelText label={heatLocatedName}/>
+      </div>}
       <svg className="edge-layer">
         <defs>
           <marker id="lm-arrow" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
@@ -1576,7 +1666,7 @@ export function BoardCanvas({
         )}
       </svg>
 
-      <div className="edge-label-layer">{overviewLabels.map(h=><EdgeLabel key={h.id} label={h.count>1?`${h.count}条连线含说明；${h.label}`:h.label} x={h.x} y={h.y} zoom={zoom} onSelect={()=>{setSelectedEdge(h.id);zoomCenter(2);}} onEdit={()=>zoomCenter(2)}/>)}{laidEdges.map(({edge,geo})=>edge.label&&editingEdge!==edge.id?<EdgeLabel key={edge.id} label={edge.label} x={geo.labelPoint.x} y={geo.labelPoint.y-(selectedEdge===edge.id&&geo.labelPoint===geo.mid?24:0)} zoom={zoom} onSelect={()=>{setSelectedEdge(edge.id);setSelected(null);}} onEdit={()=>startEdgeLabel(edge.id)}/>:null)}</div>
+      <div className="edge-label-layer">{overviewLabels.map(h=><EdgeLabel key={h.id} label={h.count>1?`${h.count}条连线含说明；${h.label}`:h.label} x={h.x} y={h.y} zoom={zoom} onSelect={()=>revealEdgeLabel(h)} onEdit={()=>revealEdgeLabel(h)}/>)}{laidEdges.map(({edge,geo})=>edge.label&&editingEdge!==edge.id?<EdgeLabel key={edge.id} label={edge.label} x={geo.labelPoint.x} y={geo.labelPoint.y-(selectedEdge===edge.id&&geo.labelPoint===geo.mid?24:0)} zoom={zoom} onSelect={()=>{setSelectedEdge(edge.id);setSelected(null);}} onEdit={()=>startEdgeLabel(edge.id)}/>:null)}</div>
       {/* 世界层：只改 transform（DESIGN §5.4） */}
       <div className={`canvas-world${arranging ? ' is-arranging' : ''}`} style={{ transform: engine.transform, transformOrigin: '0 0', ...glowVars }}>
         {visibleNodes.map((n) => (
@@ -1706,6 +1796,7 @@ export function BoardCanvas({
       })()}
 
       {menu && <ContextMenu state={menu} onClose={() => setMenu(null)} />}
+      {heatEditorNodes.length > 0 && <HeatLabelEditor candidates={heatEditorNodes} onClose={closeHeatEditor} onSave={saveHeatLabel} />}
     </div>
     {branchRoot && <BranchFocusView key={branchRoot} rootId={branchRoot} nodes={nodes} edges={edges} size={canvasSize}
       projectId={board.projectId} boardId={board.id} docVersions={docVersions} fontStyle={fontStyle} zoomSensitivity={appearance.zoomSensitivity} quickMove={quickMove}/>}
@@ -1722,6 +1813,7 @@ export function BoardCanvas({
             if (branchRoot) { setBranchFocus(null); return; }
             if (focusBusy || drag.current || edgeRouteCleanup.current || mutationsBlocked()) return;
             blankClicks.current = [];
+            stopCamera();
             setBranchFocus(selected);
           }}>
           {branchRoot ? <X size={16} aria-hidden="true"/> : <Focus size={17} aria-hidden="true"/>}

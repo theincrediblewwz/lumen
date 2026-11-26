@@ -44,6 +44,7 @@ fn project_package_keeps_its_nested_subtree_positions_and_materials() {
     let at = storage::now_iso();
     graph["nodes"] = json!([
         {"id":"owner","title":"推导","summary":r"完整问题 $\nu$","x":30,"y":80,"w":420,
+         "heatLabel":{"name":"核心推导","color":"#d43c63","fontSize":22},
          "flow":{"nodeIds":["step-a","step-b"]},"docs":[doc,pdf],"created_at":at,"updated_at":at},
         {"id":"step-a","title":"代入","flowOwnerId":"owner","x":0,"y":0,"created_at":at,"updated_at":at},
         {"id":"step-b","title":"整理","flowOwnerId":"owner","x":0,"y":0,"created_at":at,"updated_at":at}

@@ -95,11 +95,25 @@ let writePolicy=JSON.parse(localStorage.getItem('lumen.fixture-board-policy')??'
 const operationReceipts=new Map(),importReceipts=new Map();
 const fixtureBatch=(args)=>{
  const target=fixtureBoards.find(row=>row.id===args.boardId),refs={},newDocuments=[];
+ let moved=0,colored=0;
  const old=operationReceipts.get(args.requestId);if(old)return old;
  const backups=JSON.parse(localStorage.getItem('lumen.fixture-board-backups')??'[]');backups.unshift({file:'version_'+Date.now()+'.json',created_at:now,reason:'修改前',bytes:500,board:structuredClone(target),documents:structuredClone(captureState.documents)});localStorage.setItem('lumen.fixture-board-backups',JSON.stringify(backups.slice(0,writePolicy.keep)));
  for(const op of args.batch.operations){let node;if(op.type==='create_node'){const id='n_created_'+crypto.randomUUID().replace(/-/g,'');refs[op.reference]=id;node={id,title:op.title,summary:op.summary??'',x:400,y:180,w:240,docs:[],created_at:now,updated_at:now};target.nodes.push(node);if(op.parentId)target.edges.push({id:'e_'+id,from:refs[op.parentId]??op.parentId,to:id,directed:true,created_at:now});}else if(op.type==='append_document')node=target.nodes.find(n=>n.id===(refs[op.nodeId]??op.nodeId));else if(op.type==='connect_nodes'){target.edges.push({id:'e_'+Date.now(),from:refs[op.from]??op.from,to:refs[op.to]??op.to,directed:true,created_at:now});}
- if(op.markdown){const path='docs/note_ai_'+Date.now()+'_'+(node?.docs.length??0)+'.md';newDocuments.push(path);node.docs.push({path,title:op.title,bytes:op.markdown.length});captureState.documents[path]=op.markdown;}}
- captureState.boards[args.boardId]=target;localStorage.setItem('lumen.fixture-capture',JSON.stringify(captureState));const result={board:structuredClone(target),documents:newDocuments,summary:'已创建 '+Object.keys(refs).length+' 个节点，文档已保存。',nodes:refs,backup:backups[0].file,reused:false};operationReceipts.set(args.requestId,result);return result;
+ if(op.markdown){const path='docs/note_ai_'+Date.now()+'_'+(node?.docs.length??0)+'.md';newDocuments.push(path);node.docs.push({path,title:op.title,bytes:op.markdown.length});captureState.documents[path]=op.markdown;}
+ if(op.type==='update_node_presentation'){
+   const root=target.nodes.find(n=>n.id===op.nodeId), ids=new Set([root.id]);
+   if(op.includeDescendants)for(const id of ids)for(const edge of target.edges)if(edge.from===id&&edge.directed)ids.add(edge.to);
+   const dx=op.position?op.position.x-root.x:0,dy=op.position?op.position.y-root.y:0;
+   for(const node of target.nodes.filter(n=>ids.has(n.id))){
+     if(op.position){node.x+=dx;node.y+=dy;moved++;}
+     if(op.color!==undefined){node.color=op.color||null;colored++;}
+   }
+ }
+ if(op.type==='place_measured_nodes')for(const node of target.nodes){
+   const position=op.positions[node.id];if(position){node.x=position.x;node.y=position.y;moved++;}
+ }
+ }
+ captureState.boards[args.boardId]=target;localStorage.setItem('lumen.fixture-capture',JSON.stringify(captureState));const summary=moved||colored?'已调整 '+moved+' 个节点的位置、'+colored+' 个节点的颜色。':'已创建 '+Object.keys(refs).length+' 个节点，文档已保存。';const result={board:structuredClone(target),documents:newDocuments,summary,nodes:refs,backup:backups[0].file,reused:false};operationReceipts.set(args.requestId,result);return result;
 };
 const syntheticSecrets=JSON.parse(sessionStorage.getItem('lumen-fixture-secrets')??'{"apikey.openai":"synthetic-preview-only"}');
 window.__fixtureSecretAccounts=[];window.__fixtureSecretAccess=[];
@@ -398,7 +412,14 @@ window.__TAURI_INTERNALS__={metadata:{currentWindow:{label:'main'},currentWebvie
         index:0,id:'budget-'+round,type:'function',function:{name:'apply_board_operations',arguments:JSON.stringify({schema:'lumen.board-operations/v1',operations:[{type:'create_node',reference:'topic',title:budgetScenario.prefix+' '+round,markdown:'合成白板原文。'.repeat(550)}]})}
       }]};
     }
-    const delta=budgetDelta??faithfulDelta??memoryDelta??citationDelta??(fixtureParams.has('retrievalQA')?retrievalDelta:fixtureParams.has('importQA')?{content:JSON.stringify(window.__fixtureImportDeep?{...importPlan,nodes:Array.from({length:window.__fixtureImportCount??32},(_,i)=>({reference:'level'+i,title:'层级 '+i,summary:'继续追问',markdown:'# 第'+i+'层\\n\\n$x_i$',parent:i?'level'+(i-1):null}))}:importPlan)}:fixtureParams.has('operationsQA')?(request.messages.filter(m=>m.role==='tool').length>=(window.__fixtureWriteBatches??1)?{content:'已完成整理。公式 $x_i^2$。'}:request.tools?.some(t=>t.function.name==='apply_board_operations')?{tool_calls:[{index:0,id:'create-synthetic-'+request.messages.filter(m=>m.role==='tool').length,type:'function',function:{name:'apply_board_operations',arguments:JSON.stringify({schema:'lumen.board-operations/v1',operations:[{type:'create_node',reference:'new_topic',title:'AI 生成的方向',parentId:'synthetic-node',markdown:'# 新的理解\n\n公式 $x_i^2$。'}]})}}]}:{content:'当前只读，尚未获得修改授权。'}):fixtureParams.has('keychainQA')?{content:'合成凭据验收通过，未调用真实模型。'}:request.messages.some(m=>m.role==='tool')?{content:JSON.stringify(catalogueProposal)}:{tool_calls:[{index:0,id:'catalog-read',type:'function',function:{name:'catalog_read',arguments:JSON.stringify({url:'https://example.com/model-docs'})}}]});
+    let presentationDelta;
+    if(fixtureParams.has('presentationQA')&&request.tools?.some(tool=>tool.function.name==='apply_board_operations')){
+      const operations=window.__fixturePresentationPlan?.shift();
+      presentationDelta=operations?{tool_calls:[{index:0,id:'presentation-'+window.__fixturePresentationPlan.length,type:'function',function:{
+        name:'apply_board_operations',arguments:JSON.stringify({schema:'lumen.board-operations/v1',operations})
+      }}]}:{content:'分支已排好，颜色已保存。'};
+    }
+    const delta=presentationDelta??budgetDelta??faithfulDelta??memoryDelta??citationDelta??(fixtureParams.has('retrievalQA')?retrievalDelta:fixtureParams.has('importQA')?{content:JSON.stringify(window.__fixtureImportDeep?{...importPlan,nodes:Array.from({length:window.__fixtureImportCount??32},(_,i)=>({reference:'level'+i,title:'层级 '+i,summary:'继续追问',markdown:'# 第'+i+'层\\n\\n$x_i$',parent:i?'level'+(i-1):null}))}:importPlan)}:fixtureParams.has('operationsQA')?(request.messages.filter(m=>m.role==='tool').length>=(window.__fixtureWriteBatches??1)?{content:'已完成整理。公式 $x_i^2$。'}:request.tools?.some(t=>t.function.name==='apply_board_operations')?{tool_calls:[{index:0,id:'create-synthetic-'+request.messages.filter(m=>m.role==='tool').length,type:'function',function:{name:'apply_board_operations',arguments:JSON.stringify({schema:'lumen.board-operations/v1',operations:[{type:'create_node',reference:'new_topic',title:'AI 生成的方向',parentId:'synthetic-node',markdown:'# 新的理解\n\n公式 $x_i^2$。'}]})}}]}:{content:'当前只读，尚未获得修改授权。'}):fixtureParams.has('keychainQA')?{content:'合成凭据验收通过，未调用真实模型。'}:request.messages.some(m=>m.role==='tool')?{content:JSON.stringify(catalogueProposal)}:{tool_calls:[{index:0,id:'catalog-read',type:'function',function:{name:'catalog_read',arguments:JSON.stringify({url:'https://example.com/model-docs'})}}]});
     if(window.__fixtureTokenDelay&&delta.content){
       for(const piece of delta.content.match(/.{1,18}/gs)??[]){if(window.__fixtureAiCancelled.includes(args.requestId))return;emitFixture('ai://chunk',{requestId:args.requestId,data:'data: '+JSON.stringify({choices:[{delta:{content:piece}}]})+'\n\n'});await new Promise(r=>setTimeout(r,window.__fixtureTokenDelay));}
       if(!await waitForStreamCompletion(args.requestId))return;

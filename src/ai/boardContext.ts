@@ -75,7 +75,10 @@ export function boardToolPage(board:BoardFile,args:Record<string,unknown>,maxCha
  const lines=[`# 白板：${truncate(board.name,80)}\n节点总数${board.nodes.length}，连线总数${board.edges.length}；以下为分页结构。`];let size=lines[0].length,i=offset,j=edgeOffset;
  const add=(line:string)=>{if(size+line.length+200>maxChars)return false;lines.push(line);size+=line.length+1;return true;};
  if(!board.nodes.length)add('（白板没有节点）');
- for(;i<Math.min(board.nodes.length,offset+limit);i++)if(!add(nodeLine(board.nodes[i])))break;
+ for(;i<Math.min(board.nodes.length,offset+limit);i++){
+   const node=board.nodes[i], bounds=`x=${Math.round(node.x)}, y=${Math.round(node.y)}, w=${Math.round(node.w)}${node.h ? `, h=${Math.round(node.h)}` : ''}`;
+   if(!add(`${nodeLine(node)} [${bounds}；颜色 ${node.color || '默认'}${node.flowOwnerId ? `；子流程 #${node.flowOwnerId}` : ''}]`))break;
+ }
  const titles=new Map(board.nodes.map(n=>[n.id,n.title]));
  if(includeEdges)for(;j<Math.min(board.edges.length,edgeOffset+100);j++)if(!add(edgeLine(board.edges[j],id=>truncate(titles.get(id)??'(已删除)',40))))break;
  if(i===offset&&j===edgeOffset&&((limit>0&&offset<board.nodes.length)||(includeEdges&&edgeOffset<board.edges.length)))return '上下文空间不足以返回一个完整条目，未提供重复分页游标；请改用关键词检索或增大预算。';

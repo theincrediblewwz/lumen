@@ -6,7 +6,7 @@ import type { PreviewMemory } from '../components/NodePreview';
 import type { StagedDocumentPreview } from '../components/NodeAttachment';
 import { boardAppearance, FONT_FAMILIES, type BoardAppearance } from './presentation';
 
-type MeasureOptions = { appearance?: BoardAppearance; documents: Record<string, StagedDocumentPreview>; scope: string };
+type MeasureOptions = { appearance?: BoardAppearance; documents?: Record<string, StagedDocumentPreview>; scope: string; preserveSize?: boolean };
 
 /** Use the actual card renderer, including offline images and KaTeX, in bounded batches. */
 export async function measureNodes(host:HTMLElement,nodes:BoardNode[],projectId:string,boardId:string,signal:AbortSignal,progress:(done:number)=>void,options?:MeasureOptions) {
@@ -21,16 +21,28 @@ export async function measureNodes(host:HTMLElement,nodes:BoardNode[],projectId:
   }
   host.append(holder);
   const root=createRoot(holder),result=new Map<string,{w:number;h:number}>();
-  const frame=()=>new Promise<void>(resolve=>requestAnimationFrame(()=>resolve()));
+  const frame = () => new Promise<void>(resolve => {
+    const finish = () => {
+      cancelAnimationFrame(request);
+      clearTimeout(fallback);
+      signal.removeEventListener('abort', finish);
+      resolve();
+    };
+    const request = requestAnimationFrame(finish);
+    const fallback = window.setTimeout(finish, 80);
+    signal.addEventListener('abort', finish, { once: true });
+    if (signal.aborted) finish();
+  });
   const check=()=>{if(signal.aborted)throw Error('已停止整理，原布局保留');};
   try {
     for(let index=0;index<nodes.length;index+=64){
       check();const batch=nodes.slice(index,index+64).map(n=>{
+        if (options?.preserveSize) return n;
         if(imageOnly(n)){const aspect=n.imageAspect||n.w/(n.h||n.w),longest=Math.min(600,Math.max(160,Math.max(n.w,n.h||n.w)));return {...n,w:aspect>=1?longest:longest*aspect,h:aspect>=1?longest/aspect:longest};}
         const length=(n.title+(n.summary??'')).length,w=contentDocs(n).length?420:length>600?480:length>120?380:260;
         return {...n,w,h:undefined};
       });
-      root.render(<>{batch.map(node=><NodeCard key={node.id} node={node} projectId={projectId} boardId={boardId} measuring hideHandles selected={false} editing={false} showAnchors={false} onResizeStart={()=>{}} onPointerDown={()=>{}} onAnchorPointerDown={()=>{}} onOpen={()=>{}} onStartEdit={()=>{}} onContextMenu={()=>{}} onCommit={()=>{}} onEditCancel={()=>{}} onExitEdit={()=>{}} onMeasure={(id,w,h)=>result.set(id,{w:Math.ceil(w),h:Math.ceil(h)})} onHoverChange={()=>{}} previewMemory={previewMemory} stagedDocuments={options?.documents} expectedScope={options?.scope}/>)}</>);
+      root.render(<>{batch.map(node=><NodeCard key={node.id} node={node} projectId={projectId} boardId={boardId} measuring hideHandles selected={false} editing={false} showAnchors={false} onResizeStart={()=>{}} onPointerDown={()=>{}} onAnchorPointerDown={()=>{}} onOpen={()=>{}} onStartEdit={()=>{}} onContextMenu={()=>{}} onCommit={()=>{}} onEditCancel={()=>{}} onExitEdit={()=>{}} onMeasure={(id,w,h)=>result.set(id,{w:Math.ceil(w),h:Math.ceil(Math.max(h,options?.preserveSize && !imageOnly(node) ? node.h??0 : 0))})} onHoverChange={()=>{}} previewMemory={previewMemory} stagedDocuments={options?.documents} expectedScope={options?.scope}/>)}</>);
       await frame();await frame();const started=performance.now();
       while(holder.querySelector('[data-content-status="loading"]')||holder.querySelector('.math[data-tex]:not([data-done])')||Array.from(holder.querySelectorAll('img')).some(img=>!img.complete)){
         check();if(performance.now()-started>20000)throw Error('部分节点资源尚未载入，原布局保留，请稍后重试');await frame();

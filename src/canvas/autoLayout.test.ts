@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { computeTreeLayout, type LayoutNode, type LayoutEdge } from './autoLayout';
+import { computeAdaptiveTreeLayout, computeBoardLayout, computeTreeLayout, type LayoutNode, type LayoutEdge } from './autoLayout';
 
 const n = (id: string, w = 200): LayoutNode => ({ id, w });
 const de = (from: string, to: string): LayoutEdge => ({ from, to, directed: true });
@@ -72,4 +72,37 @@ describe('computeTreeLayout', () => {
     // 单节点：x 左上 = originX（中心 - w/2 == originX）
     expect(pos.get('a')!.y).toBe(300);
   });
+});
+
+it('stacks wide sibling subtrees while keeping their children in readable horizontal rows', () => {
+  const roots = ['daily', 'plans', 'research'];
+  const leaves = roots.map(id => Array.from({ length: 7 }, (_, index) => id + index));
+  const nodes = ['main', ...roots, ...leaves.flat()].map(id => ({ id, w: 230, h: 100 }));
+  const edges = roots.flatMap((id, index) => [de('main', id), ...leaves[index].map(child => de(id, child))]);
+  const view = { originX: 0, originY: 0 };
+  const classic = computeTreeLayout(nodes, edges, view);
+  const arranged = computeAdaptiveTreeLayout(nodes, edges, { ...view, aspectRatio: 1.6 });
+  const extent = (points: Map<string, { x: number; y: number }>) => Math.max(
+    Math.max(...nodes.map(node => points.get(node.id)!.x + node.w)) / 1.6,
+    Math.max(...nodes.map(node => points.get(node.id)!.y + node.h)),
+  );
+  expect(extent(arranged)).toBeLessThan(extent(classic) * .6);
+  expect(new Set(roots.map(id => arranged.get(id)!.x)).size).toBe(1);
+  expect(roots.map(id => arranged.get(id)!.y)).toEqual(roots.map(id => arranged.get(id)!.y).sort((a, b) => a - b));
+  for (const group of leaves) {
+    expect(new Set(group.map(id => arranged.get(id)!.y)).size).toBe(1);
+    expect(arranged.get(group[0])!.x).toBeLessThan(arranged.get(group.at(-1)!)!.x);
+  }
+});
+
+it('keeps chosen roots separate and honors stacking order even when a cross-link joins them', () => {
+  const nodes = ['a', 'b', 'c', 'd', 'e', 'f'].map(id => ({ id, w: 230, h: 100 }));
+  const positions = computeBoardLayout(nodes, [de('a','b'), de('b','c'), de('d','e'), de('e','f'), de('d','a')], 'right', 'balanced', {
+    rootIds: ['d', 'a'], stackRoots: true,
+  });
+  expect(positions.size).toBe(nodes.length);
+  expect(positions.get('d')!.x).toBe(positions.get('a')!.x);
+  expect(positions.get('d')!.y).toBeLessThan(positions.get('a')!.y);
+  expect(positions.get('c')!.x).toBeGreaterThan(positions.get('b')!.x);
+  expect(positions.get('c')!.y).toBe(positions.get('a')!.y);
 });

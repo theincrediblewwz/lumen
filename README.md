@@ -5,7 +5,9 @@
 
 ## 当前版本
 
-[0.4.13 源码预览](https://github.com/theincrediblewwz/lumen/releases/tag/mac-v0.4.13) · [下载 Mac 0.4.0 安装包](https://github.com/theincrediblewwz/lumen/releases/tag/mac-v0.4.0) · [白板编辑与保存](./docs/CANVAS_AUTHORING.md)
+[0.4.14 源码预览](https://github.com/theincrediblewwz/lumen/releases/tag/mac-v0.4.14) · [下载 Mac 0.4.0 安装包](https://github.com/theincrediblewwz/lumen/releases/tag/mac-v0.4.0) · [白板编辑与保存](./docs/CANVAS_AUTHORING.md)
+
+**0.4.14 AI 排版与热力名称。** 开启「白板整理」后，普通 AI 对话可移动、配色和重排已有分支。缩小白板后可右键设置节点的荧光名称。多个重要节点合并时，悬停可查看列表，点选即可平滑定位。
 
 **0.4.13 白板长任务与交互修复。** 工具轮次和写入批次可调。暂停时保留已保存的白板操作和对话进度。导出提示约三秒淡出，顶栏说明可完整显示，并修复保存或拖动中断后卡住的问题。
 

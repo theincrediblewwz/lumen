@@ -166,3 +166,23 @@ it('preserves flow ownership, ordering, image geometry, mixed resources and per-
   expect(restored.edges[0].route).toEqual(board.edges[0].route);
   const again=await captureDesktop({revision:'new',files,ledger:{version:1,state:createSyncState('library','desktop'),...first}});expect(again.changes).toEqual([]);
 });
+
+it('round-trips a heat label and propagates its removal without reviving it from the previous row',async()=>{
+  const snapshot = fixture(), path = 'p1/b1/board.json';
+  const read = (bytes: number[]) => JSON.parse(new TextDecoder().decode(new Uint8Array(bytes)));
+  const board = read(snapshot.files[path]);
+  const label = { name: '核心推导', color: '#d43c63', fontSize: 22 };
+  board.nodes[0].heatLabel = label;
+  snapshot.files[path] = fileBytes(board);
+  const first = await captureDesktop(snapshot);
+  const ledger: DesktopLedger = { version: 1, state: createSyncState('library', 'desktop'), ...first };
+  const files = projectDesktop(first.entities, first.blobs);
+  const restored = read(files[path]);
+  expect(restored.nodes[0].heatLabel).toEqual(label);
+  expect((await captureDesktop({ revision: '2', files, ledger })).changes).toEqual([]);
+  delete restored.nodes[0].heatLabel;
+  files[path] = fileBytes(restored);
+  const removed = await captureDesktop({ revision: '3', files, ledger });
+  expect(removed.changes.filter(change => change.entity.kind === 'nodes')[0].entity.data?._lumen_heat_label).toBeNull();
+  expect(read(projectDesktop(removed.entities, removed.blobs)[path]).nodes[0].heatLabel).toBeUndefined();
+});

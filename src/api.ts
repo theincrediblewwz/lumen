@@ -41,6 +41,7 @@ export type BoardNode = {
   imageAspect?: number;
   flowOwnerId?: string;
   flow?: { nodeIds: string[] };
+  heatLabel?: import('./canvas/presentation').HeatLabel;
   color?: string | null;
   docs: DocRef[];
   created_at: string;

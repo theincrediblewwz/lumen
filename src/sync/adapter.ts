@@ -1,4 +1,5 @@
 import type { BoardFile } from '../api';
+import { readHeatLabel } from '../canvas/presentation';
 import { emptyKnowledgeLibrary, validateKnowledgeLibrary } from '../knowledge/core';
 import { parseChatsStrict } from '../ai/chatStore';
 import {splitDocument,type DocumentAsset} from '../documents/core';
@@ -96,7 +97,8 @@ export async function captureDesktop(snapshot:DesktopSnapshot):Promise<{entities
         const docId=primary?docs.get(primary):await addDoc(`docs/node_${safeId(node.id)}.md`,node.title,node.summary??'','learner');
         if(!docId)throw new Error(`节点文档缺失：${node.title}`);
         const old=previous[entityKey({kind:'nodes',id:node.id})]?.data;
-        emit('nodes',node.id,boardId,{id:node.id,project_id:boardId,title:node.title,subtitle:node.summary??'',x:node.x,y:node.y,importance:old?.importance??5,status:old?.status??'learning',sort_order:old?.sort_order??i,document_id:docId,...(Object.keys(node).some(key=>['h','sticker','imageAspect','flowOwnerId','flow'].includes(key))?{_lumen_presentation:Object.fromEntries(['h','sticker','imageAspect','flowOwnerId','flow'].filter(key=>node[key as keyof typeof node]!==undefined).map(key=>[key,node[key as keyof typeof node]]))}:{}),_lumen_w:node.w,_lumen_color:node.color??null,_lumen_created_at:node.created_at,_lumen_updated_at:node.updated_at});
+        const heatLabel = readHeatLabel(node.heatLabel);
+        emit('nodes',node.id,boardId,{id:node.id,project_id:boardId,title:node.title,subtitle:node.summary??'',x:node.x,y:node.y,importance:old?.importance??5,status:old?.status??'learning',sort_order:old?.sort_order??i,document_id:docId,...(Object.keys(node).some(key=>['h','sticker','imageAspect','flowOwnerId','flow'].includes(key))?{_lumen_presentation:Object.fromEntries(['h','sticker','imageAspect','flowOwnerId','flow'].filter(key=>node[key as keyof typeof node]!==undefined).map(key=>[key,node[key as keyof typeof node]]))}:{}),...(heatLabel || old?._lumen_heat_label !== undefined ? {_lumen_heat_label: heatLabel ?? null} : {}),_lumen_w:node.w,_lumen_color:node.color??null,_lumen_created_at:node.created_at,_lumen_updated_at:node.updated_at});
         for(const [sort,ref] of node.docs.entries()) {
           const document_id=docs.get(ref.path); if(!document_id)throw new Error('节点文档未找到');
           const prior=Object.values(previous).find(e=>e.kind==='node_documents'&&e.data?.node_id===node.id&&e.data?.document_id===document_id);
@@ -196,7 +198,8 @@ export function projectDesktop(entities:Record<string,SyncEntity>,blobs:Record<s
       if(!docs.has(text(n.document_id))||links.some(l=>!docs.has(text(l.data!.document_id))))throw new Error('节点引用的文档尚未到齐，保留当前白板');
       const ids=[text(n.document_id),...links.map(l=>text(l.data!.document_id))];
       const refs=[...new Set(ids)].map(id=>docs.get(id)).filter((d):d is {path:string;title:string;bytes:number}=>!!d);
-      return {...(n._lumen_presentation&&typeof n._lumen_presentation==='object'?n._lumen_presentation:{}),id:e.id,title:text(n.title),summary:text(n.subtitle),x:num(n.x),y:num(n.y),w:num(n._lumen_w,240),color:n._lumen_color??null,docs:refs,created_at:text(n._lumen_created_at,text(d.created_at,date)),updated_at:text(n._lumen_updated_at,text(d.updated_at,date))};
+      const heatLabel = readHeatLabel(n._lumen_heat_label);
+      return {...(n._lumen_presentation&&typeof n._lumen_presentation==='object'?n._lumen_presentation:{}),id:e.id,title:text(n.title),summary:text(n.subtitle),x:num(n.x),y:num(n.y),w:num(n._lumen_w,240),color:n._lumen_color??null,docs:refs,...(heatLabel ? {heatLabel} : {}),created_at:text(n._lumen_created_at,text(d.created_at,date)),updated_at:text(n._lumen_updated_at,text(d.updated_at,date))};
     });
     const nodeIds=new Set(nodes.map(n=>n.id));
     if (knowledge.bindings.some(row => row.project_id === boardId && row.node_id && !nodeIds.has(row.node_id))) throw new Error('知识引用节点不属于白板');

@@ -7,6 +7,7 @@
  */
 
 import type { BoardFile } from '../api';
+import { MAX_ARRANGEMENT_NODES } from '../canvas/autoLayout';
 import { boardToolPage } from './boardContext';
 import { searchBoard } from './boardSearch';
 import { conversationTool } from './conversationTools';
@@ -31,11 +32,43 @@ export interface ToolContext {
   readDoc: (path: string) => Promise<string>;
   applyOperations?: (args: Record<string, unknown>, callId: string) => Promise<string>;
   cancelled?: () => boolean;
+  signal?: AbortSignal;
   /** Conservative room remaining in this provider round; does not alter source. */
   maxDocChars?:number;
 }
 
-export const WRITE_TOOL: ToolDef={type:'function',function:{name:'apply_board_operations',description:'按用户意图整理当前白板。一次原子批次，仅创建节点、追加新Markdown文档与有向连线，不覆盖/删除原件。原生检查授权、版本和备份。最多8节点、8文档、12连线，每篇128KiB，总512KiB。新节点reference是本批唯一局部引用，后续操作可用它；parentId不填则独立，有当前讨论节点时优先用其id。只有返回成功才能说已创建；失败应告知用户。',parameters:{type:'object',additionalProperties:false,properties:{schema:{type:'string',enum:['lumen.board-operations/v1']},operations:{type:'array',minItems:1,maxItems:28,items:{oneOf:[{type:'object',additionalProperties:false,properties:{type:{const:'create_node'},reference:{type:'string'},title:{type:'string'},summary:{type:'string'},markdown:{type:'string'},parentId:{type:'string'}},required:['type','reference','title']},{type:'object',additionalProperties:false,properties:{type:{const:'append_document'},nodeId:{type:'string'},title:{type:'string'},markdown:{type:'string'}},required:['type','nodeId','title','markdown']},{type:'object',additionalProperties:false,properties:{type:{const:'connect_nodes'},from:{type:'string'},to:{type:'string'},label:{type:'string'}},required:['type','from','to']}]}}},required:['schema','operations']}}};
+const text = { type: 'string' };
+const nodeIds = { type: 'array', items: text, minItems: 1, maxItems: MAX_ARRANGEMENT_NODES, uniqueItems: true };
+const object = (properties: Record<string, unknown>, required: string[]) => ({ type: 'object', additionalProperties: false, properties, required });
+const operation = (type: string, fields: Record<string, unknown>, required: string[]) => object({ type: { const: type }, ...fields }, ['type', ...required]);
+
+export const WRITE_TOOL: ToolDef = { type: 'function', function: {
+  name: 'apply_board_operations',
+  description: '按用户要求整理当前白板。可创建节点、追加 Markdown 和有向连线、修改位置和配色、按实测尺寸重排。原生原子提交，保存前备份。每批最多新增 8 个节点、8 篇文档、12 条连线。新节点 reference 是批内局部引用。只有成功回执表示已保存。',
+  parameters: object({
+    schema: { enum: ['lumen.board-operations/v1'] },
+    operations: { type: 'array', minItems: 1, maxItems: 28, items: { oneOf: [
+      operation('create_node', { reference: text, title: text, summary: text, markdown: text, parentId: text }, ['reference', 'title']),
+      operation('append_document', { nodeId: text, title: text, markdown: text }, ['nodeId', 'title', 'markdown']),
+      operation('connect_nodes', { from: text, to: text, label: text }, ['from', 'to']),
+      operation('update_node_presentation', {
+        nodeId: text,
+        position: { ...object({ x: { type: 'number' }, y: { type: 'number' } }, ['x', 'y']), description: '节点左上角的目标画布坐标。' },
+        color: { ...text, description: '颜色 #RRGGBB，空字符串恢复默认。' },
+        includeDescendants: { type: 'boolean', description: '为 true 时，将同一变化应用于沿有向箭头可到达的全部主白板子节点。移动时整棵分支一起平移。' },
+      }, ['nodeId']),
+      operation('arrange_nodes', {
+        selection: { oneOf: [
+          object({ kind: { const: 'board' } }, ['kind']),
+          object({ kind: { const: 'nodes' }, nodeIds }, ['kind', 'nodeIds']),
+          object({ kind: { const: 'branches' }, rootIds: { ...nodeIds, description: '按阅读顺序列分支根节点 ID，自动纳入有向子节点。' }, stack: { type: 'boolean', description: '要求每棵子树自上而下独占一行时设为 true。' } }, ['kind', 'rootIds']),
+        ] },
+        direction: { enum: ['auto', 'down', 'right'], description: '默认 auto，按卡片宽高组合横展与纵向排列。down / right 指定每棵树从上至下 / 从左至右展开。' },
+        spacing: { enum: ['compact', 'balanced', 'airy'] },
+      }, ['selection']),
+    ] } },
+  }, ['schema', 'operations']),
+} };
 
 export const TOOL_DEFS: ToolDef[] = [
   {
@@ -50,7 +83,7 @@ export const TOOL_DEFS: ToolDef[] = [
     type: 'function',
     function: {
       name: 'list_nodes',
-      description: '分页列出节点id、标题、简介与文档数，按nextOffset续读；用read_node_doc(metadataOnly=true)查文档目录。',
+      description: '分页列出节点 ID、标题、简介、文档数、颜色和画布坐标，按nextOffset续读；用read_node_doc(metadataOnly=true)查文档目录。',
       parameters: { type: 'object', properties: {offset:{type:'integer',minimum:0},limit:{type:'integer',minimum:1,maximum:100}}, required: [] },
     },
   },

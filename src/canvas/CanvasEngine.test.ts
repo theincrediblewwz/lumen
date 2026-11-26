@@ -20,11 +20,23 @@ import {
   type Viewport,
   type Vec2,
 } from './CanvasEngine';
+import { interpolateViewport } from './cameraMotion';
 
 const approx = (a: Vec2, b: Vec2, eps = 1e-9) => {
   expect(Math.abs(a.x - b.x)).toBeLessThan(eps);
   expect(Math.abs(a.y - b.y)).toBeLessThan(eps);
 };
+
+it('interpolates a camera zoom without drifting the world point beneath its anchor', () => {
+  const from = { x: -45, y: 80, zoom: 0.08 };
+  const anchor = { x: 320, y: 240 };
+  const to = zoomAtPoint(from, anchor, 1.4);
+  const midpoint = interpolateViewport(from, to, 0.5);
+  approx(worldToScreen(midpoint, screenToWorld(from, anchor)), anchor);
+  expect(midpoint.zoom).toBeCloseTo(Math.sqrt(from.zoom * to.zoom));
+  expect(interpolateViewport(from, to, 1)).toEqual(to);
+  expect(interpolateViewport(from, { ...from, x: 15 }, 0.5)).toEqual({ ...from, x: -15 });
+});
 
 describe('clampZoom', () => {
   it('夹在默认范围内', () => {

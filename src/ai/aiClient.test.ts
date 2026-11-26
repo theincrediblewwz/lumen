@@ -167,7 +167,7 @@ it('continues more than the former four batches under a small budget and keeps w
   vi.stubGlobal('fetch', fetcher);
   const apply = vi.fn(async (_args, id) => JSON.stringify({ summary: `${id} 已保存`, nodes: { new: `n_${id}` } }));
   const pinned = '最新问题原样保留。';
-  const budget = 5000;
+  const budget = 5700;
   await new Promise<void>((resolve, reject) => streamChatAgentic({ ...settings, contextBudget: budget }, [{ role: 'user', content: pinned }], {
     onDelta: () => {}, onDone: resolve, onError: reject, onLimit: notice => reject(Error(notice.message)),
   }, { board: syntheticBoard, readDoc: async () => '', applyOperations: apply }));

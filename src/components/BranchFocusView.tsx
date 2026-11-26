@@ -2,13 +2,15 @@ import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useSta
 import { GitFork, LocateFixed, Maximize } from 'lucide-react';
 import type { BoardEdge, BoardNode } from '../api';
 import { fitToBounds, viewportToTransform, visibleWorldRect, worldToScreen, zoomByFactor, type Size, type Viewport } from '../canvas/CanvasEngine';
+import { useCameraMotion } from '../canvas/cameraMotion';
 import { focusBranch, layoutFocusBranch, offsetFocusBranch } from '../canvas/branchFocus';
 import { routeBoardEdges } from '../canvas/edgeRouting';
 import type { Box, Pt } from '../canvas/geometry';
-import { aggregateHeat, heatLevel, intersects, MIN_BOARD_ZOOM } from '../canvas/presentation';
+import { aggregateHeat, heatLevel, intersects, isolatedHeatLabelZoom, MIN_BOARD_ZOOM, readHeatLabel } from '../canvas/presentation';
 import { matchShortcut, shortcut } from '../canvas/shortcuts';
 import { EdgeLabel } from './EdgeLabel';
 import { NodeCard } from './NodeCard';
+import { HeatLabelText, HeatOverview } from './HeatOverview';
 import { copyPreviewMemory } from './NodePreview';
 
 const FIT = { minZoom: MIN_BOARD_ZOOM, maxZoom: 1.12, fitPadding: 52 };
@@ -41,6 +43,8 @@ export function BranchFocusView({ rootId, nodes, edges, projectId, boardId, docV
   const [memory] = useState(() => copyPreviewMemory(projectId, boardId));
   const [sizes, setSizes] = useState<ReadonlyMap<string, Pick<Box, 'w' | 'h'>>>(() => new Map());
   const [camera, setCamera] = useState<Viewport | null>(null);
+  const [locatedHeatId, setLocatedHeatId] = useState<string | null>(null);
+  const { active: cameraMotion, animate: animateCamera, cancel: cancelCamera } = useCameraMotion(rootId);
   const [selected, setSelected] = useState(rootId);
   const [dragging, setDragging] = useState(false);
   const [offsets, setOffsets] = useState<ReadonlyMap<string, Pt>>(() => new Map());
@@ -52,13 +56,22 @@ export function BranchFocusView({ rootId, nodes, edges, projectId, boardId, docV
   const viewport = camera ?? (scene ? startViewport(scene, size) : { x: 0, y: 0, zoom: 1 });
   const latest = useRef(viewport);
   latest.current = viewport;
+  const paintCamera = useCallback((next: Viewport) => {
+    latest.current = next;
+    setCamera(next);
+  }, []);
+  const travel = (target: Viewport, arrived?: () => void) => {
+    setLocatedHeatId(null);
+    animateCamera(latest.current, target, size, paintCamera, arrived);
+  };
   const { zoom } = viewport;
   const detailLevel = heatLevel(zoom);
   const world = visibleWorldRect(viewport, size);
   const visible = { x: world.x, y: world.y, w: world.width, h: world.height };
-  const heat = useMemo(() => detailLevel && scene ? aggregateHeat(scene.cards.map(({ node, box, step }) => ({
+  const heatNodes = useMemo(() => scene?.cards.map(({ node, box, step }) => ({
     ...node, w: box.w, h: box.h, color: step ? 'var(--focus-flow-ink)' : node.color,
-  })), detailLevel) : [], [detailLevel, scene]);
+  })) ?? [], [scene]);
+  const heat = useMemo(() => detailLevel ? aggregateHeat(heatNodes, detailLevel) : [], [detailLevel, heatNodes]);
   const boxes = useMemo(() => new Map(scene?.cards.map(card => [card.node.id, card.box])), [scene]);
   const cards = detailLevel ? [] : scene?.cards.filter(card => card.node.id === drag.current?.nodeId || intersects(card.box, visible, 100 / zoom)) ?? [];
   const laid = useMemo(() => {
@@ -92,14 +105,16 @@ export function BranchFocusView({ rootId, nodes, edges, projectId, boardId, docV
     const wheel = (event: WheelEvent) => {
       event.preventDefault();
       if (drag.current) return;
+      cancelCamera();
+      setLocatedHeatId(null);
       const rect = el.getBoundingClientRect();
       const delta = event.deltaMode === WheelEvent.DOM_DELTA_LINE ? event.deltaY * 16 : event.deltaY;
       const anchor = { x: event.clientX - rect.left, y: event.clientY - rect.top };
-      setCamera(previous => zoomByFactor(previous ?? latest.current, anchor, Math.exp(-delta * 0.0015 * zoomSensitivity), MIN_BOARD_ZOOM, 3));
+      paintCamera(zoomByFactor(latest.current, anchor, Math.exp(-delta * 0.0015 * zoomSensitivity), MIN_BOARD_ZOOM, 3));
     };
     el.addEventListener('wheel', wheel, { passive: false });
     return () => el.removeEventListener('wheel', wheel);
-  }, [zoomSensitivity]);
+  }, [cancelCamera, paintCamera, zoomSensitivity]);
 
   const measure = useCallback((id: string, w: number, h: number) => {
     if (!w || !h) return;
@@ -110,15 +125,25 @@ export function BranchFocusView({ rootId, nodes, edges, projectId, boardId, docV
   }, []);
   if (!scene || !branch) return null;
   const firstStep = scene.cards.find(card => card.step);
-  const fitAll = () => setCamera(fitToBounds(scene.bounds, size, FIT));
-  const goToStart = () => { setSelected(rootId); setCamera(startViewport(scene, size)); };
-  const readCard = (id: string) => {
+  const fitAll = () => travel(fitToBounds(scene.bounds, size, FIT));
+  const goToStart = () => { setSelected(rootId); travel(startViewport(scene, size)); };
+  const readCard = (id: string, showHeatName = false) => {
     const box = boxes.get(id);
     if (!box) return;
     setSelected(id);
     const preferred = Math.min(1.2, (size.width - 92) / box.w, (size.height - 118) / box.h);
-    setCamera(recenter(box, size, Math.max(0.7, preferred)));
+    travel(recenter(box, size, Math.max(0.7, preferred)), showHeatName ? () => setLocatedHeatId(id) : undefined);
   };
+  const locate = (id: string, grouped: boolean) => {
+    const box = boxes.get(id);
+    if (!box) return;
+    const isolated = grouped && isolatedHeatLabelZoom(heatNodes, id, zoom);
+    if (isolated) travel(recenter(box, size, isolated));
+    else readCard(id, true);
+  };
+  const located = !detailLevel && locatedHeatId ? scene.cards.find(card => card.node.id === locatedHeatId) : undefined;
+  const locatedName = readHeatLabel(located?.node.heatLabel);
+  const locatedAt = located ? worldToScreen(viewport, { x: located.box.x + located.box.w / 2, y: located.box.y }) : undefined;
   const keepCamera = () => { if (!camera) setCamera(viewport); };
   const moveCard = (id: string, offset: Pt) => {
     setOffsets(previous => {
@@ -133,9 +158,11 @@ export function BranchFocusView({ rootId, nodes, edges, projectId, boardId, docV
   const startDrag = (event: PointerEvent, id?: string) => {
     if (!event.isPrimary || event.button !== 0 || event.ctrlKey || drag.current) return;
     if ((event.target as Element).closest('button, input, textarea, select, a, [contenteditable]')) return;
+    cancelCamera();
+    setLocatedHeatId(null);
     const nodeId = quickMove || selected === id ? id : undefined;
     event.preventDefault();
-    drag.current = { pointer: event.pointerId, start: { x: event.clientX, y: event.clientY }, viewport, moved: false,
+    drag.current = { pointer: event.pointerId, start: { x: event.clientX, y: event.clientY }, viewport: latest.current, moved: false,
       nodeId, offset: nodeId ? offsets.get(nodeId) ?? { x: 0, y: 0 } : undefined };
     event.currentTarget.setPointerCapture(event.pointerId);
   };
@@ -149,7 +176,7 @@ export function BranchFocusView({ rootId, nodes, edges, projectId, boardId, docV
       const zoom = d.viewport.zoom;
       moveCard(d.nodeId, { x: d.offset.x + dx / zoom, y: d.offset.y + dy / zoom });
     } else {
-      setCamera({ ...d.viewport, x: d.viewport.x + dx, y: d.viewport.y + dy });
+      paintCamera({ ...d.viewport, x: d.viewport.x + dx, y: d.viewport.y + dy });
     }
   };
   const endDrag = (event: PointerEvent) => {
@@ -166,6 +193,7 @@ export function BranchFocusView({ rootId, nodes, edges, projectId, boardId, docV
   };
 
   return <div ref={host} className={`board-canvas board-branch-focus${dragging ? ' is-panning' : ''}${quickMove ? ' is-quick-move' : ''}`}
+    data-detail-view={!detailLevel || undefined}
     aria-label="专注视图" role="region" data-focus-root={rootId} tabIndex={0}
     style={{ ...fontStyle, backgroundPosition: `${viewport.x}px ${viewport.y}px` }}
     onPointerDownCapture={() => { suppressClick.current = false; keepCamera(); }} onKeyDownCapture={keepCamera}
@@ -180,7 +208,11 @@ export function BranchFocusView({ rootId, nodes, edges, projectId, boardId, docV
       }
       if (matchShortcut(event.nativeEvent, shortcut('fit')!)) { event.preventDefault(); fitAll(); return; }
       const factor = matchShortcut(event.nativeEvent, shortcut('zoom-in')!) ? 1.2 : matchShortcut(event.nativeEvent, shortcut('zoom-out')!) ? 1 / 1.2 : 0;
-      if (factor) { event.preventDefault(); setCamera(zoomByFactor(viewport, { x: size.width / 2, y: size.height / 2 }, factor, MIN_BOARD_ZOOM, 3)); }
+      if (factor) {
+        event.preventDefault();
+        const pending = cameraMotion.current?.target ?? latest.current;
+        travel(zoomByFactor(pending, { x: size.width / 2, y: size.height / 2 }, factor, MIN_BOARD_ZOOM, 3));
+      }
     }}>
     <div className="canvas-toolbar branch-focus-toolbar" role="toolbar" aria-label="专注视图工具">
       <button className="tb-btn" type="button" title="回到起点" aria-label="回到起点" onClick={goToStart}><LocateFixed size={16} aria-hidden="true"/></button>
@@ -200,12 +232,12 @@ export function BranchFocusView({ rootId, nodes, edges, projectId, boardId, docV
         data-from={edge.from} data-to={edge.to} markerEnd={edge.directed ? `url(#${marker}-${step ? 'step' : 'arrow'})` : undefined}/>) }
     </svg>
     <div className="edge-label-layer">{laid.map(({ edge, route }) => edge.label && <EdgeLabel key={edge.id} label={edge.label} x={route.labelPoint.x} y={route.labelPoint.y} zoom={zoom}/>)}</div>
-    {detailLevel > 0 && <div className="heat-layer" aria-label="专注分支概览">{heat.filter(cell => intersects(cell, visible, 80 / zoom)).map(cell => {
-      const point = worldToScreen(viewport, cell);
-      return <button type="button" key={cell.id} className="heat-cell" aria-label={`放大包含 ${cell.count} 个节点的区域`}
-        style={{ left: point.x, top: point.y, width: Math.max(9, cell.w * zoom), height: Math.max(9, cell.h * zoom), ['--heat-color' as string]: cell.color || 'var(--accent)' }}
-        onClick={() => setCamera(recenter(cell, size, Math.min(1, zoom * 2)))}>{cell.count > 1 ? cell.count : ''}</button>;
-    })}</div>}
+    {detailLevel > 0 && <HeatOverview key={detailLevel} cells={heat.filter(cell => intersects(cell, visible, 80 / zoom))}
+      level={detailLevel} viewport={viewport} description="专注分支概览" onLocate={locate}
+      onExpand={cell => travel(recenter(cell, size, Math.min(1, (cameraMotion.current?.target.zoom ?? zoom) * 2)))} />}
+    {locatedAt && locatedName && <div className="heat-label-destination" style={{ left: locatedAt.x, top: locatedAt.y }}>
+      <HeatLabelText label={locatedName}/>
+    </div>}
     <div className="canvas-world" style={{ transform: viewportToTransform(viewport), transformOrigin: '0 0', ['--image-pager-scale' as string]: 1 / Math.min(zoom, 1) }}>
       {cards.map(({ node, box, step }) => <div key={node.id} className={`branch-focus-card${step ? ' is-flow-step' : ''}`}
         data-focus-step={step || undefined} style={{ left: box.x, top: box.y, width: box.w, height: box.h }} onDoubleClickCapture={event => {

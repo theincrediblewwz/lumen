@@ -39,6 +39,15 @@ export interface LayoutOptions {
   originY?: number;
 }
 
+export type LayoutDirection = 'auto' | 'down' | 'right';
+export type LayoutSpacing = 'compact' | 'balanced' | 'airy';
+export const MAX_ARRANGEMENT_NODES = 512;
+export const LAYOUT_SPACING: Record<LayoutSpacing, { hGap: number; vGap: number; treeGap: number }> = {
+  compact: { hGap: 44, vGap: 76, treeGap: 128 },
+  balanced: { hGap: 72, vGap: 110, treeGap: 240 },
+  airy: { hGap: 128, vGap: 176, treeGap: 320 },
+};
+
 export interface Pos {
   x: number;
   y: number;
@@ -53,21 +62,7 @@ const DEFAULTS = {
   originY: 120,
 };
 
-/**
- * 计算树状布局。纯函数，无副作用。
- * @returns Map<id, {x,y}>，仅包含传入的节点。
- */
-export function computeTreeLayout(
-  nodes: LayoutNode[],
-  edges: LayoutEdge[],
-  options: LayoutOptions = {},
-): Map<string, Pos> {
-  const opt = { ...DEFAULTS, ...options };
-  const result = new Map<string, Pos>();
-  if (nodes.length === 0) return result;
-
-  const byId = new Map(nodes.map((n) => [n.id, n]));
-
+function layoutForest(nodes: LayoutNode[], edges: LayoutEdge[], explicitRoots: readonly string[] = []) {
   // 1) 邻接：children[parent] = [child...]；记录入度（仅统计能连到已知节点的边）
   const children = new Map<string, string[]>();
   const inDeg = new Map<string, number>();
@@ -78,7 +73,7 @@ export function computeTreeLayout(
   // 有向边优先建立父子；无向边先存起来，BFS 时按需使用
   const undirected: Array<[string, string]> = [];
   for (const e of edges) {
-    if (!byId.has(e.from) || !byId.has(e.to) || e.from === e.to) continue;
+    if (!children.has(e.from) || !children.has(e.to) || e.from === e.to) continue;
     if (e.directed) {
       children.get(e.from)!.push(e.to);
       inDeg.set(e.to, (inDeg.get(e.to) ?? 0) + 1);
@@ -101,7 +96,6 @@ export function computeTreeLayout(
     if ((inDeg.get(n.id) ?? 0) === 0) roots.push(n.id);
   }
   // 若全是环导致无入度 0 节点，用第一个节点兜底
-  if (roots.length === 0) roots.push(nodes[0].id);
 
   // 3) BFS 定层 + 补无向树边；visited 防环与多父重复
   const depth = new Map<string, number>();
@@ -110,14 +104,15 @@ export function computeTreeLayout(
   const orderedChildren = new Map<string, string[]>(); // 实际用于布局的子树
   for (const n of nodes) orderedChildren.set(n.id, []);
 
-  const queue: string[] = [];
-  const bfsFrom = (id: string) => {
-    // 已被前一棵树（含无向邻居）认领则不再单独成根
-    if (visited.has(id)) return;
-    visited.add(id);
-    depth.set(id, 0);
-    parent.set(id, null);
-    queue.length=0;queue.push(id);
+  const claimRoots = (candidates: readonly string[]) => {
+    const queue: string[] = [];
+    for (const id of candidates) {
+      if (visited.has(id) || !children.has(id)) continue;
+      visited.add(id);
+      depth.set(id, 0);
+      parent.set(id, null);
+      queue.push(id);
+    }
     for(let head=0;head<queue.length;head++) {
       const cur = queue[head];
       const d = depth.get(cur)!;
@@ -134,10 +129,27 @@ export function computeTreeLayout(
     }
   };
 
+  // Explicitly selected branches keep their own roots even when cross-links join them.
+  claimRoots(explicitRoots);
   // 先从有向根（入度 0）出发，无向邻居会在各自 BFS 中被认领，不会重复成根
-  for (const r of roots) bfsFrom(r);
+  for (const r of roots) claimRoots([r]);
   // 补齐仍未访问的节点（纯环 / 独立子图 / 孤立点），按输入顺序各自成根
-  for (const nd of nodes) bfsFrom(nd.id);
+  for (const nd of nodes) claimRoots([nd.id]);
+  const rootsInOrder = [...new Set([...explicitRoots, ...nodes.map(n => n.id)])].filter(id => parent.get(id) === null);
+  return { depth, orderedChildren, rootsInOrder };
+}
+
+/** 计算固定方向的分层树布局。 */
+export function computeTreeLayout(
+  nodes: LayoutNode[],
+  edges: LayoutEdge[],
+  options: LayoutOptions = {},
+): Map<string, Pos> {
+  const opt = { ...DEFAULTS, ...options };
+  const result = new Map<string, Pos>();
+  if (!nodes.length) return result;
+  const byId = new Map(nodes.map(n => [n.id, n]));
+  const { depth, orderedChildren, rootsInOrder } = layoutForest(nodes, edges);
 
   // 4) x 用子树排布：后序遍历，叶子顺序占位，父节点居中于子节点
   //    先按层最大高度算各层 y。
@@ -162,13 +174,12 @@ export function computeTreeLayout(
   const xById = new Map<string, number>();
 
   // xById 统一存“节点中心 x”，避免叶子(左边缘)与父(中心)语义混用导致错位。
-  const widths=new Map<string,number>();const order:string[]=[];const stack=nodes.filter(n=>parent.get(n.id)===null).map(n=>n.id);
+  const widths=new Map<string,number>();const order:string[]=[];const stack=rootsInOrder.slice();
   while(stack.length){const id=stack.pop()!;order.push(id);for(const child of orderedChildren.get(id)!)stack.push(child);}
   for(let i=order.length-1;i>=0;i--){const id=order[i],kids=orderedChildren.get(id)!;let childrenWidth=0;for(const child of kids)childrenWidth+=widths.get(child)!;widths.set(id,Math.max(byId.get(id)!.w,childrenWidth+Math.max(0,kids.length-1)*opt.hGap));}
   const assignX=(root:string)=>{const pending=[{id:root,left:cursorX}];while(pending.length){const {id,left}=pending.pop()!,width=widths.get(id)!,kids=orderedChildren.get(id)!;xById.set(id,left+width/2);let total=0;for(const child of kids)total+=widths.get(child)!;total+=Math.max(0,kids.length-1)*opt.hGap;let next=left+(width-total)/2;for(const child of kids){pending.push({id:child,left:next});next+=widths.get(child)!+opt.hGap;}}cursorX+=widths.get(root)!+opt.treeGap;};
 
   // 按根的发现顺序布局各棵树，森林横向依次排开（cursorX 天然递增）
-  const rootsInOrder = nodes.filter((n) => parent.get(n.id) === null).map((n) => n.id);
   for (const r of rootsInOrder) assignX(r);
 
   // 5) 汇总坐标：xById 为中心，转成左上角坐标（与 BoardNode.x 语义一致：左上）
@@ -181,4 +192,105 @@ export function computeTreeLayout(
     });
   }
   return result;
+}
+
+type Shape = { id: string; w: number; h: number; root: Pos; children: Placement[] };
+type Placement = Pos & { shape: Shape };
+
+/** Pack measured subtrees as blocks and choose the layout that fits at the largest zoom. */
+export function computeAdaptiveTreeLayout(
+  nodes: LayoutNode[],
+  edges: LayoutEdge[],
+  options: LayoutOptions & { aspectRatio?: number; rootIds?: readonly string[]; direction?: LayoutDirection; stackRoots?: boolean } = {},
+): Map<string, Pos> {
+  const { hGap, vGap, treeGap, nodeH, originX, originY } = { ...DEFAULTS, ...options };
+  const aspect = Math.max(.8, Math.min(2.4, options.aspectRatio || 1.6));
+  const extent = (w: number, h: number) => Math.max(w / aspect, h);
+  const { orderedChildren, rootsInOrder } = layoutForest(nodes, edges, options.rootIds);
+  const sizes = new Map(nodes.map(node => [node.id, node]));
+  const order = rootsInOrder.slice();
+  for (let i = 0; i < order.length; i++) {
+    for (const id of orderedChildren.get(order[i])!) order.push(id);
+  }
+  const shapes = new Map<string, Shape>();
+  for (let i = order.length - 1; i >= 0; i--) {
+    const id = order[i], node = sizes.get(id)!;
+    const kids = orderedChildren.get(id)!.map(child => shapes.get(child)!);
+    const w = node.w, h = node.h ?? nodeH;
+    if (!kids.length) {
+      shapes.set(id, { id, w, h, root: { x: 0, y: 0 }, children: [] });
+      continue;
+    }
+    const rowWidth = kids.reduce((sum, child) => sum + child.w + hGap, -hGap);
+    const stackHeight = kids.reduce((sum, child) => sum + child.h + vGap, -vGap);
+    const row = { w: Math.max(w, rowWidth), h: h + vGap + Math.max(...kids.map(child => child.h)) };
+    const stack = { w: w + hGap + Math.max(...kids.map(child => child.w)), h: Math.max(h, stackHeight) };
+    let shape: Shape;
+    const useRow = options.direction === 'down'
+      || (options.direction !== 'right' && extent(row.w, row.h) <= extent(stack.w, stack.h) * 1.12);
+    if (useRow) {
+      let x = (row.w - rowWidth) / 2;
+      // A wide row reads from its leading edge when stacked alongside other branches.
+      const rootX = rowWidth > 3 * w ? x : (row.w - w) / 2;
+      const children = kids.map(child => {
+        const placement = { x, y: h + vGap, shape: child };
+        x += child.w + hGap;
+        return placement;
+      });
+      shape = { id, ...row, root: { x: rootX, y: 0 }, children };
+    } else {
+      let y = (stack.h - stackHeight) / 2;
+      const children = kids.map(child => {
+        const placement = { x: w + hGap, y, shape: child };
+        y += child.h + vGap;
+        return placement;
+      });
+      shape = { id, ...stack, root: { x: 0, y: (stack.h - h) / 2 }, children };
+    }
+    shapes.set(id, shape);
+  }
+
+  const roots = rootsInOrder.map(id => shapes.get(id)!);
+  if (!roots.length) return new Map();
+  const widest = Math.max(...roots.map(root => root.w));
+  const singleRow = roots.reduce((width, root) => width + root.w + treeGap, -treeGap);
+  const area = roots.reduce((sum, root) => sum + (root.w + treeGap) * (root.h + treeGap), 0);
+  const candidates = options.stackRoots ? [widest] : [widest, Math.max(widest, Math.sqrt(area * aspect)), singleRow];
+  let best = Infinity;
+  let placed: Placement[] = [];
+  for (const limit of candidates) {
+    const row: Placement[] = [];
+    let x = 0, y = 0, height = 0, width = 0;
+    for (const shape of roots) {
+      if (x && x + shape.w > limit) {
+        y += height + treeGap;
+        x = 0;
+        height = 0;
+      }
+      row.push({ x, y, shape });
+      height = Math.max(height, shape.h);
+      width = Math.max(width, x + shape.w);
+      x += shape.w + treeGap;
+    }
+    const score = extent(width, y + height);
+    if (score < best) { best = score; placed = row; }
+  }
+  const result = new Map<string, Pos>();
+  for (let i = 0; i < placed.length; i++) {
+    const { x, y, shape } = placed[i];
+    result.set(shape.id, { x: Math.round(originX + x + shape.root.x), y: Math.round(originY + y + shape.root.y) });
+    for (const child of shape.children) placed.push({ x: x + child.x, y: y + child.y, shape: child.shape });
+  }
+  return result;
+}
+
+export function computeBoardLayout(
+  nodes: LayoutNode[], edges: LayoutEdge[], direction: LayoutDirection, spacing: LayoutSpacing,
+  options: { aspectRatio?: number; rootIds?: readonly string[]; stackRoots?: boolean } = {},
+): Map<string, Pos> {
+  const gaps = { ...LAYOUT_SPACING[spacing], originX: 0, originY: 0 };
+  if (direction === 'auto' || options.rootIds?.length) return computeAdaptiveTreeLayout(nodes, edges, { ...gaps, ...options, direction });
+  if (direction === 'down') return computeTreeLayout(nodes, edges, gaps);
+  const transposed = nodes.map(({ id, w, h }) => ({ id, w: h ?? DEFAULTS.nodeH, h: w }));
+  return new Map([...computeTreeLayout(transposed, edges, gaps)].map(([id, { x, y }]) => [id, { x: y, y: x }]));
 }

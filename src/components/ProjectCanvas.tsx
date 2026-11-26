@@ -2,6 +2,7 @@ import { Check, Plus, Sparkles, Star, X } from 'lucide-react';
 import { memo, useEffect, useId, useRef, useState, type KeyboardEvent, type MouseEvent, type PointerEvent } from 'react';
 import type { BoardMeta, Viewport } from '../api';
 import { fitToBounds, IDENTITY_VIEWPORT, screenToWorld, worldToScreen, zoomByFactor, type Vec2 } from '../canvas/CanvasEngine';
+import { useCameraMotion } from '../canvas/cameraMotion';
 import { straightPath } from '../canvas/geometry';
 import { coverPreset } from '../projectCanvas/coverPresets';
 import { cardBounds, translate } from '../projectCanvas/expansion';
@@ -121,6 +122,7 @@ export function ProjectCanvas({ scope, folderId, folderName, tiles, relations, t
   const { viewport, view, setView, takeCamera, persistView, expanded, scene, toggle, close } = useExpansion({
     host: element, scope, folderId, tiles, readBoards, previewTiles,
   });
+  const { animate: animateCamera, cancel: cancelCamera } = useCameraMotion(folderId ?? scope);
   const wheelSave = useRef(0);
   const gesture = useRef<Drag>();
   const suppressClick = useRef(false);
@@ -172,6 +174,7 @@ export function ProjectCanvas({ scope, folderId, folderName, tiles, relations, t
 
   function clickTile(event: MouseEvent<HTMLButtonElement>, tile: CatalogTile, owner?: string) {
     if (event.detail > 0 && suppressClick.current) return;
+    cancelCamera();
     if (tile.kind === 'board' || event.detail === 0) onOpen(tile);
     else if (event.detail === 1) toggle(tile.row.id, owner);
   }
@@ -179,6 +182,7 @@ export function ProjectCanvas({ scope, folderId, folderName, tiles, relations, t
   function tileKeyDown(event: KeyboardEvent<HTMLButtonElement>, tile: CatalogTile, owner?: string) {
     if (tile.kind === 'project' && event.key === ' ') {
       event.preventDefault();
+      cancelCamera();
       if (!event.repeat) toggle(tile.row.id, owner);
     } else if (owner === undefined && (event.key === 'ContextMenu' || (event.shiftKey && event.key === 'F10'))) {
       event.currentTarget.dispatchEvent(new window.MouseEvent('contextmenu', { bubbles: true }));
@@ -196,6 +200,7 @@ export function ProjectCanvas({ scope, folderId, folderName, tiles, relations, t
     const wheel = (event: WheelEvent) => {
       event.preventDefault();
       if (disabled || gesture.current) return;
+      cancelCamera();
       const rect = host.getBoundingClientRect();
       const anchor = { x: event.clientX - rect.left, y: event.clientY - rect.top };
       const delta = event.deltaMode === WheelEvent.DOM_DELTA_LINE ? event.deltaY * 16 : event.deltaY;
@@ -205,7 +210,7 @@ export function ProjectCanvas({ scope, folderId, folderName, tiles, relations, t
     };
     host.addEventListener('wheel', wheel, { passive: false });
     return () => host.removeEventListener('wheel', wheel);
-  }, [persistView, disabled]);
+  }, [persistView, disabled, cancelCamera]);
 
   useEffect(() => () => {
     window.clearTimeout(wheelSave.current);
@@ -213,6 +218,7 @@ export function ProjectCanvas({ scope, folderId, folderName, tiles, relations, t
 
   function begin(event: PointerEvent<HTMLElement>) {
     if (disabled || gesture.current || !event.isPrimary || (event.button !== 0 && event.button !== 1)) return;
+    cancelCamera();
     suppressClick.current = false;
     const hit = event.target as Element;
     if (event.button === 0 && hit.closest('.project-preview-open')) return;
@@ -365,8 +371,8 @@ export function ProjectCanvas({ scope, folderId, folderName, tiles, relations, t
         { minZoom: 0.15, maxZoom: 1, fitPadding: 52 },
       )
       : { ...IDENTITY_VIEWPORT };
-    setView(next);
-    persistView();
+    takeCamera();
+    animateCamera(view.current, next, { width: host.clientWidth, height: host.clientHeight }, setView, persistView);
   }
 
   const sourceBox = connection && endpoints.get(connection.from)?.box;

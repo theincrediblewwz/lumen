@@ -112,6 +112,7 @@ async function drag(dx, dy) {
   const flowWidth = await flow.evaluate(el => el.style.width);
   assert.ok(flowWidth);
   await nodePanel.getByRole('button', { name: '缩小问题面板' }).click();
+  await page.getByRole('button', { name: '已保存', exact: true }).waitFor();
   const camera = await world.evaluate(el => el.style.transform);
   assert.equal(await enter.evaluate(button => Boolean(button.closest('.titlebar-control')?.previousElementSibling?.querySelector('.branch-focus-toggle'))), true);
   assert.match(await titlebar.evaluate(el => getComputedStyle(el).transitionProperty), /opacity.*transform/);

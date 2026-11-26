@@ -1,4 +1,5 @@
-use super::layout::{Bounds, LayoutJob, PreviewDocument, SourceBoard};
+use super::layout::{LayoutJob, PreviewDocument, SourceBoard};
+use crate::board_layout::Bounds;
 use super::{operations::*, read_bytes, Change, Destination, Files, Prepared, Revisions};
 use crate::{
     documents,
@@ -596,6 +597,7 @@ impl<'a> Draft<'a> {
                 }
             }
             let placement = match intent.direction {
+                LayoutDirection::Auto => "按分支自适应",
                 LayoutDirection::Down => "从上到下",
                 LayoutDirection::Right => "从左到右",
             };

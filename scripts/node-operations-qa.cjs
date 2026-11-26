@@ -41,5 +41,60 @@ async function waitSaved(){await page.waitForFunction(()=>!document.querySelecto
  checks.push('new node scope, document controls and AI receipts remain within the viewport in all three themes');
  await page.setViewportSize({width:1180,height:820});await page.goto(url('main'));await page.locator('.project-tile.is-project').filter({hasText:'桌面夹'}).dblclick();await page.locator('.project-tile.is-board').filter({hasText:'合成学习白板'}).click();await page.getByRole('button',{name:'菜单',exact:true}).click();await page.getByText('快照与恢复…',{exact:true}).click();await page.getByRole('button',{name:'恢复此版本',exact:true}).first().waitFor();page.once('dialog',dialog=>dialog.accept());await page.getByRole('button',{name:'恢复此版本',exact:true}).first().click();await page.getByText('已恢复，恢复前版本也已保存。',{exact:true}).waitFor();assert.equal((await state()).boards.board.nodes.filter(n=>n.title==='AI 生成的方向').length,createdAfterCancel-1);await shot('node-07-version-restore');
  checks.push('the real board menu exposes document-inclusive versions; restoring a pre-operation version removes its graph changes while source chat remains available');
+ const layoutBefore = await page.evaluate(() => {
+  const seed=JSON.parse(localStorage.getItem('lumen.fixture-capture')), board=seed.boards.board;
+  const at='2026-11-26T00:00:00Z';
+  const card=(id,title,x,y)=>({id,title,x,y,w:200,h:120,docs:[],created_at:at,updated_at:at});
+  const groups=['第一组','第二组','第三组'];
+  board.nodes=[card('untouched','保留原位',-900,30)];
+  board.edges=[];
+  for (let g=0;g<groups.length;g++) {
+   const id='row-'+g, x=100+1700*g;
+   board.nodes.push(card(id,groups[g],x,100));
+   for(let i=0;i<6;i++){
+    const child=id+'-'+i;
+    board.nodes.push(card(child,'内容 '+(i+1),x+245*i,330));
+    board.edges.push({id:'e-'+child,from:id,to:child,directed:true,label:null,created_at:at});
+   }
+  }
+  board.nodes.find(n=>n.id==='row-0').flow={nodeIds:['protected-step']};
+  board.nodes.push({...card('protected-step','原流程步骤',0,0),flowOwnerId:'row-0'});
+  localStorage.setItem('lumen.fixture-board-policy',JSON.stringify({enabled:true,revision:10,keep:20}));
+  localStorage.setItem('lumen.fixture-capture',JSON.stringify(seed));
+  return board;
+ });
+ await page.goto(url('ai','&presentationQA=1'));await ready();
+ await page.evaluate(() => {
+  window.__fixturePresentationPlan=[
+   [{type:'update_node_presentation',nodeId:'row-1',position:{x:1900,y:200},color:'#34885f',includeDescendants:true}],
+   [{type:'arrange_nodes',selection:{kind:'branches',rootIds:['row-0','row-1','row-2'],stack:true},direction:'auto',spacing:'compact'}]
+  ];
+ });
+ const question=page.getByLabel('输入问题',{exact:true});
+ await question.fill('把三棵分支分成上中下三行，第二组标绿色');
+ await question.press('Enter');
+ await page.getByText('分支已排好，颜色已保存。',{exact:true}).waitFor();
+ await page.getByText(/已调整 21 个节点的位置/).first().waitFor();
+ const layoutCalls=await page.evaluate(()=>window.__fixtureOperationCalls);
+ assert.equal(layoutCalls.length,2);
+ const measured=layoutCalls[1].batch.operations[0];
+ assert.equal(measured.type,'place_measured_nodes');
+ const after=(await state()).boards.board;
+ const byId=new Map(after.nodes.map(node=>[node.id,node]));
+ for(const id of ['untouched','protected-step'])assert.deepEqual(byId.get(id),layoutBefore.nodes.find(node=>node.id===id));
+ assert.deepEqual(after.edges,layoutBefore.edges);
+ assert.equal(byId.get('row-1-3').color,'#34885f');
+ assert.ok(byId.get('row-0').y<byId.get('row-1').y&&byId.get('row-1').y<byId.get('row-2').y);
+ for(let row=0;row<3;row++){
+  assert.equal(byId.get('row-'+row+'-0').y,byId.get('row-'+row+'-5').y);
+  assert.equal(byId.get('row-'+row).w,200);
+ }
+ await page.goto(url('main','&presentationQA=1'));
+ await page.locator('.project-tile.is-project').filter({hasText:'桌面夹'}).dblclick();
+ await page.locator('.project-tile.is-board').filter({hasText:'合成学习白板'}).click();
+ await page.getByRole('button',{name:'适配全部内容到屏幕',exact:true}).click();
+ await page.locator('[data-node-id="row-2"]').waitFor();
+ await shot('node-08-adaptive-layout');
+ checks.push('ordinary AI chat uses measured geometry to stack three wide branches with color, leaving unselected cards, flow steps, and relationships intact');
  assert.deepEqual(errors,[]);fs.writeFileSync(path.join(output,'node-operations-qa.json'),JSON.stringify({checks,errors,realProviderCalls:0,realCredentialsRead:0,nativeFilesystemVerifiedSeparately:true},null,2));await browser.close();console.log(JSON.stringify({pass:true,checks:checks.length,output}));
 })().catch(async error=>{if(page){await shot('node-operation-failure').catch(()=>{});fs.writeFileSync(path.join(output,'node-operation-failure.txt'),await page.locator('body').ariaSnapshot().catch(()=>''));}if(browser)await browser.close();console.error(error);process.exitCode=1;});

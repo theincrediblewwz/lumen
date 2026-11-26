@@ -186,6 +186,7 @@ pub(crate) struct BoardRef {
 #[derive(Clone, Copy, Deserialize, serde::Serialize)]
 #[serde(rename_all = "snake_case")]
 pub(super) enum LayoutDirection {
+    Auto,
     Down,
     Right,
 }

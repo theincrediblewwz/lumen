@@ -1,5 +1,5 @@
 import {describe,it,expect} from 'vitest';
-import {aggregateHeat,heatLevel,resizedBox,snapConnection,boardAppearance,imageDisplaySize,resizedImageBox} from './presentation';
+import {aggregateHeat,heatLevel,isolatedHeatLabelZoom,readHeatLabel,resizedBox,snapConnection,boardAppearance,imageDisplaySize,resizedImageBox} from './presentation';
 import {CanvasEngine} from './CanvasEngine';
 import type {BoardNode} from '../api';
 const node=(id:string,x:number,y:number):BoardNode=>({id,x,y,w:240,h:96,title:id,docs:[],created_at:'',updated_at:''});
@@ -13,6 +13,24 @@ describe('canvas presentation',()=>{
   let previous=Infinity;
   for(const zoom of [.3,.15,.075,.02,.005,.001]){const cells=aggregateHeat(nodes,heatLevel(zoom));expect(cells.reduce((sum,c)=>sum+c.count,0)).toBe(10000);expect(cells.length).toBeLessThanOrEqual(previous);previous=cells.length;}
   expect(heatLevel(.35)).toBe(0);expect(previous).toBe(1);expect(aggregateHeat([node('a',-500,-500),node('b',500,500)],9)).toHaveLength(1);
+ });
+ it('keeps named members separate from the node count and stops at their first separate heat tier',()=>{
+  const a={...node('a',-200,-30),heatLabel:{name:'第一棵树',color:'#d43c63',fontSize:22}};
+  const b={...node('b',440,0),heatLabel:{name:'第二棵树',color:'#147da8',fontSize:16}};
+  const nodes=[a,b,node('unnamed',20,80)];
+  const [merged]=aggregateHeat(nodes,heatLevel(.14));
+  expect(merged.count).toBe(3);
+  expect(merged.labels).toEqual([{...a.heatLabel,nodeId:'a',x:-80,y:18},{...b.heatLabel,nodeId:'b',x:560,y:48}]);
+  expect(merged.nodeIds).toEqual(['a','b','unnamed']);
+  const zoom=isolatedHeatLabelZoom(nodes,'b',.14)!;
+  expect(zoom).toBeGreaterThan(.14);
+  expect(heatLevel(zoom)).toBe(1);
+  expect(aggregateHeat(nodes,heatLevel(zoom)).find(cell=>cell.labels.some(label=>label.nodeId==='b'))?.labels).toHaveLength(1);
+  expect(isolatedHeatLabelZoom([a,{...b,x:a.x,y:a.y}], 'b', .14)).toBeUndefined();
+ });
+ it('reads only valid neon colors and bounds names and font sizes',()=>{
+  expect(readHeatLabel({name:'  ',color:'#f00'})).toBeUndefined();
+  expect(readHeatLabel({name:` ${'字'.repeat(80)} `,color:'var(--accent)',fontSize:99})).toEqual({name:'字'.repeat(60),color:'#00ab70',fontSize:32});
  });
  it('fits distant nodes below twenty percent and preserves the zoom anchor',()=>{
   const engine=new CanvasEngine({}, {minZoom:.001,maxZoom:3});engine.fit({x:0,y:0,width:100000,height:100000},{width:1200,height:800});expect(engine.viewport.zoom).toBeLessThan(.01);

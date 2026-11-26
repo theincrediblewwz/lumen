@@ -1,5 +1,6 @@
 use super::{check_revisions, draft::board_path, operations::*, Prepared, MAX_CHANGE_BYTES};
 use crate::{
+    board_layout::{translate_bends, Bounds},
     project_canvas::Position,
     storage::{BoardEdge, BoardFile, BoardNode},
 };
@@ -9,80 +10,6 @@ use std::{
     collections::{BTreeMap, BTreeSet},
     path::Path,
 };
-
-#[derive(Clone, Copy, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub(super) struct Bounds {
-    pub x: f64,
-    pub y: f64,
-    pub w: f64,
-    pub h: f64,
-}
-
-impl Bounds {
-    pub(super) fn union(self, other: Self) -> Self {
-        let x = self.x.min(other.x);
-        let y = self.y.min(other.y);
-        Self {
-            x,
-            y,
-            w: (self.x + self.w).max(other.x + other.w) - x,
-            h: (self.y + self.h).max(other.y + other.h) - y,
-        }
-    }
-
-    pub(super) fn reserved(node: &BoardNode) -> Self {
-        let w = node
-            .docs
-            .first()
-            .and_then(|doc| doc.image_display.as_ref())
-            .map_or(node.w, |image| image.width)
-            .max(node.w);
-        let has_body = node
-            .summary
-            .as_ref()
-            .is_some_and(|summary| !summary.trim().is_empty());
-        let has_attachment = node
-            .docs
-            .iter()
-            .any(|doc| !doc.path.starts_with("docs/question_"));
-        let default_height = 80.0
-            + 320.0 * (u8::from(has_body) + u8::from(has_attachment)) as f64
-            + 48.0 * (node.title.chars().count().div_ceil(16)) as f64;
-        Self {
-            x: node.x,
-            y: node.y,
-            w,
-            h: node
-                .extra
-                .get("h")
-                .and_then(Value::as_f64)
-                .unwrap_or(default_height),
-        }
-    }
-
-    fn check(self) -> Result<(), String> {
-        Position {
-            x: self.x,
-            y: self.y,
-        }
-        .check()?;
-        if ![self.w, self.h]
-            .iter()
-            .all(|value| (1.0..=32768.0).contains(value))
-        {
-            return Err("节点的测量尺寸超出布局范围".into());
-        }
-        Ok(())
-    }
-
-    fn overlaps(self, other: Self) -> bool {
-        self.x < other.x + other.w
-            && other.x < self.x + self.w
-            && self.y < other.y + other.h
-            && other.y < self.y + self.h
-    }
-}
 
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -209,14 +136,17 @@ pub(super) fn place(
         let mut board: BoardFile =
             serde_json::from_slice(prepared.files.get(&path).ok_or("待测量的白板未载入")?)
                 .map_err(|error| error.to_string())?;
+        let mut previous = BTreeMap::new();
         for node in &mut board.nodes {
             if let Some(rect) = measured.nodes.get(&node.id) {
+                previous.insert(node.id.clone(), Position { x: node.x, y: node.y });
                 node.x = rect.x;
                 node.y = rect.y;
                 node.w = rect.w;
                 node.extra.insert("h".into(), json!(rect.h));
             }
         }
+        translate_bends(&mut board, &previous)?;
         writes.insert(path, super::encode(&board)?);
         previews.push(LayoutPreview {
             project_id: job.project_id.clone(),
@@ -235,7 +165,9 @@ pub(super) fn place(
                     bounds: measured.nodes[&node.id],
                 })
                 .collect(),
-            edges: job.edges.clone(),
+            edges: board.edges.into_iter().filter(|edge| {
+                measured.nodes.contains_key(&edge.from) && measured.nodes.contains_key(&edge.to)
+            }).collect(),
         });
     }
     let bytes: usize = prepared

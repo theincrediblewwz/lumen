@@ -20,22 +20,79 @@ export function boardAppearance(value?: Partial<BoardAppearance>): Required<Boar
 export function heatLevel(zoom: number): number {
   return zoom >= DETAIL_ZOOM ? 0 : Math.max(1, Math.ceil(Math.log2(DETAIL_ZOOM / Math.max(MIN_BOARD_ZOOM, zoom))));
 }
-export type HeatCell = { id: string; count: number; x: number; y: number; w: number; h: number; color: string | null; flowCount:number; flowColor:string|null };
+export const HEAT_LABEL_NAME_LIMIT = 60;
+export const HEAT_LABEL_SIZE = { min: 12, max: 32, default: 17 };
+export const DEFAULT_HEAT_LABEL_COLOR = '#00ab70';
+
+export type HeatLabel = { name: string; color: string; fontSize: number };
+
+export function readHeatLabel(value: unknown): HeatLabel | undefined {
+  if (!value || typeof value !== 'object' || !('name' in value) || typeof value.name !== 'string') return;
+  const name = Array.from(value.name.trim()).slice(0, HEAT_LABEL_NAME_LIMIT).join('');
+  if (!name) return;
+  const color = 'color' in value && typeof value.color === 'string' && /^#[\da-f]{6}$/i.test(value.color)
+    ? value.color.toLowerCase() : DEFAULT_HEAT_LABEL_COLOR;
+  const fontSize = 'fontSize' in value && typeof value.fontSize === 'number' && Number.isFinite(value.fontSize)
+    ? Math.round(Math.min(HEAT_LABEL_SIZE.max, Math.max(HEAT_LABEL_SIZE.min, value.fontSize))) : HEAT_LABEL_SIZE.default;
+  return { name, color, fontSize };
+}
+
+export type HeatMarker = HeatLabel & { nodeId: string; x: number; y: number };
+export type HeatCell = Box & {
+  id: string; count: number; color: string | null; flowCount: number; flowColor: string | null;
+  nodeIds: string[]; labels: HeatMarker[];
+};
+type HeatSizes = Readonly<Record<string, { w: number; h: number }>>;
+
+export function heatNodeBox(node: BoardNode, sizes: HeatSizes = {}): Box {
+  return { x: node.x, y: node.y, w: sizes[node.id]?.w ?? (node.w || 240), h: sizes[node.id]?.h ?? node.h ?? 96 };
+}
+
 /** A graph-anchored grid stays stable while panning; each coarser level merges four cells. */
-export function aggregateHeat(nodes: BoardNode[], level: number, sizes: Record<string, {w:number;h:number}> = {}): HeatCell[] {
+export function aggregateHeat(nodes: readonly BoardNode[], level: number, sizes: HeatSizes = {}): HeatCell[] {
   const cellSize = 256 * 2 ** level, cells = new Map<string, HeatCell>();
-  let originX=Infinity,originY=Infinity;
-  for(const n of nodes){originX=Math.min(originX,n.x+(n.w||240)/2);originY=Math.min(originY,n.y+(n.h??sizes[n.id]?.h??96)/2);}
-  originX=Math.floor(originX/256)*256;originY=Math.floor(originY/256)*256;
-  for (const n of nodes) {
-    const w = sizes[n.id]?.w ?? (n.w || 240), h = sizes[n.id]?.h ?? n.h ?? 96;
-    const id = `${Math.floor((n.x + w / 2 - originX) / cellSize)},${Math.floor((n.y + h / 2 - originY) / cellSize)}`;
+  let originX = Infinity, originY = Infinity;
+  for (const node of nodes) {
+    const box = heatNodeBox(node, sizes);
+    originX = Math.min(originX, box.x + box.w / 2);
+    originY = Math.min(originY, box.y + box.h / 2);
+  }
+  originX = Math.floor(originX / 256) * 256;
+  originY = Math.floor(originY / 256) * 256;
+  for (const node of nodes) {
+    const box = heatNodeBox(node, sizes);
+    const x = box.x + box.w / 2, y = box.y + box.h / 2;
+    const id = `${Math.floor((x - originX) / cellSize)},${Math.floor((y - originY) / cellSize)}`;
+    const label = readHeatLabel(node.heatLabel);
+    const color = node.color ?? null;
     const cell = cells.get(id);
-    if (!cell) cells.set(id, {id, count:1, x:n.x, y:n.y, w, h, color:n.color ?? null,flowCount:n.flow?1:0,flowColor:n.flow?n.color??null:null});
-    else { const right = Math.max(cell.x + cell.w, n.x + w), bottom = Math.max(cell.y + cell.h, n.y + h);
-      cell.x = Math.min(cell.x, n.x); cell.y = Math.min(cell.y, n.y); cell.w = right-cell.x; cell.h=bottom-cell.y; cell.count++;if(n.flow){cell.flowCount++;cell.flowColor??=n.color??null;} }
+    if (!cell) {
+      cells.set(id, { ...box, id, count: 1, color, flowCount: node.flow ? 1 : 0,
+        flowColor: node.flow ? color : null, nodeIds: [node.id], labels: label ? [{ ...label, nodeId: node.id, x, y }] : [] });
+      continue;
+    }
+    const right = Math.max(cell.x + cell.w, box.x + box.w), bottom = Math.max(cell.y + cell.h, box.y + box.h);
+    cell.x = Math.min(cell.x, box.x);
+    cell.y = Math.min(cell.y, box.y);
+    cell.w = right - cell.x;
+    cell.h = bottom - cell.y;
+    cell.count++;
+    cell.nodeIds.push(node.id);
+    if (label) cell.labels.push({ ...label, nodeId: node.id, x, y });
+    if (node.flow) {
+      cell.flowCount++;
+      cell.flowColor ??= color;
+    }
   }
   return [...cells.values()];
+}
+
+/** Stop at the first closer heat tier where this name appears on its own. */
+export function isolatedHeatLabelZoom(nodes: readonly BoardNode[], nodeId: string, zoom: number, sizes: HeatSizes = {}): number | undefined {
+  for (let level = heatLevel(zoom) - 1; level > 0; level--) {
+    const cell = aggregateHeat(nodes, level, sizes).find(cell => cell.labels.some(label => label.nodeId === nodeId));
+    if (cell?.labels.length === 1) return DETAIL_ZOOM * 2 ** (1 - level) * 0.92;
+  }
 }
 export function intersects(a: Box, b: Box, margin = 0): boolean {
   return a.x+a.w >= b.x-margin && a.x <= b.x+b.w+margin && a.y+a.h >= b.y-margin && a.y <= b.y+b.h+margin;

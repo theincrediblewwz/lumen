@@ -1,9 +1,10 @@
-//! Bounded, additive board writes. Permission is device-local; before-images are durable.
+//! Bounded board writes. Permission is device-local and before-images are durable.
+use crate::{board_layout::{node_color, translate_bends, Bounds}, project_canvas::Position};
 use crate::{commands, config, storage, sync};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, BTreeSet},
     fs,
     hash::{Hash, Hasher},
     path::Path,
@@ -106,12 +107,151 @@ pub enum Operation {
         #[serde(default)]
         label: String,
     },
+    UpdateNodePresentation {
+        #[serde(rename = "nodeId")]
+        node_id: String,
+        position: Option<Position>,
+        color: Option<String>,
+        #[serde(default, rename = "includeDescendants")]
+        include_descendants: bool,
+    },
+    PlaceMeasuredNodes {
+        positions: BTreeMap<String, Bounds>,
+    },
 }
 #[derive(Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Batch {
     pub schema: String,
     pub operations: Vec<Operation>,
+}
+
+const MAX_PRESENTATION_NODES: usize = 512;
+
+#[derive(Default)]
+struct PresentationChanges {
+    moved: BTreeMap<String, Position>,
+    colored: BTreeSet<String>,
+}
+
+fn main_node_ids(board: &storage::BoardFile) -> BTreeSet<&str> {
+    let flow_owners: BTreeSet<_> = board.nodes.iter()
+        .filter(|node| node.extra.get("flow").is_some_and(Value::is_object)
+            && node.extra.get("flowOwnerId").and_then(Value::as_str).is_none_or(str::is_empty))
+        .map(|node| node.id.as_str())
+        .collect();
+    board.nodes.iter().filter(|node| {
+        !node.extra.get("flowOwnerId").and_then(Value::as_str).is_some_and(|owner| flow_owners.contains(owner))
+    }).map(|node| node.id.as_str()).collect()
+}
+
+fn presentation_targets(board: &storage::BoardFile, root: &str) -> BTreeSet<String> {
+    let main = main_node_ids(board);
+    let mut next = BTreeMap::<&str, Vec<&str>>::new();
+    for edge in &board.edges {
+        if edge.directed && main.contains(edge.from.as_str()) && main.contains(edge.to.as_str()) {
+            next.entry(&edge.from).or_default().push(&edge.to);
+        }
+    }
+    let mut pending = vec![root];
+    let mut seen = BTreeSet::new();
+    while let Some(id) = pending.pop() {
+        if seen.insert(id) {
+            pending.extend(next.get(id).into_iter().flatten().copied());
+        }
+    }
+    seen.into_iter().map(str::to_owned).collect()
+}
+
+fn update_presentation(
+    board: &mut storage::BoardFile, id: &str, position: Option<Position>, color: Option<String>,
+    include_descendants: bool, changes: &mut PresentationChanges, now: &str,
+) -> Result<(), String> {
+    let root = board.nodes.iter().find(|node| node.id == id).ok_or("要调整的节点不存在")?;
+    if position.is_none() && color.is_none() {
+        return Err("请指定位置或颜色".into());
+    }
+    if (include_descendants || position.is_some()) && !main_node_ids(board).contains(id) {
+        return Err("子流程步骤的位置由步骤顺序决定".into());
+    }
+    let delta = position.map(|at| (at.x - root.x, at.y - root.y));
+    let color = color.map(node_color).transpose()?;
+    let ids = if include_descendants { presentation_targets(board, id) } else { BTreeSet::from([id.into()]) };
+    for node in board.nodes.iter_mut().filter(|node| ids.contains(&node.id)) {
+        if let Some((x, y)) = delta {
+            let at = Position { x: node.x + x, y: node.y + y };
+            at.check()?;
+            changes.move_node(node, at, now);
+        }
+        if let Some(color) = color.as_ref().filter(|color| **color != node.color) {
+            node.color.clone_from(color);
+            node.updated_at = now.into();
+            changes.colored.insert(node.id.clone());
+        }
+    }
+    Ok(())
+}
+
+fn place_measured(
+    board: &mut storage::BoardFile, positions: &BTreeMap<String, Bounds>,
+    changes: &mut PresentationChanges, now: &str,
+) -> Result<(), String> {
+    let main = main_node_ids(board);
+    if positions.is_empty() || positions.len() > MAX_PRESENTATION_NODES
+        || positions.keys().any(|id| !main.contains(id.as_str()))
+    {
+        return Err(format!("每批需提供 1 到 {MAX_PRESENTATION_NODES} 个仍在主白板上的布局节点"));
+    }
+    let reserved = board.nodes.iter()
+        .filter(|node| main.contains(node.id.as_str()) && !positions.contains_key(&node.id))
+        .map(Bounds::reserved).reduce(Bounds::union);
+    let mut placed = Vec::with_capacity(positions.len());
+    for rect in positions.values() {
+        rect.check()?;
+        if reserved.is_some_and(|other| rect.overlaps(other)) || placed.iter().any(|other| rect.overlaps(*other)) {
+            return Err("布局结果仍有节点重叠，原布局保留".into());
+        }
+        placed.push(*rect);
+    }
+    for node in &mut board.nodes {
+        if let Some(rect) = positions.get(&node.id) {
+            changes.move_node(node, Position { x: rect.x, y: rect.y }, now);
+        }
+    }
+    Ok(())
+}
+
+impl PresentationChanges {
+    fn move_node(&mut self, node: &mut storage::BoardNode, at: Position, now: &str) {
+        let before = Position { x: node.x, y: node.y };
+        if before == at { return; }
+        self.moved.entry(node.id.clone()).or_insert(before);
+        node.x = at.x;
+        node.y = at.y;
+        node.updated_at = now.into();
+    }
+
+    fn receipt(&self, board: &storage::BoardFile) -> BTreeMap<String, Value> {
+        board.nodes.iter().filter_map(|node| {
+            let mut fields = serde_json::Map::new();
+            if self.moved.contains_key(&node.id) {
+                fields.insert("position".into(), json!(Position { x: node.x, y: node.y }));
+            }
+            if self.colored.contains(&node.id) {
+                fields.insert("color".into(), json!(node.color));
+            }
+            (!fields.is_empty()).then(|| (node.id.clone(), Value::Object(fields)))
+        }).collect()
+    }
+}
+
+fn has_presentation(board: &storage::BoardFile, receipt: &serde_json::Map<String, Value>) -> bool {
+    receipt.iter().all(|(id, fields)| {
+        board.nodes.iter().find(|node| &node.id == id).is_some_and(|node| {
+            fields.get("position").is_none_or(|value| *value == json!(Position { x: node.x, y: node.y }))
+                && fields.get("color").is_none_or(|value| *value == json!(node.color))
+        })
+    })
 }
 #[derive(Serialize, Deserialize)]
 struct Backup {
@@ -450,7 +590,8 @@ fn apply_full_at(
         }) {
             return Err("这批操作此前已执行，当前已被恢复或移除；未自动重放".into());
         }
-        if node_ids.values().any(|id| {
+        if old["presentation"].as_object().is_some_and(|state| !has_presentation(&current, state))
+            || node_ids.values().any(|id| {
             !current
                 .nodes
                 .iter()
@@ -484,6 +625,8 @@ fn apply_full_at(
     let mut total = 0usize;
     let mut refs = BTreeMap::<String, String>::new();
     let mut files = BTreeMap::new();
+    let mut presentation = PresentationChanges::default();
+    let mut presents = false;
     let resolve = |value: &str, refs: &BTreeMap<String, String>| -> Result<String, String> {
         let id = refs.get(value).map(String::as_str).unwrap_or(value);
         storage::safe_id(id)?;
@@ -580,12 +723,28 @@ fn apply_full_at(
                      extra: Default::default(), });
                 }
             }
+            Operation::UpdateNodePresentation { node_id, position, color, include_descendants } => {
+                let id = resolve(node_id, &refs)?;
+                update_presentation(&mut board, &id, *position, color.clone(), *include_descendants, &mut presentation, &now)?;
+                presents = true;
+            }
+            Operation::PlaceMeasuredNodes { positions } => {
+                if batch.operations.len() != 1 {
+                    return Err("测量后的重排需要单独保存".into());
+                }
+                place_measured(&mut board, positions, &mut presentation, &now)?;
+                presents = true;
+            }
         }
         if nodes > 8 || edges > 12 || docs > 8 || total > 512 * 1024 {
             return Err("每批最多8节点、12连线、8篇文档、512KiB正文".into());
         }
+        if presentation.moved.len() + presentation.colored.iter().filter(|id| !presentation.moved.contains_key(*id)).count() > MAX_PRESENTATION_NODES {
+            return Err(format!("每批最多调整 {MAX_PRESENTATION_NODES} 个节点的外观"));
+        }
     }
-    let (backup, bytes) = backup_at(root, p, b, "修改前")?;
+    if !presentation.moved.is_empty() { translate_bends(&mut board, &presentation.moved)?; }
+    let (backup, bytes) = backup_at(root, p, b, if presents && nodes + docs + edges == 0 { "布局和配色调整前" } else { "修改前" })?;
     files.insert(format!("{base}/.ai-backups/{backup}"), bytes);
     board.updated_at = now;
     files.insert(
@@ -599,14 +758,19 @@ fn apply_full_at(
                 .map(|name| format!("docs/{name}"))
         })
         .collect::<Vec<_>>();
-    let summary = format!("已创建 {nodes} 个节点，追加 {docs} 篇文档、{edges} 条连线。");
+    let mut summary = if !presents || nodes + docs + edges > 0 {
+        format!("已创建 {nodes} 个节点，追加 {docs} 篇文档、{edges} 条连线。")
+    } else { String::new() };
+    if presents {
+        summary.push_str(&format!("已调整 {} 个节点的位置、{} 个节点的颜色。", presentation.moved.len(), presentation.colored.len()));
+    }
     let created_edges = board
         .edges
         .iter()
         .filter(|e| !previous_edges.contains(&e.id))
         .map(|e| e.id.clone())
         .collect::<Vec<_>>();
-    let receipt = json!({"digest":digest(&batch)?,"summary":summary,"backup":backup,"nodes":refs,"edges":created_edges,"documents":documents});
+    let receipt = json!({"digest":digest(&batch)?,"summary":summary,"backup":backup,"nodes":refs,"edges":created_edges,"documents":documents,"presentation":presentation.receipt(&board)});
     files.insert(receipt_path, serde_json::to_vec(&receipt).map_err(err)?);
     if let Some(conversation) = conversation {
         files.insert(
@@ -905,6 +1069,88 @@ fn export_transcript_at(root:&Path,markdown:&str,destination:&str)->Result<(),St
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn layout_fixture(root: &Path, p: &str, b: &str) -> std::path::PathBuf {
+        let path = storage::board_dir(root, p, b).join("board.json");
+        let mut board: Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+        let node = |id: &str, x: f64, y: f64| json!({
+            "id":id,"title":id,"summary":"保留完整原文","x":x,"y":y,"w":240.0,"h":120.0,
+            "created_at":"2026-11-26","updated_at":"2026-11-26","color":null,"docs":[]
+        });
+        board["nodes"] = json!([node("parent", 50.0, 100.0), node("child", 370.0, 100.0), node("other", 50.0, 1600.0), node("step", 0.0, 0.0)]);
+        board["nodes"][0]["flow"] = json!({"nodeIds":["step"]});
+        board["nodes"][0]["docs"] = json!([{"path":"docs/source.md","title":"原始资料"}]);
+        board["nodes"][3]["flowOwnerId"] = json!("parent");
+        board["edges"] = json!([{
+            "id":"e1","from":"parent","to":"child","directed":true,"label":"重要关系","created_at":"2026-11-26",
+            "route":{"kind":"bent","control":{"x":280.0,"y":40.0}}
+        }]);
+        fs::write(storage::docs_dir(root, p, b).join("source.md"), b"\xef\xbb\xbforiginal\r\n").unwrap();
+        fs::write(&path, serde_json::to_vec_pretty(&board).unwrap()).unwrap();
+        path
+    }
+
+    #[test]
+    fn ordinary_board_presentation_moves_branches_and_restores_the_original_bytes() {
+        let (root, p, b) = setup();
+        let path = layout_fixture(&root, &p, &b);
+        let before = fs::read(&path).unwrap();
+        let source = storage::docs_dir(&root, &p, &b).join("source.md");
+        let original = fs::read(&source).unwrap();
+        let update: Batch = serde_json::from_value(json!({
+            "schema":"lumen.board-operations/v1","operations":[{
+                "type":"update_node_presentation","nodeId":"parent","position":{"x":100.0,"y":300.0},
+                "color":"#349858","includeDescendants":true
+            }]
+        })).unwrap();
+        let revision = sync::board_revision(&root,&p,&b).unwrap();
+        let moved = apply_at(&root,&p,&b,&revision,"move_branch",update.clone(),20).unwrap();
+        assert_eq!(moved["board"]["nodes"][0]["y"], 300.0);
+        assert_eq!(moved["board"]["nodes"][1]["x"], 420.0);
+        assert_eq!(moved["board"]["nodes"][1]["color"], "#349858");
+        assert_eq!(moved["board"]["edges"][0]["route"]["control"], json!({"x":330.0,"y":240.0}));
+        let again = apply_at(&root,&p,&b,&revision,"move_branch",update.clone(),20).unwrap();
+        assert_eq!(again["reused"], true);
+
+        let packed: Batch = serde_json::from_value(json!({
+            "schema":"lumen.board-operations/v1","operations":[{"type":"place_measured_nodes","positions":{
+                "parent":{"x":100.0,"y":300.0,"w":240.0,"h":360.0},
+                "child":{"x":100.0,"y":770.0,"w":240.0,"h":120.0}
+            }}]
+        })).unwrap();
+        let result=apply_at(&root,&p,&b,&sync::board_revision(&root,&p,&b).unwrap(),"pack",packed,20).unwrap();
+        assert_eq!(result["board"]["nodes"][1]["y"],770.0);
+        let original_board: Value = serde_json::from_slice(&before).unwrap();
+        assert_eq!(result["board"]["nodes"][0]["h"],original_board["nodes"][0]["h"]);
+        for index in [2,3] { assert_eq!(result["board"]["nodes"][index],original_board["nodes"][index]); }
+        assert_eq!(result["board"]["edges"][0]["label"],"重要关系");
+        assert_eq!(fs::read(&source).unwrap(),original);
+        restore_at(&root,&p,&b,moved["backup"].as_str().unwrap(),&sync::board_revision(&root,&p,&b).unwrap(),20).unwrap();
+        assert_eq!(fs::read(&path).unwrap(),before);
+        assert_eq!(fs::read(&source).unwrap(),original);
+        assert!(apply_at(&root,&p,&b,&revision,"move_branch",update,20).is_err());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn ordinary_board_layout_rejects_invalid_targets_and_overlap_without_writing() {
+        let (root, p, b) = setup();
+        let path = layout_fixture(&root,&p,&b);
+        let before = fs::read(&path).unwrap();
+        let revision = sync::board_revision(&root,&p,&b).unwrap();
+        let bounds = json!({"x":100.0,"y":200.0,"w":240.0,"h":120.0});
+        for operation in [
+            json!({"type":"place_measured_nodes","positions":{"parent":bounds,"child":bounds}}),
+            json!({"type":"place_measured_nodes","positions":{"step":bounds}}),
+            json!({"type":"update_node_presentation","nodeId":"parent","color":"red"}),
+        ] {
+            let batch: Batch = serde_json::from_value(json!({"schema":"lumen.board-operations/v1","operations":[operation]})).unwrap();
+            assert!(apply_at(&root,&p,&b,&revision,"invalid",batch,20).is_err());
+            assert_eq!(fs::read(&path).unwrap(),before);
+            assert!(backup_files(&root,&p,&b).unwrap().is_empty());
+        }
+        fs::remove_dir_all(root).unwrap();
+    }
     #[test]fn backup_history_reads_bounded_metadata_and_legacy_arrays_still_decode(){
         let(root,p,b)=setup();let dir=storage::board_dir(&root,&p,&b).join(".ai-backups");fs::create_dir_all(&dir).unwrap();
         let body=format!("{{\"created_at\":\"2026-10-26T00:00:00Z\",\"reason\":\"图文资料\",\"files\":{{\"large\":\"{}\"}}}}","A".repeat(2*1024*1024));fs::write(dir.join("version_metadata.json"),&body).unwrap();

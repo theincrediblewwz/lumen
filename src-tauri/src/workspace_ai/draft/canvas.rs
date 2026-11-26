@@ -401,14 +401,7 @@ fn update_node(node: &mut BoardNode, fields: NodeFields) -> Result<(), String> {
         }
     }
     if let Some(color) = fields.color {
-        if !color.is_empty()
-            && (color.len() != 7
-                || !color.starts_with('#')
-                || !color.bytes().skip(1).all(|c| c.is_ascii_hexdigit()))
-        {
-            return Err("节点颜色需要是 #RRGGBB，空字符串使用默认颜色".into());
-        }
-        node.color = (!color.is_empty()).then_some(color);
+        node.color = crate::board_layout::node_color(color)?;
     }
     node.updated_at = storage::now_iso();
     Ok(())

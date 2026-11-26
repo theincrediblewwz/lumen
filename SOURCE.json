@@ -1,8 +1,8 @@
 {
-  "source_commit": "66a331350cd35ff525b2bf16a3587581baf20bd6",
+  "source_commit": "e7ba73b45a27591529ce381ff18156ec57e553e6",
   "export_date": "2026-11-26",
   "versions": {
-    "desktop": "0.4.13",
+    "desktop": "0.4.14",
     "android": "2.1.0-preview.8",
     "android_version_code": 23
   },
@@ -37,5 +37,5 @@
     "contracts/historyandknowledge/knowledge-document-v1.schema.json",
     "contracts/historyandknowledge/SOURCE.json"
   ],
-  "desktop_build_source_commit": "66a331350cd35ff525b2bf16a3587581baf20bd6"
+  "desktop_build_source_commit": "e7ba73b45a27591529ce381ff18156ec57e553e6"
 }
